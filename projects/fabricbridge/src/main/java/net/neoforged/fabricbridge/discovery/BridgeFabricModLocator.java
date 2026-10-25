@@ -99,6 +99,110 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     /** The mod ids the NeoForge mods in the mods folder provide, for the current discovery pass. */
     private static volatile java.util.Set<String> fmlProvidedModIds = java.util.Set.of();
 
+    /** {@return the mixin config paths the FML side declares for itself, nested JarInJar mods included} */
+    public static java.util.Set<String> fmlDeclaredMixinConfigs() {
+        return fmlDeclaredMixinConfigs;
+    }
+
+    /**
+     * Mixin config paths the FML side declares for itself - by a NeoForge mod in the mods folder or by
+     * a nested JarInJar mod of one (lambdynamiclights' bundled spruceui is the case). The Fabric-side
+     * registration must yield these: registering the same path from a Fabric jar puts one config name
+     * on Mixin's list twice, and FML's MixinFacade decorates each name it scanned unguarded, which
+     * kills the launch on the second decoration.
+     */
+    private static volatile java.util.Set<String> fmlDeclaredMixinConfigs = java.util.Set.of();
+
+    /** Collects every {@code [[mixins]]} config path declared by a NeoForge mods.toml, nested jars included. */
+    private static java.util.Set<String> readForgeDeclaredMixinConfigs(Path modsDir) {
+        var configs = new java.util.HashSet<String>();
+        try (var jars = Files.list(modsDir)) {
+            for (var jarPath : (Iterable<Path>) jars::iterator) {
+                if (!Files.isRegularFile(jarPath)
+                        || !jarPath.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".jar")) {
+                    continue;
+                }
+                try (var zip = new java.util.zip.ZipFile(jarPath.toFile())) {
+                    collectDeclaredMixinConfigs(zip, configs);
+                    var nested = zip.entries();
+                    while (nested.hasMoreElements()) {
+                        var entry = nested.nextElement();
+                        var name = entry.getName();
+                        if (!name.startsWith("META-INF/jars/") || !name.endsWith(".jar")) {
+                            continue;
+                        }
+                        var bytes = zip.getInputStream(entry).readAllBytes();
+                        try (var nestedZip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(bytes))) {
+                            collectDeclaredMixinConfigsStream(nestedZip, configs);
+                        } catch (IOException ignored) {
+                        }
+                    }
+                } catch (IOException | RuntimeException e) {
+                    LOGGER.debug("[NeoFobric] Could not scan {} for declared mixin configs", jarPath, e);
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.debug("[NeoFobric] Could not list the mods folder to collect declared mixin configs", e);
+        }
+        return java.util.Set.copyOf(configs);
+    }
+
+    private static void collectDeclaredMixinConfigs(java.util.zip.ZipFile zip, java.util.Set<String> configs) {
+        var entry = zip.getEntry("META-INF/neoforge.mods.toml");
+        if (entry == null) {
+            return;
+        }
+        try {
+            var text = new String(zip.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            var inMixins = false;
+            for (var rawLine : text.split("\n")) {
+                var line = rawLine.strip();
+                if (line.startsWith("[")) {
+                    var headerEnd = line.indexOf('#');
+                    var header = headerEnd >= 0 ? line.substring(0, headerEnd).strip() : line;
+                    inMixins = header.equals("[[mixins]]");
+                    continue;
+                }
+                if (inMixins) {
+                    var value = tomlValue(line.substring(line.indexOf('=') + 1).strip());
+                    if (!value.isEmpty()) {
+                        configs.add(value);
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void collectDeclaredMixinConfigsStream(java.util.zip.ZipInputStream zip, java.util.Set<String> configs) {
+        try {
+            for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
+                if (!entry.getName().equals("META-INF/neoforge.mods.toml")) {
+                    continue;
+                }
+                var text = new String(zip.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                var inMixins = false;
+                for (var rawLine : text.split("\n")) {
+                    var line = rawLine.strip();
+                    if (line.startsWith("[")) {
+                        var headerEnd = line.indexOf('#');
+                        var header = headerEnd >= 0 ? line.substring(0, headerEnd).strip() : line;
+                        inMixins = header.equals("[[mixins]]");
+                        continue;
+                    }
+                    if (inMixins && line.contains("=")) {
+                        var value = tomlValue(line.substring(line.indexOf('=') + 1).strip());
+                        if (!value.isEmpty()) {
+                            configs.add(value);
+                        }
+                    }
+                }
+                return;
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
     /** The Fabric jars skipped because an FML mod provides the same id; claimed in {@code findCandidates}. */
     private static final java.util.List<Path> fmlProvidedJars = new java.util.concurrent.CopyOnWriteArrayList<>();
 
@@ -230,6 +334,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         fmlProvidedJars.clear();
         fmlSidePackages.clear();
         fmlProvidedModIds = readForgeModIds(modsDir);
+        fmlDeclaredMixinConfigs = readForgeDeclaredMixinConfigs(modsDir);
 
         try (var files = Files.list(modsDir)) {
             var listingStarted = System.nanoTime();
@@ -1178,7 +1283,11 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                 if (inModsSection && id != null) {
                     mods.add(new String[] { id, version, displayName });
                 }
-                inModsSection = line.startsWith("[[mods]]");
+                // A section header may carry a trailing comment ("[[mods]] #mandatory" - FancyMenu does
+                // exactly that); the comment must not make the header unrecognizable.
+                var headerEnd = line.indexOf('#');
+                var header = headerEnd >= 0 ? line.substring(0, headerEnd).strip() : line;
+                inModsSection = header.startsWith("[[mods]]") && header.endsWith("]]");
                 if (!inModsSection) {
                     id = null;
                     version = "";
@@ -1459,15 +1568,35 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
      */
     private static RelaxedToml planRequirementRelaxations(Path jarPath, Map<String, FabricModInfo> fabricIds) {
         String text;
+        String jarJarMetadata = null;
         try (var zip = new java.util.zip.ZipFile(jarPath.toFile())) {
             var entry = zip.getEntry("META-INF/neoforge.mods.toml");
             if (entry == null) {
                 return null;
             }
             text = new String(zip.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            var metaEntry = zip.getEntry("META-INF/jarjar/metadata.json");
+            if (metaEntry != null) {
+                jarJarMetadata = new String(zip.getInputStream(metaEntry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
         } catch (Exception e) {
             LOGGER.debug("[NeoFobric] Could not read neoforge.mods.toml of {}", jarPath, e);
             return null;
+        }
+        // A Fabric mod that already runs on the Fabric side must not be turned into an FML copy at all:
+        // its copy would drop the nested jars (see writeRelaxedCopy) that satisfy its own dependencies
+        // (LambDynamicLights' lambdynlights_api is the case), and dropping them makes the copy unloadable.
+        // Pure FML jars are exempt from this guard: for them the relaxation is the point - their nested
+        // jars are dropped and the Fabric side answers for the relaxed requirement (FancyMenu's konkret).
+        // The guard therefore applies only to jars that carry BOTH jarjar metadata and fabric.mod.json.
+        if (jarJarMetadata != null && jarJarMetadata.contains("\"jars\"")) {
+            try (var zip = new java.util.zip.ZipFile(jarPath.toFile())) {
+                if (zip.getEntry("fabric.mod.json") != null) {
+                    LOGGER.debug("[NeoFobric] Leaving {} unrelaxed - it carries JarInJar metadata and runs on the Fabric side", jarPath.getFileName());
+                    return null;
+                }
+            } catch (Exception ignored) {
+            }
         }
 
         var lines = new ArrayList<>(java.util.List.of(text.split("\n", -1)));
@@ -1531,6 +1660,32 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         if (substitutions.isEmpty()) {
             return null;
         }
+        // The relaxed copy also drops every nested jar (see writeRelaxedCopy), so the toml's
+        // [[jars]] declarations must go with them - FML validates that a declared JiJ actually
+        // exists in the file and refuses the whole mod otherwise. Only the [[jars]] blocks are
+        // rewritten: [[accessTransformers]] uses the same "file =" key for the AT file, which the
+        // copy keeps, and dropping that line left FancyMenu without its access transformers.
+        var hadJars = false;
+        var inJarsSection = false;
+        for (var i = 0; i < lines.size(); i++) {
+            var stripped = lines.get(i).strip();
+            if (stripped.startsWith("[")) {
+                inJarsSection = stripped.startsWith("[[jars");
+                if (inJarsSection) {
+                    lines.remove(i);
+                    i--;
+                    hadJars = true;
+                }
+                continue;
+            }
+            if (inJarsSection && (stripped.startsWith("file =") || stripped.startsWith("file="))) {
+                lines.remove(i);
+                i--;
+            }
+        }
+        if (hadJars) {
+            substitutions.add("nested jar declarations removed together with the dropped META-INF/jars entries");
+        }
         insertions.sort(java.util.Collections.reverseOrder());
         for (var after : insertions) {
             lines.add(after + 1, "type = \"optional\"");
@@ -1558,10 +1713,24 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                 var entries = zip.entries();
                 while (entries.hasMoreElements()) {
                     var entry = entries.nextElement();
-                    if (isJarSignature(entry.getName())) {
+                    var entryName = entry.getName();
+                    if (isJarSignature(entryName)) {
                         continue;
                     }
-                    out.putNextEntry(new java.util.zip.ZipEntry(entry.getName()));
+                    // Drop nested jars from the FML-side copy: every META-INF/jars member becomes an FML
+                    // JarInJar mod, and a Fabric mod bundled twice this way (skinshuffle's and
+                    // lambdynamiclights' spruceui, for example) then reaches FML's MixinFacade twice -
+                    // its unguarded decoration of an already-registered config kills the launch. The
+                    // Fabric side answers for these libraries at runtime, which is the whole premise of
+                    // the relaxation. jarjar's metadata.json declares the same nested jars and must go
+                    // with them - FML validates every declaration against the file's contents.
+                    if (entryName.startsWith("META-INF/jars/") && entryName.endsWith(".jar")) {
+                        continue;
+                    }
+                    if (entryName.equals("META-INF/jarjar/metadata.json")) {
+                        continue;
+                    }
+                    out.putNextEntry(new java.util.zip.ZipEntry(entryName));
                     if (entry.getName().equals("META-INF/neoforge.mods.toml")) {
                         out.write(relaxed.bytes());
                     } else if (entry.getName().endsWith(".class")) {

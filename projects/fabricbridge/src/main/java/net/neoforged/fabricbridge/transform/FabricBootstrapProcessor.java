@@ -404,6 +404,16 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
                             + " it, and that one's classes are the ones in the game layer", configPath, info.modId());
                     continue;
                 }
+                // The FML side owns this config: a NeoForge mod or one of its nested JarInJar mods declares
+                // it (lambdynamiclights' bundled spruceui). Registering the Fabric copy as well would put
+                // the same config name on Mixin's list twice, and FML's MixinFacade decorates every name
+                // it scanned unguarded - the second decoration throws and kills the launch. The FML copy
+                // runs; the Fabric classes of that library are not in the game layer anyway.
+                if (net.neoforged.fabricbridge.discovery.BridgeFabricModLocator.fmlDeclaredMixinConfigs().contains(configPath)) {
+                    LOGGER.info("[NeoFobric] Skipping mixin config {} from {} - the FML side declares the same"
+                            + " path and owns it", configPath, info.modId());
+                    continue;
+                }
                 // A/B diagnosis: -Dneofobric.skipMixinConfigs=<substring> skips matching configs.
                 // -Dneofobric.onlyMixinConfigs=<substring> registers ONLY matching configs.
                 var skip = System.getProperty("neofobric.skipMixinConfigs");

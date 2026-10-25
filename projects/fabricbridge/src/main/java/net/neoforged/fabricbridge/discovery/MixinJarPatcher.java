@@ -5555,6 +5555,27 @@ public final class MixinJarPatcher {
                     LOGGER.info("[NeoFobric][DIAG] {} {}: dropped {} mixin entr(y/ies)", jarPath.getFileName(), entry.getName(), droppedCount);
                     patched.put(entry.getName(), sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 }
+                // owo's MinecraftMixin carries an injection @Group("clientFreezeHooks", min=1) with two
+                // handlers, each anchoring on a loader-specific Hooks.startClient call (the fabricmc and
+                // the quiltmc loader variant). Neither loader runs here, so the group can never score its
+                // one required success: on its own it is only a WARN, but any later mixin into Minecraft
+                // (balm, clienttweaks, shouldersurfing - every one of them mixins Minecraft) makes Mixin
+                // re-validate all registered groups of that class, and the stale group turns their
+                // application fatal. The handlers detect a frozen client during loader startup - dead
+                // code under this bridge - so both entries are dropped
+                // (-Dneofobric.keepOwoFreezeHooks brings them back).
+                if (jarPath.getFileName().toString().startsWith("owo-lib-")
+                        && entry.getName().equals("owo.mixins.json")
+                        && !Boolean.getBoolean("neofobric.keepOwoFreezeHooks")) {
+                    var configText = new String(zip.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                    var filtered = configText.replaceAll("(?m)^\\s*\"MinecraftMixin\"\\s*,?\\s*\\r?\\n", "");
+                    if (!filtered.equals(configText)) {
+                        patched.put(entry.getName(), filtered.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        LOGGER.info("[NeoFobric] Dropped owo's MinecraftMixin - its clientFreezeHooks group anchors"
+                                + " on loader Hooks.startClient calls that never run here, and its unmet min=1"
+                                + " group makes any later Minecraft mixin fatal");
+                    }
+                }
                 if (net.neoforged.fabricbridge.compbridlnk.CreateCompat.handlesMixinConfig(entry.getName())) {
                     var configText = new String(zip.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                     var rewritten = configText;
