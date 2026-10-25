@@ -5528,6 +5528,33 @@ public final class MixinJarPatcher {
                                 + " callback builds those caches once registration is complete");
                     }
                 }
+                // TEMPORARY DIAGNOSTIC (not for release): -Dneofobric.debugDropNoxesiumMixins=entry,entry
+                // strips listed mixin entries from the noxesium and adventure mixin configs so the
+                // chunk-load stall can be bisected to a single mixin. Runs before the client/server
+                // sections are folded, so both sections are scanned. Entries match the config's short
+                // class name with or without its sub-package path.
+                var debugDropNoxesium = System.getProperty("neofobric.debugDropNoxesiumMixins");
+                var isNoxesiumJar = jarPath.getFileName().toString().startsWith("noxesium-");
+                var isAdventureJar = jarPath.getFileName().toString().startsWith("adventure-platform-");
+                if ((isNoxesiumJar || isAdventureJar)
+                        && entry.getName().endsWith(".mixins.json")
+                        && debugDropNoxesium != null && !debugDropNoxesium.isBlank()) {
+                    var drop = new java.util.HashSet<>(java.util.Arrays.asList(debugDropNoxesium.split(",")));
+                    var configText = new String(zip.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                    var sb = new StringBuilder();
+                    var droppedCount = 0;
+                    for (var configLine : configText.split("\n", -1)) {
+                        var stripped = configLine.strip();
+                        var shortName = stripped.replaceAll("\"", "").replaceFirst(",$", "");
+                        var leaf = shortName.contains(".") ? shortName.substring(shortName.lastIndexOf('.') + 1) : shortName;
+                        var leafInner = leaf.contains("$") ? leaf.substring(0, leaf.indexOf('$')) : leaf;
+                        var matched = drop.contains(shortName) || drop.contains(leaf) || drop.contains(leafInner);
+                        if (matched) droppedCount++;
+                        if (!matched) sb.append(configLine).append('\n');
+                    }
+                    LOGGER.info("[NeoFobric][DIAG] {} {}: dropped {} mixin entr(y/ies)", jarPath.getFileName(), entry.getName(), droppedCount);
+                    patched.put(entry.getName(), sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
                 if (net.neoforged.fabricbridge.compbridlnk.CreateCompat.handlesMixinConfig(entry.getName())) {
                     var configText = new String(zip.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                     var rewritten = configText;

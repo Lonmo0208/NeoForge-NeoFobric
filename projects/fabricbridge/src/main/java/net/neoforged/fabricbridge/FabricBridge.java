@@ -308,6 +308,14 @@ public final class FabricBridge {
         for (var container : containers) {
             try {
                 var modId = container.getProvider().getMetadata().getId();
+                // TEMPORARY DIAGNOSTIC (not for release): -Dneofobric.debugSkipEntrypoints=<id1,id2>
+                // skips those mods' entrypoints entirely, to separate entrypoint-driven behaviour from
+                // jar-presence-driven behaviour (the noxesium chunk stall bisection).
+                var debugSkip = System.getProperty("neofobric.debugSkipEntrypoints");
+                if (debugSkip != null && java.util.Arrays.asList(debugSkip.split(",")).contains(modId)) {
+                    LOGGER.info("[NeoFobric][DIAG] Skipping the '{}' entrypoint of '{}' (debugSkipEntrypoints)", key, modId);
+                    continue;
+                }
                 if (net.neoforged.fabricbridge.compbridlnk.SodiumCompat.yieldsRendererToSodium(key, modId)) {
                     LOGGER.info("[NeoFobric] Skipping the '{}' entrypoint of '{}' - Sodium registers the"
                             + " FRAPI renderer, and the registry accepts only one", key, modId);

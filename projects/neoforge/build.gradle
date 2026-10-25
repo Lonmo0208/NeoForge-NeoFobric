@@ -282,6 +282,14 @@ neoDev {
             if (project.hasProperty('neofobric.noTransferBridge')) {
                 systemProperty("neofobric.noTransferBridge", "true")
             }
+            // TEMPORARY DIAGNOSTIC: comma list of mods whose Fabric entrypoints are skipped, to separate
+            // entrypoint-driven behaviour from jar-presence-driven behaviour (noxesium stall bisection).
+            if (project.hasProperty('neofobric.debugSkipEntrypoints')) {
+                systemProperty("neofobric.debugSkipEntrypoints", project.property('neofobric.debugSkipEntrypoints'))
+            }
+            if (project.hasProperty('neofobric.debugDropNoxesiumMixins')) {
+                systemProperty("neofobric.debugDropNoxesiumMixins", project.property('neofobric.debugDropNoxesiumMixins'))
+            }
             // Shades the platform-namespace classes a Fabric jar carries that this NeoForge does not have
             // (see MixinJarPatcher#platformNamespaceShadingPlan).
             if (project.hasProperty('neofobric.shadePlatformCopies')) {
