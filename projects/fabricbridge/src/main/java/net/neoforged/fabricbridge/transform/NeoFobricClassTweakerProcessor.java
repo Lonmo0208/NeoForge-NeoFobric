@@ -335,15 +335,8 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
                                         @Override
                                         public void visitInjectedInterface(String target, String iface, boolean transitive) {
                                             if (transitive) {
-                                                // The rule may carry a generic signature
-                                                // (FabricTagAppender<TT;>); only the raw type is class name.
-                                                var raw = iface;
-                                                var generic = raw.indexOf('<');
-                                                if (generic >= 0) {
-                                                    raw = raw.substring(0, generic);
-                                                }
                                                 collected.computeIfAbsent(target, key -> new java.util.LinkedHashSet<>())
-                                                        .add(raw.strip());
+                                                        .add(ClassTweakerHierarchy.rawInterfaceName(iface));
                                             }
                                         }
                                         }).read(in.readAllBytes());
@@ -384,38 +377,10 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         if (cached != null) {
             return cached;
         }
-        var collected = new java.util.LinkedHashSet<String>();
-        collected.add(node.name);
-        if (node.superName != null) {
-            collectSupertypes(node.superName, collected, 1);
-        }
-        for (var iface : node.interfaces) {
-            collectSupertypes(iface, collected, 1);
-        }
-        var frozen = Set.copyOf(collected);
+        var provider = bytecodeProvider;
+        var frozen = ClassTweakerHierarchy.supertypes(node, provider == null ? null : provider::getByteCode);
         SUPERTYPES.put(node.name, frozen);
         return frozen;
-    }
-
-    private static void collectSupertypes(String internalName, Set<String> out, int depth) {
-        if (internalName == null || internalName.isEmpty() || depth > 64 || !out.add(internalName)) {
-            return;
-        }
-        var provider = bytecodeProvider;
-        if (provider == null) {
-            return;
-        }
-        try {
-            var reader = new org.objectweb.asm.ClassReader(provider.getByteCode(internalName.replace('/', '.')));
-            if (reader.getSuperName() != null) {
-                collectSupertypes(reader.getSuperName(), out, depth + 1);
-            }
-            for (var iface : reader.getInterfaces()) {
-                collectSupertypes(iface, out, depth + 1);
-            }
-        } catch (Throwable t) {
-            // The hierarchy ends here; the class is not on the game class path.
-        }
     }
 
     /** Interfaces already reported, so each transitive rule names one example instead of thousands. */

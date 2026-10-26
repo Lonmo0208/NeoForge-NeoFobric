@@ -71,6 +71,12 @@ public final class FabricResourceConditions {
         if (folder == null || folder.isEmpty()) {
             return false;
         }
+        // The loot modifier manager parses every file under data/*/loot_modifiers as a modifier. The
+        // index file (global_loot_modifiers.json, {replace, entries}) is not one, and nothing here reads
+        // it, so it used to fail the parse and log an error for every pack that ships one.
+        if (folder.startsWith("loot_modifiers") && "global_loot_modifiers".equals(id.getPath())) {
+            return true;
+        }
         try {
             return net.neoforged.fabricbridge.FabricBridgeHooks.shouldSkipFabricLoaderData(folder, id.getNamespace());
         } catch (Throwable t) {
