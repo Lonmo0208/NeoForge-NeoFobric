@@ -57,7 +57,7 @@
          Optional<Holder<Potion>> potion = source.getOrDefault(DataComponents.POTION_CONTENTS, PotionContents.EMPTY).potion();
          if (potion.isEmpty()) {
              return source;
-@@ -124,9 +_,18 @@
+@@ -124,9 +_,24 @@
          return source;
      }
  
@@ -72,7 +72,13 @@
 +    public static PotionBrewing bootstrap(FeatureFlagSet enabledFeatures, net.minecraft.core.RegistryAccess registryAccess) {
          PotionBrewing.Builder builder = new PotionBrewing.Builder(enabledFeatures);
          addVanillaMixes(builder);
-+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(new net.neoforged.neoforge.event.brewing.RegisterBrewingRecipesEvent(builder, registryAccess));
++        // Neo: mods may reach this overload before the registries are bound (Create calls the deprecated
++        // bootstrap from RecipeManager#prepare). An unbound item holder makes any ItemStack a listener
++        // builds throw "Components not bound yet", and one unguarded listener then fails the whole data
++        // reload. The real bootstrap (MinecraftServer, ClientPacketListener) passes the bound access.
++        if (registryAccess != net.minecraft.core.RegistryAccess.EMPTY) {
++            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(new net.neoforged.neoforge.event.brewing.RegisterBrewingRecipesEvent(builder, registryAccess));
++        }
          return builder.build();
      }
  

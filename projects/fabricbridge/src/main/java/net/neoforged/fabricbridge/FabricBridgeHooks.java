@@ -1780,4 +1780,146 @@ public final class FabricBridgeHooks {
                 index.size(), net.neoforged.fabricbridge.discovery.FabricJarRegistry.getPaths().size());
         return index;
     }
+
+    /** 0 = not resolved yet, 1 = Fabric's condition API is available, 2 = it is not. */
+    private static volatile int fabricConditionState;
+    private static volatile Object fabricConditionCodec;
+    private static volatile java.lang.reflect.Method fabricConditionTest;
+    private static volatile Object fabricConditionJsonOps;
+    private static final java.util.Set<String> fabricConditionReported = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Evaluates a data file's {@code fabric:load_conditions}, exactly as
+     * {@code fabric-resource-conditions-api-v1} would, for the platform's
+     * {@code FabricResourceConditions} hook.
+     *
+     * <p>The module filters files by wrapping the parse call inside
+     * {@code SimpleJsonResourceReloadListener.scanDirectory}. NeoForge's recipe loading uses
+     * {@code scanDirectoryWithModifier}, a copy of that scan the module does not wrap, so a Fabric recipe
+     * whose conditions are false was handed to the parser anyway and failed on its missing serializer.
+     *
+     * <p>Reflection because this module cannot compile against Fabric API (or the serialization library):
+     * the codec is parsed through Fabric's own {@code ResourceCondition.CONDITION_CODEC} and tested with
+     * the loader's registry lookup, which is what the module does. A file whose conditions cannot be
+     * evaluated is allowed - Fabric's own implementation keeps those too.
+     *
+     * @param file the data file's root object
+     * @param type the loader's resource type, for diagnostics
+     * @param id   the resource id, for diagnostics
+     * @param ops  the ops the loader parses with; a {@code RegistryOps} carries the registry lookup
+     */
+    public static boolean allowFabricResourceConditions(com.google.gson.JsonObject file, String type, String id, Object ops) {
+        if (!bridgeActive() || !resolveFabricConditions()) {
+            return true;
+        }
+        var element = file.get("fabric:load_conditions");
+        if (element == null) {
+            return true;
+        }
+        try {
+            var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
+            var codecClass = Class.forName("com.mojang.serialization.Codec", false, gameLoader);
+            var opsClass = Class.forName("com.mojang.serialization.DynamicOps", false, gameLoader);
+            var parsed = codecClass.getMethod("parse", opsClass, Object.class)
+                    .invoke(fabricConditionCodec, fabricConditionJsonOps, element);
+            var result = (java.util.Optional<?>) Class.forName("com.mojang.serialization.DataResult", false, gameLoader)
+                    .getMethod("result").invoke(parsed);
+            if (result.isEmpty()) {
+                // An unregistered condition type (its mod is not installed): Fabric keeps the file and
+                // logs the parse error, so the same file is kept here and reported once.
+                reportUnresolvedCondition(type, id);
+                return true;
+            }
+            var lookup = registryInfoLookup(ops, gameLoader);
+            return (Boolean) fabricConditionTest.invoke(result.get(), lookup);
+        } catch (Throwable t) {
+            reportUnresolvedCondition(type, id);
+            LOGGER.debug("[NeoFobric] Could not evaluate the fabric:load_conditions of {} ({}); loading it", id, type, t);
+            return true;
+        }
+    }
+
+    /** {@return the registry lookup of {@code ops} when it is a {@code RegistryOps}, else null} */
+    private static Object registryInfoLookup(Object ops, ClassLoader gameLoader) {
+        if (ops == null) {
+            return null;
+        }
+        try {
+            var registryOps = Class.forName("net.minecraft.resources.RegistryOps", false, gameLoader);
+            return registryOps.isInstance(ops) ? registryOps.getField("lookupProvider").get(ops) : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Resolves Fabric's condition codec once; {@return whether conditions can be evaluated at all} */
+    private static boolean resolveFabricConditions() {
+        var state = fabricConditionState;
+        if (state != 0) {
+            return state == 1;
+        }
+        synchronized (FabricBridgeHooks.class) {
+            if (fabricConditionState != 0) {
+                return fabricConditionState == 1;
+            }
+            try {
+                var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
+                var condition = Class.forName("net.fabricmc.fabric.api.resource.conditions.v1.ResourceCondition", false, gameLoader);
+                fabricConditionCodec = condition.getField("CONDITION_CODEC").get(null);
+                fabricConditionTest = condition.getMethod("test",
+                        Class.forName("net.minecraft.resources.RegistryOps$RegistryInfoLookup", false, gameLoader));
+                fabricConditionJsonOps = Class.forName("com.mojang.serialization.JsonOps", false, gameLoader)
+                        .getField("INSTANCE").get(null);
+                fabricConditionState = 1;
+                LOGGER.info("[NeoFobric] fabric:load_conditions are evaluated for NeoForge's data loaders too"
+                        + " (recipes use a scan copy the module does not wrap)");
+            } catch (Throwable t) {
+                fabricConditionState = 2;
+                LOGGER.debug("[NeoFobric] fabric-resource-conditions-api-v1 is unavailable;"
+                        + " data files load unconditionally", t);
+            }
+            return fabricConditionState == 1;
+        }
+    }
+
+    /** Reports the first file of each type whose conditions could not be evaluated, without flooding. */
+    private static void reportUnresolvedCondition(String type, String id) {
+        if (fabricConditionReported.add(type + "/" + id)) {
+            LOGGER.debug("[NeoFobric] Kept {} ({}) - its fabric:load_conditions could not be evaluated", id, type);
+        }
+    }
+
+    /** The mod ids of the Fabric jars this run actually loaded, for the loader-folder rule below. */
+    private static volatile java.util.Set<String> fabricModNamespaces;
+
+    /**
+     * {@return whether a NeoForge-only loader should skip this file}
+     *
+     * <p>NeoForge's loot modifier manager reads {@code data/<namespace>/loot_modifiers/*.json} with a
+     * Forge-shaped codec. Fabric's loot API is code-based and never reads that folder, so a Fabric mod that
+     * ships such files (Alex's Mobs' Forge-compatibility leftovers) only produces parse errors here. Files
+     * from namespaces the bridge loaded as Fabric mods are left out; everything else is untouched.
+     *
+     * @param folder    the loader's resource type with a trailing slash
+     * @param namespace the data namespace of the file
+     */
+    public static boolean shouldSkipFabricLoaderData(String folder, String namespace) {
+        if (!bridgeActive() || folder == null || namespace == null || !folder.startsWith("loot_modifiers")) {
+            return false;
+        }
+        var namespaces = fabricModNamespaces;
+        if (namespaces == null) {
+            synchronized (FabricBridgeHooks.class) {
+                if (fabricModNamespaces == null) {
+                    var set = new java.util.HashSet<String>();
+                    for (var info : net.neoforged.fabricbridge.discovery.FabricJarRegistry.getEntries().values()) {
+                        set.add(info.modId());
+                    }
+                    fabricModNamespaces = java.util.Set.copyOf(set);
+                }
+                namespaces = fabricModNamespaces;
+            }
+        }
+        return namespaces.contains(namespace);
+    }
 }

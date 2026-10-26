@@ -10,7 +10,7 @@
          return result;
      }
  
-@@ -52,22 +_,95 @@
+@@ -52,22 +_,108 @@
          scanDirectory(manager, FileToIdConverter.registry(registryKey), ops, codec, result);
      }
  
@@ -32,6 +32,12 @@
              Identifier location = entry.getKey();
              Identifier id = lister.fileToId(location);
  
++            // Neo: a Fabric jar's loot_modifiers files use a Forge-shaped schema its own (code-based) loot
++            // API never reads; parsing them here only fails on the missing serializer, so they are left out.
++            if (net.neoforged.neoforge.common.FabricResourceConditions.skipForLoader(lister.prefix(), id)) {
++                continue;
++            }
++
              try (Reader reader = entry.getValue().openAsReader()) {
 -                codec.parse(ops, StrictJsonParser.parse(reader)).ifSuccess(parsed -> {
 -                    if (result.putIfAbsent(id, (T)parsed) != null) {
@@ -93,6 +99,13 @@
 +        for (Entry<Identifier, JsonElement> entry : jsons.entrySet()) {
 +            Identifier id = entry.getKey();
 +            JsonElement json = entry.getValue();
++
++            // Neo: Fabric data files carry fabric:load_conditions, and this copy of the scan is not
++            // wrapped by fabric-resource-conditions-api-v1 (it hooks scanDirectory only): ask the bridge.
++            if (!net.neoforged.neoforge.common.FabricResourceConditions.allow(json, lister.prefix(), id, ops)) {
++                LOGGER.debug("Skipping loading data file '{}' as its Fabric conditions were not met", id);
++                continue;
++            }
 +
 +            conditionalCodec.parse(ops, json).ifSuccess(parsed -> {
 +                if (parsed.isEmpty()) {
