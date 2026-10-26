@@ -1614,7 +1614,7 @@ public final class MixinJarPatcher {
         return writer.toByteArray();
     }
 
-    private static boolean realignAnnotations(List<AnnotationNode> annotations, Map<String, String> scoped) {
+    static boolean realignAnnotations(List<AnnotationNode> annotations, Map<String, String> scoped) {
         if (annotations == null) {
             return false;
         }
