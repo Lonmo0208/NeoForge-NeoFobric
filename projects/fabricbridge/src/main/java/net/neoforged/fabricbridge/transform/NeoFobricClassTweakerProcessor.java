@@ -281,6 +281,179 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         }
     }
 
+    /** Provider for other classes' bytecode, handed in by FML when the processors are linked. */
+    private static volatile net.neoforged.neoforgespi.transformation.BytecodeProvider bytecodeProvider;
+
+    @Override
+    public void link(net.neoforged.neoforgespi.transformation.ClassProcessor.LinkContext context) {
+        bytecodeProvider = context.bytecodeProvider();
+    }
+
+    /**
+     * The {@code transitive-inject-interface} pairs of every Fabric jar: target class to the interfaces
+     * that must also reach its subclasses.
+     *
+     * <p>Fabric's class-tweaker library applies an injected interface to the class named in the rule and to
+     * nothing else - the propagation down the hierarchy is done by Knot while it loads classes. The bridge
+     * hands each class to the same library on its own, so without this pass Create's
+     * {@code transitive-inject-interface Container ContainerExtension} left every container that is not
+     * {@code Container} itself without the interface, and the mod's casts and {@code instanceof} checks
+     * silently degraded. The rules are read straight from the jars because the class-tweaker reader keeps
+     * the transitive flag while {@code ClassTweaker#getAllInjectedInterfaces} drops it.
+     */
+    private static volatile Map<String, List<String>> transitiveInterfaces;
+
+    /** Guards against re-entering the scan from a class load triggered while reading the jars. */
+    private static boolean scanningTransitiveInterfaces;
+
+    private static Map<String, List<String>> transitiveInterfaces() {
+        var pairs = transitiveInterfaces;
+        if (pairs != null) {
+            return pairs;
+        }
+        synchronized (NeoFobricClassTweakerProcessor.class) {
+            if (transitiveInterfaces != null) {
+                return transitiveInterfaces;
+            }
+            if (scanningTransitiveInterfaces) {
+                // A jar read loaded a class through this processor; answer with the safe default and
+                // let the outer scan finish.
+                return Map.of();
+            }
+            scanningTransitiveInterfaces = true;
+            try {
+                var collected = new java.util.HashMap<String, java.util.LinkedHashSet<String>>();
+                for (var path : FabricJarRegistry.getPaths()) {
+                    try (var jar = JarContents.ofPath(path)) {
+                        jar.visitContent((name, resource) -> {
+                            if (!name.endsWith(".classtweaker") && !name.endsWith(".accesswidener")) {
+                                return;
+                            }
+                            try (var in = resource.open()) {
+                                net.fabricmc.loader.impl.lib.classtweaker.api.ClassTweakerReader.create(
+                                        new net.fabricmc.loader.impl.lib.classtweaker.api.visitor.ClassTweakerVisitor() {
+                                        @Override
+                                        public void visitInjectedInterface(String target, String iface, boolean transitive) {
+                                            if (transitive) {
+                                                // The rule may carry a generic signature
+                                                // (FabricTagAppender<TT;>); only the raw type is class name.
+                                                var raw = iface;
+                                                var generic = raw.indexOf('<');
+                                                if (generic >= 0) {
+                                                    raw = raw.substring(0, generic);
+                                                }
+                                                collected.computeIfAbsent(target, key -> new java.util.LinkedHashSet<>())
+                                                        .add(raw.strip());
+                                            }
+                                        }
+                                        }).read(in.readAllBytes());
+                            } catch (Throwable t) {
+                                LOGGER.debug("[NeoFobric] Could not read the class tweaker {} of {}", name,
+                                        path.getFileName(), t);
+                            }
+                        });
+                    } catch (Throwable t) {
+                        LOGGER.debug("[NeoFobric] Could not scan {} for transitive interfaces", path, t);
+                    }
+                }
+                var frozen = new java.util.HashMap<String, List<String>>(collected.size());
+                collected.forEach((target, ifaces) -> frozen.put(target, List.copyOf(ifaces)));
+                transitiveInterfaces = Map.copyOf(frozen);
+                if (!frozen.isEmpty()) {
+                    LOGGER.info("[NeoFobric] Transitive interface injections declared by the Fabric jars: {}", frozen);
+                }
+                return transitiveInterfaces;
+            } finally {
+                scanningTransitiveInterfaces = false;
+            }
+        }
+    }
+
+    /** Every supertype of a class, itself included; empty when the class cannot be read. */
+    private static final Map<String, Set<String>> SUPERTYPES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * The supertypes of the class being transformed, itself included.
+     *
+     * <p>The class's own parents come from the node; asking the bytecode provider for the class that is
+     * being defined right now would re-enter its transformation, and that is exactly how a data-generation
+     * bootstrap turned into "Could not load super class TagAppender" the first time this pass ran.
+     */
+    private static Set<String> supertypes(ClassNode node) {
+        var cached = SUPERTYPES.get(node.name);
+        if (cached != null) {
+            return cached;
+        }
+        var collected = new java.util.LinkedHashSet<String>();
+        collected.add(node.name);
+        if (node.superName != null) {
+            collectSupertypes(node.superName, collected, 1);
+        }
+        for (var iface : node.interfaces) {
+            collectSupertypes(iface, collected, 1);
+        }
+        var frozen = Set.copyOf(collected);
+        SUPERTYPES.put(node.name, frozen);
+        return frozen;
+    }
+
+    private static void collectSupertypes(String internalName, Set<String> out, int depth) {
+        if (internalName == null || internalName.isEmpty() || depth > 64 || !out.add(internalName)) {
+            return;
+        }
+        var provider = bytecodeProvider;
+        if (provider == null) {
+            return;
+        }
+        try {
+            var reader = new org.objectweb.asm.ClassReader(provider.getByteCode(internalName.replace('/', '.')));
+            if (reader.getSuperName() != null) {
+                collectSupertypes(reader.getSuperName(), out, depth + 1);
+            }
+            for (var iface : reader.getInterfaces()) {
+                collectSupertypes(iface, out, depth + 1);
+            }
+        } catch (Throwable t) {
+            // The hierarchy ends here; the class is not on the game class path.
+        }
+    }
+
+    /** Interfaces already reported, so each transitive rule names one example instead of thousands. */
+    private static final Set<String> REPORTED_TRANSITIVE = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Adds each transitive interface to every class that extends or implements its target.
+     *
+     * <p>Runs for every class once any jar declares a transitive rule; the hierarchy walk is cached per
+     * class name, so this is a set lookup for the vast majority of classes.
+     */
+    private static boolean applyTransitiveInjectedInterfaces(ClassNode node) {
+        var pairs = transitiveInterfaces();
+        if (pairs.isEmpty()) {
+            return false;
+        }
+        var hierarchy = supertypes(node);
+        var changed = false;
+        for (var entry : pairs.entrySet()) {
+            if (!hierarchy.contains(entry.getKey())) {
+                continue;
+            }
+            for (var iface : entry.getValue()) {
+                if (node.name.equals(iface) || node.interfaces.contains(iface)) {
+                    continue;
+                }
+                node.interfaces.add(iface);
+                changed = true;
+                if (REPORTED_TRANSITIVE.add(entry.getKey() + "->" + iface)) {
+                    LOGGER.info("[NeoFobric] Transitive interface {} (from {}) reaches {} - injected",
+                            iface.replace('/', '.'), entry.getKey().replace('/', '.'),
+                            node.name.replace('/', '.'));
+                }
+            }
+        }
+        return changed;
+    }
+
     /**
      * Classes whose private members Fabric mixins reach directly, keyed by class, valued by member name.
      *
@@ -386,7 +559,10 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
                 || InjectedInterfaceSource.get().containsKey(name)
                 || ENUM_EXTENSION_TARGETS.contains(name)
                 || net.neoforged.fabricbridge.compbridlnk.OwoCompat.handlesClass(name)
-                || isFabricClassTweakerTarget(name);
+                || isFabricClassTweakerTarget(name)
+                // Any class may be a descendant of a transitive-inject-interface target; the hierarchy
+                // check in processClass is what decides, and it is cached per class name.
+                || !transitiveInterfaces().isEmpty();
     }
 
     @Override
@@ -405,7 +581,10 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
             LOGGER.warn("[NeoFobric] pendingResourceInterface failed for {}", context.node().name, t);
             isResourceImpl = false;
         }
-        if (!DUCK_FALLBACKS.containsKey(context.node().name) && !isResourceImpl
+        // One more decision before the early out: a class that inherits from a transitive
+        // inject-interface target gets the interface here even though none of the other checks match.
+        boolean transitiveChanged = applyTransitiveInjectedInterfaces(context.node());
+        if (!transitiveChanged && !DUCK_FALLBACKS.containsKey(context.node().name) && !isResourceImpl
                 && !ACCESSOR_FIELDS.containsKey(context.node().name)
                 && !FABRIC_CHANNEL_CLASSES.contains(context.node().name)
                 && !FABRIC_NETWORKING_IMPL.equals(context.node().name)
@@ -425,7 +604,7 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         }
 
         var node = context.node();
-        var changed = false;
+        var changed = transitiveChanged;
         // CompoundTag is defined before the Fabric mixin configs are prepared, so owo's mixin never sees it;
         // the tweaker adds the same MapCarrier methods while the class is still being transformed.
         if (net.neoforged.fabricbridge.compbridlnk.OwoCompat.handlesClass(node.name)) {
