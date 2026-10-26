@@ -58,7 +58,7 @@
      public static CompletableFuture<RegistryAccess.Frozen> load(
          RegistryDataLoader.LoaderFactory loaderFactory,
          List<HolderLookup.RegistryLookup<?>> contextRegistries,
-@@ -218,6 +_,15 @@
+@@ -218,6 +_,28 @@
                      return CompletableFuture.allOf(loadCompletions)
                          .thenApplyAsync(
                              ignored -> {
@@ -67,7 +67,20 @@
 +                                    var envRegistry = (net.minecraft.core.WritableRegistry) byKeyMap.get(Registries.TEST_ENVIRONMENT);
 +                                    var testsRegistry = (net.minecraft.core.WritableRegistry) byKeyMap.get(Registries.TEST_INSTANCE);
 +                                    if (envRegistry != null && testsRegistry != null) {
-+                                        net.neoforged.fml.ModLoader.postEvent(new net.neoforged.neoforge.event.RegisterGameTestsEvent(envRegistry, testsRegistry));
++                                        // NeoFobric: on a client the test registries came from the server, and a mod that
++                                        // registers them here as well (Occultism, in dev where gametests are enabled) then
++                                        // hits "Adding duplicate key". The server already owns the entries, so the duplicate
++                                        // is expected on this side; anything else still fails the load as before.
++                                        try {
++                                            net.neoforged.fml.ModLoader.postEvent(new net.neoforged.neoforge.event.RegisterGameTestsEvent(envRegistry, testsRegistry));
++                                        } catch (RuntimeException dup) {
++                                            if (!net.neoforged.fml.loading.FMLEnvironment.getDist().isClient()
++                                                    || !String.valueOf(dup).contains("Adding duplicate key")) {
++                                                throw dup;
++                                            }
++                                            org.slf4j.LoggerFactory.getLogger("NeoFobric").warn(
++                                                "Ignoring a duplicate game test registration on the client (the server owns these entries): {}", dup.getMessage());
++                                        }
 +                                    }
 +                                }
 +
