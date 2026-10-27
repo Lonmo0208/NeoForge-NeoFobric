@@ -1,13 +1,20 @@
 --- a/net/minecraft/world/entity/projectile/FishingHook.java
 +++ b/net/minecraft/world/entity/projectile/FishingHook.java
-@@ -255,8 +_,8 @@
+@@ -255,8 +_,15 @@
          if (owner.canInteractWithLevel()) {
              ItemStack selectedItem = owner.getMainHandItem();
              ItemStack selectedItemOffHand = owner.getOffhandItem();
 -            boolean mainHandIsFishing = selectedItem.is(Items.FISHING_ROD);
 -            boolean offHandIsFishing = selectedItemOffHand.is(Items.FISHING_ROD);
-+            boolean mainHandIsFishing = selectedItem.canPerformAction(net.neoforged.neoforge.common.ItemAbilities.FISHING_ROD_CAST);
-+            boolean offHandIsFishing = selectedItemOffHand.canPerformAction(net.neoforged.neoforge.common.ItemAbilities.FISHING_ROD_CAST);
++            // NeoFobric: the vanilla tag checks are asked as well. Fabric's item API wraps exactly this call to
++            // let a mod's own rods count (fabric-item-api-v1's FishingHookMixin @WrapsOperation on
++            // ItemStack#is(Items.FISHING_ROD)); with NeoForge's capability check alone there was nothing left
++            // to inject into and the wrap failed the whole class with "0/2 succeeded". Either answer keeps the
++            // hook attached, so the platform's rods keep working too.
++            boolean mainHandIsFishing = selectedItem.is(Items.FISHING_ROD)
++                    || selectedItem.canPerformAction(net.neoforged.neoforge.common.ItemAbilities.FISHING_ROD_CAST);
++            boolean offHandIsFishing = selectedItemOffHand.is(Items.FISHING_ROD)
++                    || selectedItemOffHand.canPerformAction(net.neoforged.neoforge.common.ItemAbilities.FISHING_ROD_CAST);
              if ((mainHandIsFishing || offHandIsFishing) && this.distanceToSqr(owner) <= 1024.0) {
                  return false;
              }

@@ -9,6 +9,20 @@
      private final ResourceKey<? extends Registry<T>> key;
      private final ObjectList<Holder.Reference<T>> byId = new ObjectArrayList<>(256);
      private final Reference2IntMap<T> toId = Util.make(new Reference2IntOpenHashMap<>(), t -> t.defaultReturnValue(-1));
+@@ -78,6 +_,13 @@
+         }
+     }
+ 
++    /// Neo: whether this registry is closed to writes. `BuiltInRegistries#freeze` runs more than once in
++    /// this setup (Fabric's registry sync re-runs the bootstrap after mod initialization) and skips the
++    /// registries it has already closed, so it needs to ask.
++    public boolean isFrozen() {
++        return this.frozen;
++    }
++
+     private void validateWrite(ResourceKey<T> key) {
+         if (this.frozen) {
+             throw new IllegalStateException("Registry is already frozen (trying to add key " + key + ")");
 @@ -86,9 +_,17 @@
  
      @Override

@@ -1925,6 +1925,9 @@ public final class MixinJarPatcher {
      * {@code RegistryListBridge.merge}, which keeps NeoForge's entries and appends the Fabric ones that
      * are not already present. The body is straight-line either way (load, call, call, return), so no
      * stack map frames are involved.
+     *
+     * <p>The accessor is {@code getWorldRegistries}: the 26.3 Fabric API renamed the old
+     * {@code getBootstrappingRegistries}, and the mixin itself now returns that list.
      */
     private static byte[] mergeRegistryListSwap(byte[] classBytes, String entryName) {
         if (!entryName.endsWith(".class")) {
@@ -1950,7 +1953,7 @@ public final class MixinJarPatcher {
             method.tryCatchBlocks.clear();
             method.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
             method.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
-                    "net/fabricmc/fabric/api/event/registry/DynamicRegistries", "getBootstrappingRegistries",
+                    "net/fabricmc/fabric/api/event/registry/DynamicRegistries", "getWorldRegistries",
                     "()Ljava/util/List;", false));
             method.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
                     "net/neoforged/fabricbridge/RegistryListBridge", "merge",
