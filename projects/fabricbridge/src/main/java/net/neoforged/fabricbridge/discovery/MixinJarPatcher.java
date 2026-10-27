@@ -4456,7 +4456,15 @@ public final class MixinJarPatcher {
             // host rewrite shifts Mixin's - see NeoFobricClassTweakerProcessor#processClass - so the wrap
             // goes. What is lost is Fabric's say in which way a player ends up facing after sleeping.
             java.util.Map.entry("net/fabricmc/fabric/mixin/entity/event/ServerPlayerMixin",
-                    java.util.Set.of("redirectSleepDirection")));
+                    java.util.Set.of("redirectSleepDirection")),
+            // The base listener's custom-payload router. It expects the play-phase listener to answer for its
+            // own payloads and throws "Unknown addon" when the listener is not a configuration one - but
+            // NeoForge's own patch adds a super.handleCustomPayload(packet) call to the play listener, so this
+            // handler runs for play traffic and disconnects the player on the first Fabric payload after login
+            // (observed: disconnect right after the world loads). The play-phase handler in
+            // ServerGamePacketListenerImplMixin stays; only the base one goes.
+            java.util.Map.entry("net/fabricmc/fabric/mixin/networking/ServerCommonPacketListenerImplMixin",
+                    java.util.Set.of("handleCustomPayloadReceivedAsync")));
 
     /**
      * Removes the injector handlers named by {@link #STRIP_HANDLER_METHODS} from an allowlisted mixin
