@@ -4456,14 +4456,61 @@ public final class MixinJarPatcher {
             // host rewrite shifts Mixin's - see NeoFobricClassTweakerProcessor#processClass - so the wrap
             // goes. What is lost is Fabric's say in which way a player ends up facing after sleeping.
             java.util.Map.entry("net/fabricmc/fabric/mixin/entity/event/ServerPlayerMixin",
-                    java.util.Set.of("redirectSleepDirection")),
-            // The client gametest API wraps the framebuffer blit to copy frames for its screenshot helpers. It
-            // runs during the early-display handoff too, where GameRenderer does not exist yet, and the NPE it
-            // throws there aborts the handoff - the window never finishes coming up and a client game test that
-            // then asks for a world waits on a screen that never closes. The screenshots the API would take are a
-            // diagnostic, not a test input.
-            java.util.Map.entry("net/fabricmc/fabric/mixin/client/gametest/input/GlCommandEncoderMixin",
-                    java.util.Set.of("blitFrameBuffer")));
+                    java.util.Set.of("redirectSleepDirection")));
+
+    /**
+     * Guards the client gametest API.s framebuffer-blit wrap against the early-display handoff.
+     *
+     * <p>The wrap copies frames for the API.s screenshot assertions, and it runs during the loading-screen
+     * handoff too - where { Minecraft.gameRenderer} does not exist yet, so the handler dereferences
+     * null, throws, and aborts the handoff: the window never finishes coming up and a game test that then
+     * asks for a world waits on a screen that never closes. The handler cannot be dropped (the screenshot
+     * tests need it), so a null-check of { Minecraft.getInstance().gameRenderer} is prepended: without
+     * a renderer there is nothing to copy, and the call returns.
+     */
+    private static byte[] guardGametestBlitHandler(byte[] classBytes, String entryName) {
+        if (!entryName.endsWith(".class")) {
+            return null;
+        }
+        var internalName = entryName.substring(0, entryName.length() - ".class".length());
+        if (!"net/fabricmc/fabric/mixin/client/gametest/input/GlCommandEncoderMixin".equals(internalName)) {
+            return null;
+        }
+        ClassNode node;
+        try {
+            node = new ClassNode();
+            new ClassReader(classBytes).accept(node, 0);
+        } catch (Throwable t) {
+            return null;
+        }
+        var patched = 0;
+        for (var method : node.methods) {
+            if (!"blitFrameBuffer".equals(method.name) || method.instructions == null) {
+                continue;
+            }
+            var first = method.instructions.getFirst();
+            if (first == null) {
+                continue;
+            }
+            var start = new org.objectweb.asm.tree.LabelNode();
+            var guard = new org.objectweb.asm.tree.InsnList();
+            guard.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "net/minecraft/client/Minecraft", "getInstance",
+                    "()Lnet/minecraft/client/Minecraft;", false));
+            guard.add(new org.objectweb.asm.tree.FieldInsnNode(Opcodes.GETFIELD, "net/minecraft/client/Minecraft",
+                    "gameRenderer", "Lnet/minecraft/client/renderer/GameRenderer;"));
+            guard.add(new org.objectweb.asm.tree.JumpInsnNode(Opcodes.IFNONNULL, start));
+            guard.add(new InsnNode(Opcodes.RETURN));
+            guard.add(start);
+            method.instructions.insertBefore(first, guard);
+            patched++;
+            break;
+        }
+        if (patched == 0) {
+            return null;
+        }
+        LOGGER.info("[NeoFobric] Guarded the client gametest blit against the early-display handoff");
+        return writeClass(node);
+    }
 
     /**
      * Turns fabric-networking's "Unknown addon" throw into an early return.
@@ -5914,6 +5961,11 @@ public final class MixinJarPatcher {
                 }
                 allClasses.add(versionMoved);
                 collectFrameTypes(versionMoved, frameStubCandidates);
+                var blitGuarded = guardGametestBlitHandler(versionMoved, entry.getName());
+                if (blitGuarded != null) {
+                    versionMoved = blitGuarded;
+                    patched.put(entry.getName(), versionMoved);
+                }
                 var fabricVersionChannelRenamed = renameFabricVersionChannel(versionMoved, entry.getName());
                 if (fabricVersionChannelRenamed != null) {
                     versionMoved = fabricVersionChannelRenamed;

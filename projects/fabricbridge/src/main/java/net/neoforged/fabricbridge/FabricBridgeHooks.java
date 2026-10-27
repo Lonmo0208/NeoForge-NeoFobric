@@ -897,6 +897,17 @@ public final class FabricBridgeHooks {
      * so the attribute states what is already true.
      */
     public static void markBuiltInRegistriesSynced() {
+        if (Boolean.getBoolean("neofobric.debugTags")) {
+            try {
+                for (var mod : net.fabricmc.loader.api.FabricLoader.getInstance().getAllMods()) {
+                    var tags = mod.findPath("data/minecraft/tags/block");
+                    LOGGER.info("[NeoFobric] tag scan {} {} -> {}", mod.getMetadata().getId(),
+                            mod.getMetadata().getVersion().getFriendlyString(), tags);
+                }
+            } catch (Throwable t) {
+                LOGGER.warn("[NeoFobric] tag scan failed", t);
+            }
+        }
         try {
             var loader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
             var registries = Class.forName("net.minecraft.core.registries.BuiltInRegistries", false, loader)
