@@ -22,12 +22,20 @@
      public static final Supplier<BiMap<Block, Block>> WAX_OFF_BY_BLOCK = Suppliers.memoize(() -> WAXABLES.get().inverse());
      public static final ImmutableMap<Block, Pair<RecipeCategory, String>> WAXED_RECIPES;
  
-@@ -93,7 +_,7 @@
+@@ -93,7 +_,15 @@
      }
  
      public static Optional<BlockState> getWaxed(BlockState oldState) {
 -        return Optional.ofNullable(WAXABLES.get().get(oldState.getBlock())).map(b -> b.withPropertiesOf(oldState));
-+        return Optional.ofNullable(net.neoforged.neoforge.common.DataMapHooks.getBlockWaxed(oldState.getBlock())).map(b -> b.withPropertiesOf(oldState));
++        Block waxed = net.neoforged.neoforge.common.DataMapHooks.getBlockWaxed(oldState.getBlock());
++        if (waxed == null) {
++            // NeoFobric: the legacy map stays consulted. Fabric's OxidizableBlocksRegistry writes waxable
++            // pairs into it (its HoneycombItemMixin makes the memoized map mutable), and it has no way to
++            // reach a data map - those are filled from data packs - so without this a block a Fabric mod
++            // made waxable simply cannot be waxed.
++            waxed = WAXABLES.get().get(oldState.getBlock());
++        }
++        return Optional.ofNullable(waxed).map(b -> b.withPropertiesOf(oldState));
      }
  
      @Override

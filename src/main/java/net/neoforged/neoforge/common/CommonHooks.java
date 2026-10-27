@@ -962,6 +962,9 @@ public class CommonHooks {
         // the server. Fluids from NeoForge mods keep the loud failure.
         if (net.neoforged.fabricbridge.FabricBridgeHooks.isFabricModClass(fluid.getClass())) {
             var behavior = net.neoforged.fabricbridge.FabricBridgeHooks.fabricFluidBehavior(fluid);
+            if (Boolean.getBoolean("neofobric.debugFluidTypes")) {
+                LOGGER.info("[NeoFobric] fluid type lookup for {}: {}", fluid, behavior);
+            }
             return behavior != null ? fabricFluidType(behavior) : NeoForgeMod.EMPTY_TYPE.value();
         }
         throw new RuntimeException("Mod fluids must override getFluidType.");
@@ -978,7 +981,12 @@ public class CommonHooks {
             return NeoForgeMod.WATER_TYPE.value();
         }
 
-        return new FluidType(FluidType.Properties.create()
+        // NeoFobric: one type per Fabric behaviour, not one per lookup. NeoForge keys its per-entity fluid
+        // state (the trackers, the current accumulators, whether the entity is in the fluid at all) by the
+        // type instance, so a fresh instance on every getFluidType call made each query land on a different
+        // tracker - entities appeared to leave and re-enter the fluid every tick and the movement, floating
+        // and drowning Fabric declared for it never settled.
+        return FABRIC_FLUID_TYPES.computeIfAbsent(behavior.behavior(), ignored -> new FluidType(FluidType.Properties.create()
                 .canSwim(behavior.canSwim())
                 .canDrown(behavior.canDrown())
                 .canPushEntity(behavior.canPushEntity())
@@ -996,8 +1004,12 @@ public class CommonHooks {
                         behavior.behavior(), behavior.tag(), entity, movementVector, gravity,
                         entity.getDeltaMovement().y <= 0.0, entity.getY());
             }
-        };
+        });
     }
+
+    /** NeoFobric: the fluid types built for Fabric fluid behaviours, one per behaviour. */
+    private static final java.util.Map<Object, FluidType> FABRIC_FLUID_TYPES =
+            java.util.Collections.synchronizedMap(new java.util.IdentityHashMap<>());
 
     // FIXME: is this still needed
     /*public static TagKey<Block> getTagFromVanillaTier(Tiers tier) {

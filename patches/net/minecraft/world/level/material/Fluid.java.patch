@@ -30,7 +30,7 @@
      public @Nullable AABB getAABB(FluidState state, BlockGetter level, BlockPos pos) {
          if (this.isEmpty()) {
              return null;
-@@ -125,5 +_,22 @@
+@@ -125,5 +_,31 @@
      @Deprecated
      public Holder.Reference<Fluid> builtInRegistryHolder() {
          return this.builtInRegistryHolder;
@@ -40,7 +40,16 @@
 +
 +    @Override
 +    public net.neoforged.neoforge.fluids.FluidType getFluidType() {
-+        if (forgeFluidType == null) forgeFluidType = net.neoforged.neoforge.common.CommonHooks.getVanillaFluidType(this);
++        // NeoFobric: a Fabric fluid's type is derived from a behaviour registry keyed by fluid tags, and those
++        // tags are bound by the first data-pack load. The first lookup can therefore run before the behaviour
++        // is visible and settle on the empty type for the rest of the session - which is what happened to the
++        // test mod's fluids: their movement, floating and drowning never applied. An empty answer is not
++        // cached for such a fluid, so the lookup runs again once the tags are there.
++        if (forgeFluidType == null
++                || (forgeFluidType == net.neoforged.neoforge.common.NeoForgeMod.EMPTY_TYPE.value()
++                        && net.neoforged.fabricbridge.FabricBridgeHooks.isFabricModClass(this.getClass()))) {
++            forgeFluidType = net.neoforged.neoforge.common.CommonHooks.getVanillaFluidType(this);
++        }
 +        return forgeFluidType;
 +    }
 +

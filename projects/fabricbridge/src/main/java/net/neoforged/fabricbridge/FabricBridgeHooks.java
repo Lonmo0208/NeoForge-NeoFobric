@@ -1057,6 +1057,7 @@ public final class FabricBridgeHooks {
             // lookup that ran before that (or while the registry was being filled) must not be remembered.
             if (!resolved.isEmpty()) {
                 fabricFluidBehaviors = resolved;
+                resolved = fabricFluidBehaviors;
             }
         }
         return resolved.get(fluid);
@@ -1078,16 +1079,27 @@ public final class FabricBridgeHooks {
 
             for (var tag : (Iterable<?>) registry.getMethod("getCustomInteractableFluids").invoke(null)) {
                 var behavior = getFluidBehavior.invoke(null, tag);
+                if (Boolean.getBoolean("neofobric.debugFluidTypes")) {
+                    LOGGER.info("[NeoFobric] fluid tag {} -> behaviour {}", tag,
+                            behavior == null ? "null" : behavior.getClass().getName());
+                }
                 if (behavior == null) {
                     continue;
                 }
                 var described = describeFabricFluidBehavior(behavior, tag, behavior == waterLike);
                 if (described == null) {
+                    if (Boolean.getBoolean("neofobric.debugFluidTypes")) {
+                        LOGGER.info("[NeoFobric] fluid tag {} could not be described from {}", tag, behavior.getClass().getName());
+                    }
                     continue;
                 }
 
                 for (var holder : (Iterable<?>) getTagOrEmpty.invoke(fluidRegistry, tag)) {
-                    byFluid.put(holderValue.invoke(holder), described);
+                    var value = holderValue.invoke(holder);
+                    byFluid.put(value, described);
+                    if (Boolean.getBoolean("neofobric.debugFluidTypes")) {
+                        LOGGER.info("[NeoFobric] fluid tag {} covers fluid {}", tag, value);
+                    }
                 }
             }
         } catch (ClassNotFoundException e) {

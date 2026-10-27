@@ -30,12 +30,20 @@
              candiate = previous;
          }
  
-@@ -63,7 +_,7 @@
+@@ -63,7 +_,15 @@
      }
  
      static Optional<Block> getNext(Block block) {
 -        return Optional.ofNullable(NEXT_BY_BLOCK.get().get(block));
-+        return Optional.ofNullable(net.neoforged.neoforge.common.DataMapHooks.getNextOxidizedStage(block));
++        Block next = net.neoforged.neoforge.common.DataMapHooks.getNextOxidizedStage(block);
++        if (next == null) {
++            // NeoFobric: the legacy map stays consulted. Fabric's OxidizableBlocksRegistry writes its
++            // next stages into it (its WeatheringCopperMixin makes the memoized map mutable) and has no way
++            // to reach a data map, so without this a block a Fabric mod made oxidizable never ticks, and
++            // the entrypoint that registers such blocks fails its own assertion.
++            next = NEXT_BY_BLOCK.get().get(block);
++        }
++        return Optional.ofNullable(next);
      }
  
      static BlockState getFirst(BlockState state) {
