@@ -1,6 +1,18 @@
 --- a/net/minecraft/world/level/chunk/ChunkGenerator.java
 +++ b/net/minecraft/world/level/chunk/ChunkGenerator.java
-@@ -101,9 +_,14 @@
+@@ -91,7 +_,10 @@
+         .byNameCodec()
+         .dispatchStable(ChunkGenerator::codec, Function.identity());
+     protected final BiomeSource biomeSource;
+-    private final Supplier<List<FeatureSorter.StepFeatureData>> featuresPerStep;
++    // NeoFobric: not final. Fabric's biome API writes this field itself (BiomeModificationImpl, after its
++    // biome modifications, through the access widener) with a plain memoized supplier, so the value is not
++    // always the platform's Lazy.
++    private Supplier<List<FeatureSorter.StepFeatureData>> featuresPerStep;
+     private final Function<Holder<Biome>, BiomeGenerationSettings> generationSettingsGetter;
+ 
+     public ChunkGenerator(BiomeSource biomeSource) {
+@@ -101,9 +_,24 @@
      public ChunkGenerator(BiomeSource biomeSource, Function<Holder<Biome>, BiomeGenerationSettings> generationSettingsGetter) {
          this.biomeSource = biomeSource;
          this.generationSettingsGetter = generationSettingsGetter;
@@ -12,7 +24,17 @@
 +
 +    @org.jetbrains.annotations.ApiStatus.Internal
 +    public void refreshFeaturesPerStep() {
-+        ((net.neoforged.neoforge.common.util.Lazy<?>) this.featuresPerStep).invalidate();
++        // NeoFobric: the value is the platform's Lazy unless something replaced it - Fabric's biome API does,
++        // with its own memoized supplier, right after its biome modifications. A plain supplier cannot be
++        // invalidated, so the list is rebuilt from the same inputs the constructor uses; that is exactly what
++        // the invalidate would have produced on the next read.
++        if (this.featuresPerStep instanceof net.neoforged.neoforge.common.util.Lazy<?> lazy) {
++            lazy.invalidate();
++        } else {
++            this.featuresPerStep = net.neoforged.neoforge.common.util.Lazy.of(
++                () -> FeatureSorter.buildFeaturesPerStep(List.copyOf(this.biomeSource.possibleBiomes()), b -> this.generationSettingsGetter.apply(b).features(), true)
++            );
++        }
      }
  
      public void validate() {
