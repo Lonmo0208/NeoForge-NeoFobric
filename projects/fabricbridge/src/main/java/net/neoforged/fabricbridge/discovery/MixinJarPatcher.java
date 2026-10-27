@@ -4457,14 +4457,88 @@ public final class MixinJarPatcher {
             // goes. What is lost is Fabric's say in which way a player ends up facing after sleeping.
             java.util.Map.entry("net/fabricmc/fabric/mixin/entity/event/ServerPlayerMixin",
                     java.util.Set.of("redirectSleepDirection")),
-            // The base listener's custom-payload router. It expects the play-phase listener to answer for its
-            // own payloads and throws "Unknown addon" when the listener is not a configuration one - but
-            // NeoForge's own patch adds a super.handleCustomPayload(packet) call to the play listener, so this
-            // handler runs for play traffic and disconnects the player on the first Fabric payload after login
-            // (observed: disconnect right after the world loads). The play-phase handler in
-            // ServerGamePacketListenerImplMixin stays; only the base one goes.
-            java.util.Map.entry("net/fabricmc/fabric/mixin/networking/ServerCommonPacketListenerImplMixin",
-                    java.util.Set.of("handleCustomPayloadReceivedAsync")));
+            // The client gametest API wraps the framebuffer blit to copy frames for its screenshot helpers. It
+            // runs during the early-display handoff too, where GameRenderer does not exist yet, and the NPE it
+            // throws there aborts the handoff - the window never finishes coming up and a client game test that
+            // then asks for a world waits on a screen that never closes. The screenshots the API would take are a
+            // diagnostic, not a test input.
+            java.util.Map.entry("net/fabricmc/fabric/mixin/client/gametest/input/GlCommandEncoderMixin",
+                    java.util.Set.of("blitFrameBuffer")));
+
+    /**
+     * Turns fabric-networking's "Unknown addon" throw into an early return.
+     *
+     * <p>The base listener's custom-payload router expects the play-phase listener to answer for its own
+     * payloads and throws {@code IllegalStateException("Unknown addon")} when it is not a configuration
+     * listener. NeoForge's own patch adds a {@code super.handleCustomPayload(packet)} call to the play
+     * listener, so the router runs for play traffic and killed the connection with the first Fabric payload
+     * after login. Removing the whole handler would also stop the configuration-phase router that every
+     * join goes through (the client then sat on the loading screen and never entered the world), so only the
+     * throw is replaced: the configuration path keeps answering, and a play payload falls through to the
+     * play-phase handler and then to NeoForge's own handling.
+     */
+    private static byte[] neutraliseUnknownAddonThrow(byte[] classBytes, String entryName) {
+        if (!entryName.endsWith(".class")) {
+            return null;
+        }
+        var internalName = entryName.substring(0, entryName.length() - ".class".length());
+        if (!"net/fabricmc/fabric/mixin/networking/ServerCommonPacketListenerImplMixin".equals(internalName)) {
+            return null;
+        }
+        ClassNode node;
+        try {
+            node = new ClassNode();
+            new ClassReader(classBytes).accept(node, 0);
+        } catch (Throwable t) {
+            return null;
+        }
+        var patched = 0;
+        for (var method : node.methods) {
+            if (method.instructions == null) {
+                continue;
+            }
+            for (var insn = method.instructions.getFirst(); insn != null; insn = insn.getNext()) {
+                if (!(insn instanceof org.objectweb.asm.tree.LdcInsnNode ldc) || !"Unknown addon".equals(ldc.cst)) {
+                    continue;
+                }
+                // walk back to the exception construction and forward to its ATHROW
+                var start = insn;
+                for (int i = 0; i < 4 && start != null; i++) {
+                    start = start.getPrevious();
+                    if (start instanceof org.objectweb.asm.tree.TypeInsnNode) {
+                        break;
+                    }
+                }
+                var end = insn;
+                while (end != null && end.getOpcode() != Opcodes.ATHROW) {
+                    end = end.getNext();
+                }
+                if (start == null || end == null) {
+                    continue;
+                }
+                // Every instruction from the exception construction up to the throw becomes a no-op, and the
+                // throw itself becomes the method's return. Keeping the instruction nodes in place (instead
+                // of deleting them) leaves labels and line numbers where the debug table expects them.
+                for (var victim = start; victim != null; ) {
+                    var after = victim.getNext();
+                    if (victim.getOpcode() >= 0) {
+                        method.instructions.set(victim, victim == end ? new InsnNode(Opcodes.RETURN) : new InsnNode(Opcodes.NOP));
+                    }
+                    if (victim == end) {
+                        break;
+                    }
+                    victim = after;
+                }
+                patched++;
+                break;
+            }
+        }
+        if (patched == 0) {
+            return null;
+        }
+        LOGGER.info("[NeoFobric] Let a play-phase Fabric payload fall through instead of failing the connection");
+        return writeClass(node);
+    }
 
     /**
      * Removes the injector handlers named by {@link #STRIP_HANDLER_METHODS} from an allowlisted mixin
@@ -5840,6 +5914,16 @@ public final class MixinJarPatcher {
                 }
                 allClasses.add(versionMoved);
                 collectFrameTypes(versionMoved, frameStubCandidates);
+                var fabricVersionChannelRenamed = renameFabricVersionChannel(versionMoved, entry.getName());
+                if (fabricVersionChannelRenamed != null) {
+                    versionMoved = fabricVersionChannelRenamed;
+                    patched.put(entry.getName(), versionMoved);
+                }
+                var addonGuardRemoved = neutraliseUnknownAddonThrow(versionMoved, entry.getName());
+                if (addonGuardRemoved != null) {
+                    versionMoved = addonGuardRemoved;
+                    patched.put(entry.getName(), versionMoved);
+                }
                 if (!looksLikeMixinClass(entry.getName())) {
                     // Not a mixin: the only rewrites it may need are a call site of a renamed accessor
                     // member (Fabric's own implementation classes do the casting) or a page API that is
