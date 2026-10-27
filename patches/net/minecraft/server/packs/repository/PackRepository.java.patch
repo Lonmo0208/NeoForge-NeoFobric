@@ -1,6 +1,11 @@
 --- a/net/minecraft/server/packs/repository/PackRepository.java
 +++ b/net/minecraft/server/packs/repository/PackRepository.java
-@@ -23,7 +_,7 @@
+@@ -19,11 +_,12 @@
+ 
+ public class PackRepository {
+     private final Set<RepositorySource> sources;
++    private final Set<String> explicitlyRemoved = new java.util.HashSet<>(); // NeoFobric: see rebuildSelected
+     private Map<String, Pack> available = ImmutableMap.of();
      private List<Pack> selected = ImmutableList.of();
  
      public PackRepository(RepositorySource... sources) {
@@ -9,7 +14,13 @@
      }
  
      public static String displayPackList(Collection<Pack> packs) {
-@@ -37,10 +_,13 @@
+@@ -33,14 +_,19 @@
+     public void reload() {
+         List<String> currentlySelectedNames = this.selected.stream().map(Pack::getId).collect(ImmutableList.toImmutableList());
+         this.available = this.discoverAvailable();
++        // NeoFobric: a repository refresh rebuilds the selection from scratch, which re-enables required packs
++        this.explicitlyRemoved.clear();
+         this.selected = this.rebuildSelected(currentlySelectedNames);
      }
  
      private Map<String, Pack> discoverAvailable() {
@@ -25,7 +36,31 @@
          }
  
          return ImmutableMap.copyOf(discovered);
-@@ -80,11 +_,12 @@
+@@ -52,12 +_,15 @@
+     }
+ 
+     public void setSelected(Collection<String> packs) {
++        // NeoFobric: an explicit selection rebuilds like vanilla, so required packs that were removed come back
++        this.explicitlyRemoved.clear();
+         this.selected = this.rebuildSelected(packs);
+     }
+ 
+     public boolean addPack(String packId) {
+         Pack pack = this.available.get(packId);
+         if (pack != null && !this.selected.contains(pack)) {
++            this.explicitlyRemoved.remove(packId); // NeoFobric: adding clears an earlier removal
+             List<Pack> selectedCopy = Lists.newArrayList(this.selected);
+             selectedCopy.add(pack);
+             this.selected = selectedCopy;
+@@ -70,6 +_,7 @@
+     public boolean removePack(String packId) {
+         Pack pack = this.available.get(packId);
+         if (pack != null && this.selected.contains(pack)) {
++            this.explicitlyRemoved.add(packId); // NeoFobric: keep rebuildSelected from re-adding it
+             List<Pack> selectedCopy = Lists.newArrayList(this.selected);
+             selectedCopy.remove(pack);
+             this.selected = selectedCopy;
+@@ -80,11 +_,19 @@
      }
  
      public List<Pack> rebuildSelected(Collection<String> selectedNames) {
@@ -33,8 +68,16 @@
 +        List<Pack> selectedAndPresent = net.neoforged.neoforge.resource.ResourcePackLoader.expandAndRemoveRootChildren(this.getAvailablePacks(selectedNames), this.available.values());
  
          for (Pack pack : this.available.values()) {
-             if (pack.isRequired() && !selectedAndPresent.contains(pack)) {
+-            if (pack.isRequired() && !selectedAndPresent.contains(pack)) {
 -                pack.getDefaultPosition().insert(selectedAndPresent, pack, Pack::selectionConfig, false);
++            // NeoFobric: a pack removed through removePack stays out of the next rebuild. Vanilla's
++            // reload opens exactly the requested pack list, so a removal takes effect immediately; the
++            // NeoForge patch that routes the reload through rebuildSelected would re-add every
++            // required pack right here and silently undo the removal. Fabric's ALWAYS_ENABLED builtin
++            // packs are required packs, so this difference changed tag data across a resource reload.
++            // setSelected() and reload() clear the mark again, matching vanilla, where the selection
++            // rebuilt at the end of the reload has the required packs back.
++            if (pack.isRequired() && !selectedAndPresent.contains(pack) && !this.explicitlyRemoved.contains(pack.getId())) {
 +                int i = pack.getDefaultPosition().insert(selectedAndPresent, pack, Pack::selectionConfig, false);
 +                selectedAndPresent.addAll(i + 1, pack.getChildren());
              }

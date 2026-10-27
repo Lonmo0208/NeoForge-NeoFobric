@@ -5030,13 +5030,37 @@ public final class MixinJarPatcher {
             var builder = new StringBuilder();
             for (var root : gameContent) {
                 try {
-                    builder.append(Files.size(root)).append(':').append(Files.getLastModifiedTime(root).toMillis()).append(',');
+                    builder.append(contentEntryStamp(root)).append(',');
                 } catch (Throwable t) {
                     builder.append("?,");
                 }
             }
             contentStamp = builder.toString();
             return contentStamp;
+        }
+
+        /**
+         * {@return a stamp for one game-content root}
+         *
+         * <p>A jar or class directory is only ever restamped when its bytes change, and the directory
+         * mtime does not move when a class file is recompiled in place. Development runs pass the
+         * exploded class directories here, so a platform rebuild would otherwise leave the previous
+         * run's patched mod jars in the cache: the patcher reads the game classes to decide what to
+         * do, so those classes are part of the cache key.
+         */
+        private static String contentEntryStamp(Path root) throws java.io.IOException {
+            if (!Files.isDirectory(root)) {
+                return Files.size(root) + ":" + Files.getLastModifiedTime(root).toMillis();
+            }
+            long total = 0;
+            long latest = 0;
+            try (var files = Files.walk(root)) {
+                for (var file : (Iterable<Path>) files.filter(Files::isRegularFile)::iterator) {
+                    total += Files.size(file);
+                    latest = Math.max(latest, Files.getLastModifiedTime(file).toMillis());
+                }
+            }
+            return "exploded:" + total + ":" + latest;
         }
 
         private volatile String contentStamp;
