@@ -47,11 +47,14 @@ dependencyResolutionManagement {
     rulesMode = RulesMode.FAIL_ON_PROJECT_RULES
     repositories {
         mavenCentral()
-        // NeoFobric: only consulted for the fabric-loader artifact when neofobric.fabricLoader.local=false.
+        // NeoFobric: only consulted for the fabric-loader artifact when neofobric.fabricLoader.local=false,
+        // and for sponge-mixin, which moving to 26.3 makes Gradle look up again (the NeoForge repositories
+        // do not carry it, and asking them first costs a slow miss).
         maven {
             url = 'https://maven.fabricmc.net/'
             content {
                 includeModule('net.fabricmc', 'fabric-loader')
+                includeModule('net.fabricmc', 'sponge-mixin')
             }
         }
     }
