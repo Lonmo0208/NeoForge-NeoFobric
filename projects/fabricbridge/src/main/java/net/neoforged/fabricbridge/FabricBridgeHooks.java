@@ -311,6 +311,29 @@ public final class FabricBridgeHooks {
     }
 
     /**
+     * Registers one of Fabric's particle providers with the platform's particle resources.
+     *
+     * <p>Fabric's {@code ParticleProviderRegistryImpl} writes {@code ParticleResources.providers} itself, as an
+     * {@code Int2ObjectMap} keyed by the particle type's numeric id - vanilla 26.3's field. NeoForge 26.3 keys
+     * that map by {@code Identifier} instead, so the direct write is a {@code NoSuchFieldError} at the first
+     * provider the client registers and the game never finishes starting. The bridge's jar patcher turns that
+     * write into a call here ({@code MixinJarPatcher#retargetParticleProviderField}); the type is looked up and
+     * put into the platform's map, which is what every reader of it expects.
+     */
+    public static void registerParticleProvider(Object resources, Object type, Object provider) {
+        try {
+            var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
+            var builtIn = Class.forName("net.minecraft.core.registries.BuiltInRegistries", false, gameLoader);
+            var particleTypes = builtIn.getField("PARTICLE_TYPE").get(null);
+            var key = particleTypes.getClass().getMethod("getKey", Object.class).invoke(particleTypes, type);
+            var providers = resources.getClass().getMethod("getProviders").invoke(resources);
+            ((java.util.Map<Object, Object>) providers).put(key, provider);
+        } catch (Throwable t) {
+            LOGGER.warn("[NeoFobric] Could not register a Fabric particle provider", t);
+        }
+    }
+
+    /**
      * Fires Fabric's item-use-on-block event and hands back whatever a listener asked for, or null when
      * nobody overrode the item's own behaviour.
      *

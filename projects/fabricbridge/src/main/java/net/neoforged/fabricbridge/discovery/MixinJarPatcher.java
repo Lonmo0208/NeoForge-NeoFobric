@@ -4500,6 +4500,8 @@ public final class MixinJarPatcher {
         return writeClass(node);
     }
 
+    /** {@return the next node that is an instruction (not a label, line number or frame), or null} */
+
     public static byte[] stripCollidingDuckMembers(byte[] classBytes, String entryName,
             java.util.function.Function<String, byte[]> targetBytecode) {
         if (!entryName.endsWith(".class")) {
