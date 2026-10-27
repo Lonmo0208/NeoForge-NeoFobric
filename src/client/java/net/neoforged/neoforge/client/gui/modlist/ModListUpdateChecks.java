@@ -7,7 +7,7 @@ package net.neoforged.neoforge.client.gui.modlist;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import net.neoforged.fml.VersionChecker;
+import net.neoforged.neoforge.common.VersionChecker;
 import org.jetbrains.annotations.ApiStatus;
 import org.jspecify.annotations.Nullable;
 
