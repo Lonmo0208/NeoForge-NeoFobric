@@ -683,10 +683,16 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         if (changed) {
             context.audit("neofobric.class_tweaker", "applied class tweaker rules");
         }
-        if (addedMethods) {
-            return ComputeFlags.COMPUTE_MAXS;
+        // NeoFobric: a class this processor rewrites is written back with computed frames, not with the
+        // table Mixin left on the node. Mixin injects at HEAD into classes this processor has widened or
+        // given interfaces to, which shifts every frame of the method; SIMPLE_REWRITE wrote that table
+        // back unchanged and the JVM rejected the class with "Expecting a stackmap frame at branch target
+        // N" (ServerPlayer#calculateGameModeForNewPlayer). FML only honours COMPUTE_FRAMES from the last
+        // transformer in the chain, which is this one.
+        if (addedMethods || changed) {
+            return ComputeFlags.COMPUTE_FRAMES;
         }
-        return changed ? ComputeFlags.SIMPLE_REWRITE : ComputeFlags.NO_REWRITE;
+        return ComputeFlags.NO_REWRITE;
     }
 
     /**

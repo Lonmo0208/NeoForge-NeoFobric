@@ -4447,7 +4447,16 @@ public final class MixinJarPatcher {
             // the other end of the pipeline). Everything else in this class - the Mesh-taking submit methods that
             // make FRAPI work at all - stays.
             java.util.Map.entry("net/fabricmc/fabric/mixin/client/renderer/submit/SubmitNodeCollectionMixin",
-                    java.util.Set.of("hasMaterialFlagProxy")));
+                    java.util.Set.of("hasMaterialFlagProxy")),
+            // The bed-sleep direction wrap. MixinExtras generates a synthetic wrapper method for it, and
+            // that wrapper reads a local the JVM can no longer type once the frames are recomputed for this
+            // class ("Bad local variable type ... locals[8]", thrown while ServerPlayer is loaded): the
+            // method is a fresh one built from the target's locals, and its frame table is only valid for
+            // the exact bytecode Mixin wrote. Frames have to be recomputed for this class because the
+            // host rewrite shifts Mixin's - see NeoFobricClassTweakerProcessor#processClass - so the wrap
+            // goes. What is lost is Fabric's say in which way a player ends up facing after sleeping.
+            java.util.Map.entry("net/fabricmc/fabric/mixin/entity/event/ServerPlayerMixin",
+                    java.util.Set.of("redirectSleepDirection")));
 
     /**
      * Removes the injector handlers named by {@link #STRIP_HANDLER_METHODS} from an allowlisted mixin
