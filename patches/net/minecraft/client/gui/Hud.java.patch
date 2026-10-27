@@ -29,7 +29,7 @@
      }
  
      public void registerReloadListeners(ReloadableResourceManager resourceManager) {
-@@ -224,28 +_,48 @@
+@@ -224,28 +_,56 @@
      public void extractRenderState(GuiGraphicsExtractor graphics, DeltaTracker deltaTracker) {
          this.minecraft.gameRenderer.gameRenderState().guiRenderState.isHudHidden = this.isHidden;
          if (!(this.minecraft.gui.screen() instanceof LevelLoadingScreen)) {
@@ -40,19 +40,19 @@
 -                this.extractHotbarAndDecorations(graphics, deltaTracker);
 -                this.extractEffects(graphics, deltaTracker);
 -                this.extractBossOverlay(graphics, deltaTracker);
--            }
--
--            this.extractSleepOverlay(graphics, deltaTracker);
--            if (!this.isHidden) {
--                this.extractDemoOverlay(graphics, deltaTracker);
--                this.extractScoreboardSidebar(graphics, deltaTracker);
--                this.extractOverlayMessage(graphics, deltaTracker);
--                this.extractTitle(graphics, deltaTracker);
--                this.extractChat(graphics, deltaTracker);
--                this.extractTabList(graphics, deltaTracker);
 +            leftHeight = 39;
 +            rightHeight = 39;
-+            updateContextualBarRenderer();
++            // NeoFobric: vanilla refreshed the contextual bar's state right here, and the layer that draws the bar
++            // was split out of this method - which left a Fabric-side mixin that replaces that refresh with nothing
++            // left to replace (its handler binds this method's own graphics and delta as trailing parameters, so it
++            // has to fire in this method). The body is back where vanilla had it; the layer recomputes the same
++            // value when it draws, so nothing changes for anyone not replacing this call.
++            Hud.ContextualInfo nextContextualInfo = this.nextContextualInfoState();
++            if (nextContextualInfo != this.contextualInfoBar.getFirst()) {
++                this.contextualInfoBar = Pair.of(nextContextualInfo, this.contextualInfoBars.get(nextContextualInfo).get());
+             }
+-
+-            this.extractSleepOverlay(graphics, deltaTracker);
 +            layerManager.render(graphics, deltaTracker);
 +        }
 +    }
@@ -86,7 +86,13 @@
 +        layerManager.add(CHAT, this::extractChat, hudVisible);
 +        layerManager.add(TAB_LIST, this::extractTabList, hudVisible);
 +        layerManager.add(SUBTITLE_OVERLAY, (graphics, _) -> {
-+            if (!this.isHidden) {
+             if (!this.isHidden) {
+-                this.extractDemoOverlay(graphics, deltaTracker);
+-                this.extractScoreboardSidebar(graphics, deltaTracker);
+-                this.extractOverlayMessage(graphics, deltaTracker);
+-                this.extractTitle(graphics, deltaTracker);
+-                this.extractChat(graphics, deltaTracker);
+-                this.extractTabList(graphics, deltaTracker);
                  this.extractSubtitleOverlay(graphics, this.minecraft.gui.screen() == null || this.minecraft.gui.screen().isInGameUi());
              } else if (this.minecraft.gui.screen() != null && this.minecraft.gui.screen().isInGameUi()) {
                  this.extractSubtitleOverlay(graphics, true);
