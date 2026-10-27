@@ -1,5 +1,16 @@
 --- a/net/minecraft/client/multiplayer/RegistryDataCollector.java
 +++ b/net/minecraft/client/multiplayer/RegistryDataCollector.java
+@@ -95,7 +_,9 @@
+         try {
+             long start = Util.getMillis();
+             receivedRegistries = RegistryDataLoader.load(
+-                    entriesToLoad, knownDataSource, contextRegistriesWithTags, RegistryDataLoader.SYNCHRONIZED_REGISTRIES, Util.backgroundExecutor()
++                    entriesToLoad, knownDataSource, contextRegistriesWithTags,
++                    net.neoforged.neoforge.registries.DataPackRegistriesHooks.withRegisteredSyncedRegistries(RegistryDataLoader.SYNCHRONIZED_REGISTRIES),
++                    Util.backgroundExecutor()
+                 )
+                 .join();
+             long end = Util.getMillis();
 @@ -156,6 +_,7 @@
                  pendingComponents.apply();
              }

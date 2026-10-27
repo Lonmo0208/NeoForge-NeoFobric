@@ -58,7 +58,22 @@ public interface BiomeModifier {
     /// @param biome      the named biome being modified (with original data readable)
     /// @param phase      the biome modification phase; biome modifiers apply in each phase in order of the enum constants
     /// @param builder    mutable biome info builder
-    void modify(RegistryAccess registries, Holder<Biome> biome, Phase phase, ModifiableBiomeInfo.BiomeInfo.Builder builder);
+    default void modify(RegistryAccess registries, Holder<Biome> biome, Phase phase, ModifiableBiomeInfo.BiomeInfo.Builder builder) {
+        // NeoFobric: the registries parameter was added after mods were already building against the
+        // three-argument signature. Forward to that one so a pre-change mod (Variants and Ventures'
+        // MobSpawnsBiomeModifier) keeps working instead of dying with AbstractMethodError while the
+        // server applies biome modifiers.
+        modify(biome, phase, builder);
+    }
+
+    /// The pre-{@code registries} signature of {@link #modify(RegistryAccess, Holder, Phase, ModifiableBiomeInfo.BiomeInfo.Builder)}.
+    /// An implementation provides either this method or the four-argument one; the four-argument method
+    /// forwards here by default.
+    @Deprecated
+    default void modify(Holder<Biome> biome, Phase phase, ModifiableBiomeInfo.BiomeInfo.Builder builder) {
+        throw new UnsupportedOperationException(getClass().getName()
+                + " does not implement either BiomeModifier.modify signature");
+    }
 
     /**
      * @return the codec which serializes and deserializes this biome modifier

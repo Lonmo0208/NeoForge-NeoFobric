@@ -1,14 +1,16 @@
 --- a/net/minecraft/server/ReloadableServerRegistries.java
 +++ b/net/minecraft/server/ReloadableServerRegistries.java
-@@ -34,6 +_,11 @@
+@@ -34,7 +_,12 @@
              context.getAccessForLoading(RegistryLayer.RELOADABLE), updatedContextTags
          );
          HolderLookup.Provider loadingContextWithTags = HolderLookup.Provider.create(contextRegistriesWithTags.stream());
+-        return RegistryDataLoader.load(manager, contextRegistriesWithTags, RegistryDataLoader.RELOADABLE_REGISTRIES, executor)
 +        // NeoFobric: the four-argument call, not the fork's five-argument overload. Fabric's loot and
 +        // advancement APIs both wrap exactly this invocation to run their modification events over the
 +        // loaded tables/advancements (their ReloadableServerRegistriesMixin @WrapsOperation it), and with
 +        // the pendingTags overload here those events never fired - the drops and advancements stayed
 +        // vanilla. The updated tags are already part of the context lookups above.
-         return RegistryDataLoader.load(manager, contextRegistriesWithTags, RegistryDataLoader.RELOADABLE_REGISTRIES, executor)
++        return RegistryDataLoader.load(manager, contextRegistriesWithTags, net.neoforged.neoforge.registries.DataPackRegistriesHooks.withRegisteredReloadableRegistries(RegistryDataLoader.RELOADABLE_REGISTRIES), executor)
              .thenApplyAsync(newlyLoadedRegistries -> createAndValidateFullContext(context, loadingContextWithTags, newlyLoadedRegistries), executor);
      }
+ 

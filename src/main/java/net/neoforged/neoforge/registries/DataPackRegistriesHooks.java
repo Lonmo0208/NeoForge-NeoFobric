@@ -43,6 +43,56 @@ public final class DataPackRegistriesHooks {
         return SYNCED_REGISTRIES.init(list);
     }
 
+    /**
+     * NeoFobric: appends the datapack registries the mod events registered to a list that was captured
+     * before they ran.
+     *
+     * <p>{@link RegistryDataLoader} captures its three lists during its own static initialization. On
+     * this bridge the captured {@code WORLD_REGISTRIES}/{@code RELOADABLE_REGISTRIES}/{@code
+     * SYNCHRONIZED_REGISTRIES} views did not grow with the {@code NewDatapackRegistryEvent} additions:
+     * the lists the loader used still held only the vanilla 59 entries while the registry group had
+     * 107, so a mod's own datapack registry ({@code iteminteractions:item_storage}) was never loaded
+     * from the world's data packs and the mod's resource-reload listener died with "Missing registry".
+     * Merging the group's live content in at the load sites restores the union without caring about the
+     * order the two static initializers happened to run in.
+     */
+    public static List<RegistryDataLoader.RegistryData<?>> withRegisteredWorldRegistries(List<RegistryDataLoader.RegistryData<?>> list) {
+        return appendMissing(list, WORLD_REGISTRIES.registryData);
+    }
+
+    public static List<RegistryDataLoader.RegistryData<?>> withRegisteredReloadableRegistries(List<RegistryDataLoader.RegistryData<?>> list) {
+        return appendMissing(list, RELOADABLE_REGISTRIES.registryData);
+    }
+
+    public static List<RegistryDataLoader.RegistryData<?>> withRegisteredSyncedRegistries(List<RegistryDataLoader.RegistryData<?>> list) {
+        return appendMissing(list, SYNCED_REGISTRIES.registryData);
+    }
+
+    private static List<RegistryDataLoader.RegistryData<?>> appendMissing(
+            List<RegistryDataLoader.RegistryData<?>> list, List<RegistryDataLoader.RegistryData<?>> registered) {
+        var keys = new java.util.HashSet<String>();
+        for (var entry : list) {
+            keys.add(entry.key().identifier().toString());
+        }
+        var extra = new java.util.ArrayList<RegistryDataLoader.RegistryData<?>>();
+        for (var entry : registered) {
+            if (keys.add(entry.key().identifier().toString())) {
+                extra.add(entry);
+            }
+        }
+        if (extra.isEmpty()) {
+            return list;
+        }
+        var merged = new java.util.ArrayList<>(list);
+        merged.addAll(extra);
+        if (Boolean.getBoolean("neofobric.debugRegistryAccess")) {
+            org.slf4j.LoggerFactory.getLogger("NeoFobric").info(
+                    "[NeoFobric] Appended {} datapack registr(ies) the mod events registered to a stale registry list ({} -> {})",
+                    extra.size(), list.size(), merged.size());
+        }
+        return merged;
+    }
+
     static <T> void addWorldRegistry(NewDatapackRegistryEvent.RegistryData<T> data) {
         WORLD_REGISTRIES.add(data.loaderData());
         if (data.networkCodec() != null) {

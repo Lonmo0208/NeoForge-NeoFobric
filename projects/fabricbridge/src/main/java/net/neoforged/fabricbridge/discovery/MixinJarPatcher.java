@@ -700,6 +700,59 @@ public final class MixinJarPatcher {
         return desc.equals(constants.get(name));
     }
 
+    private static final String MOD_CONFIG_TYPE_OWNER = "net/neoforged/fml/config/ModConfig$Type";
+
+    /**
+     * FML 12 renamed {@code ModConfig.Type} constants: {@code COMMON} became {@code LOCAL} and
+     * {@code SERVER} became {@code SYNCED}. A Fabric mod built against the older NeoForge keeps the
+     * old names in its config setup, and the very first thing its main entrypoint does is register a
+     * config - the resulting {@code NoSuchFieldError} kills the whole entrypoint, so everything the
+     * mod registers later (payload types, structure placements, attributes) never exists. Twilight
+     * Forest Re26 fails exactly there, which then also breaks its client entrypoint ("no payload type
+     * has been registered") and the structures its data pack references.
+     *
+     * <p>The rename is one-to-one and semantically the same (LOCAL is the common config, SYNCED the
+     * server config that is synced to clients), so rewriting the field reference is safe.
+     */
+    private static byte[] retargetRenamedModConfigTypes(byte[] classBytes, String entryName) {
+        if (classBytes == null || !containsAscii(classBytes, MOD_CONFIG_TYPE_OWNER)) {
+            return null;
+        }
+        try {
+            var node = new ClassNode();
+            new ClassReader(classBytes).accept(node, 0);
+            var renamed = 0;
+            for (var method : node.methods) {
+                for (var insn : method.instructions) {
+                    if (insn instanceof org.objectweb.asm.tree.FieldInsnNode field && MOD_CONFIG_TYPE_OWNER.equals(field.owner)) {
+                        switch (field.name) {
+                            case "COMMON" -> {
+                                field.name = "LOCAL";
+                                renamed++;
+                            }
+                            case "SERVER" -> {
+                                field.name = "SYNCED";
+                                renamed++;
+                            }
+                            default -> {
+                            }
+                        }
+                    }
+                }
+            }
+            if (renamed == 0) {
+                return null;
+            }
+            var writer = new ClassWriter(0);
+            node.accept(writer);
+            LOGGER.info("[NeoFobric] Renamed {} old ModConfig.Type constant reference(s) in {}", renamed, entryName);
+            return writer.toByteArray();
+        } catch (Throwable t) {
+            LOGGER.warn("[NeoFobric] Could not rename the old ModConfig.Type constants in {}", entryName, t);
+            return null;
+        }
+    }
+
     /** {@return whether the needle appears in the bytes} */
     private static boolean containsAscii(byte[] haystack, String needle) {
         var target = needle.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
@@ -5981,7 +6034,12 @@ public final class MixinJarPatcher {
                 var entityTypeConstantsMoved = retargetMovedEntityTypeConstants(versionMoved, entry.getName(), resolver);
                 if (entityTypeConstantsMoved != null) {
                     versionMoved = entityTypeConstantsMoved;
-                    patched.put(entry.getName(), versionMoved);
+                    patched.put(entry.getName(), entityTypeConstantsMoved);
+                }
+                var modConfigTypesRenamed = retargetRenamedModConfigTypes(versionMoved, entry.getName());
+                if (modConfigTypesRenamed != null) {
+                    versionMoved = modConfigTypesRenamed;
+                    patched.put(entry.getName(), modConfigTypesRenamed);
                 }
                 allClasses.add(versionMoved);
                 collectFrameTypes(versionMoved, frameStubCandidates);

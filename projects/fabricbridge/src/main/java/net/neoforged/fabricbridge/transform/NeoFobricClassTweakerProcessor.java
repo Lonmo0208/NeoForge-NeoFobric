@@ -549,7 +549,11 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         // One more decision before the early out: a class that inherits from a transitive
         // inject-interface target gets the interface here even though none of the other checks match.
         boolean transitiveChanged = applyTransitiveInjectedInterfaces(context.node());
-        if (!transitiveChanged && !DUCK_FALLBACKS.containsKey(context.node().name) && !isResourceImpl
+        // A NeoForge mod built against the older FML still names ModConfig.Type.COMMON/SERVER, which FML 12
+        // renamed to LOCAL/SYNCED; the NoSuchFieldError otherwise kills the mod's entrypoint at its first
+        // config registration (Twilight Forest Re26, Carry On, Particular, UntitledDuck, YDM's Weapon Master).
+        boolean oldConfigConstantsChanged = rewriteOldModConfigTypeConstants(context.node());
+        if (!transitiveChanged && !oldConfigConstantsChanged && !DUCK_FALLBACKS.containsKey(context.node().name) && !isResourceImpl
                 && !ACCESSOR_FIELDS.containsKey(context.node().name)
                 && !FABRIC_CHANNEL_CLASSES.contains(context.node().name)
                 && !FABRIC_NETWORKING_IMPL.equals(context.node().name)
@@ -569,7 +573,7 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         }
 
         var node = context.node();
-        var changed = transitiveChanged;
+        var changed = transitiveChanged | oldConfigConstantsChanged;
         // CompoundTag is defined before the Fabric mixin configs are prepared, so owo's mixin never sees it;
         // the tweaker adds the same MapCarrier methods while the class is still being transformed.
         if (net.neoforged.fabricbridge.compbridlnk.OwoCompat.handlesClass(node.name)) {
@@ -1222,5 +1226,45 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static final String MOD_CONFIG_TYPE_OWNER = "net/neoforged/fml/config/ModConfig$Type";
+
+    /**
+     * Rewrites references to the {@code ModConfig.Type} constants FML 12 renamed: {@code COMMON} became
+     * {@code LOCAL} and {@code SERVER} became {@code SYNCED}. The names are one-to-one and carry the same
+     * meaning (LOCAL is the common config, SYNCED the server config that is synced to clients), so a mod
+     * compiled against the older FML keeps working instead of dying on {@code NoSuchFieldError} at its first
+     * config registration - which happens inside the main entrypoint and takes everything the mod registers
+     * after it down with it.
+     */
+    private static boolean rewriteOldModConfigTypeConstants(org.objectweb.asm.tree.ClassNode node) {
+        var renamed = 0;
+        for (var method : node.methods) {
+            if (method.instructions == null) {
+                continue;
+            }
+            for (var insn : method.instructions) {
+                if (insn instanceof org.objectweb.asm.tree.FieldInsnNode field && MOD_CONFIG_TYPE_OWNER.equals(field.owner)) {
+                    switch (field.name) {
+                        case "COMMON" -> {
+                            field.name = "LOCAL";
+                            renamed++;
+                        }
+                        case "SERVER" -> {
+                            field.name = "SYNCED";
+                            renamed++;
+                        }
+                        default -> {
+                        }
+                    }
+                }
+            }
+        }
+        if (renamed > 0) {
+            LOGGER.info("[NeoFobric] Renamed {} old ModConfig.Type constant reference(s) in {}",
+                    renamed, node.name.replace('/', '.'));
+        }
+        return renamed > 0;
     }
 }
