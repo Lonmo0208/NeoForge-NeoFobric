@@ -1,11 +1,17 @@
 --- a/net/minecraft/client/renderer/SubmitNodeCollection.java
 +++ b/net/minecraft/client/renderer/SubmitNodeCollection.java
-@@ -288,7 +_,7 @@
+@@ -288,7 +_,13 @@
      @Override
      public void submitMovingBlock(PoseStack poseStack, MovingBlockRenderState movingBlockRenderState, int outlineColor) {
          BlockStateModel model = Minecraft.getInstance().getModelManager().getBlockStateModelSet().get(movingBlockRenderState.blockState);
 -        boolean isTranslucent = model.hasMaterialFlag(1);
-+        boolean isTranslucent = model.hasMaterialFlag(movingBlockRenderState, movingBlockRenderState.blockPos, movingBlockRenderState.blockState, 1);
++        // NeoFobric: same dispatch as the outline path - the Fabric interface's models get asked first, with the
++        // random source Fabric seeds from the state, and the platform's own answer is the fallback.
++        boolean isTranslucent = net.neoforged.fabricbridge.FabricBridgeHooks.fabricMaterialFlag(model, 1,
++                movingBlockRenderState, movingBlockRenderState.blockPos, movingBlockRenderState.blockState,
++                net.minecraft.util.RandomSource.createThreadLocalInstance(
++                        movingBlockRenderState.blockState.getSeed(movingBlockRenderState.blockPos)),
++                model.hasMaterialFlag(movingBlockRenderState, movingBlockRenderState.blockPos, movingBlockRenderState.blockState, 1));
          MovingBlockFeatureRenderer.Submit submit = new MovingBlockFeatureRenderer.Submit(
              new Matrix4f(poseStack.last().pose()), movingBlockRenderState, 0, isTranslucent
          );
