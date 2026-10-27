@@ -1,18 +1,43 @@
 --- a/net/minecraft/resources/RegistryDataLoader.java
 +++ b/net/minecraft/resources/RegistryDataLoader.java
-@@ -132,7 +_,7 @@
+@@ -95,7 +_,7 @@
+ public class RegistryDataLoader {
+     private static final Logger LOGGER = LogUtils.getLogger();
+     private static final Comparator<ResourceKey<?>> ERROR_KEY_COMPARATOR = Comparator.<ResourceKey<?>, Identifier>comparing(ResourceKey::registry).thenComparing(ResourceKey::identifier);
+-    public static final List<RegistryDataLoader.RegistryData<?>> WORLD_REGISTRIES = List.of(
++    public static final List<RegistryDataLoader.RegistryData<?>> WORLD_REGISTRIES = net.neoforged.neoforge.registries.DataPackRegistriesHooks.captureWorldRegistries(List.of(
+         new RegistryDataLoader.RegistryData<>(Registries.DIMENSION_TYPE, DimensionType.DIRECT_CODEC),
+         new RegistryDataLoader.RegistryData<>(Registries.BIOME, Biome.DIRECT_CODEC),
+         new RegistryDataLoader.RegistryData<>(Registries.CHAT_TYPE, ChatType.DIRECT_CODEC),
+@@ -147,11 +_,11 @@
+         new RegistryDataLoader.RegistryData<>(Registries.DECORATED_POT_PATTERN, DecoratedPotPattern.CODEC),
+         new RegistryDataLoader.RegistryData<>(Registries.BLOCK_TRANSFORMER, BlockTransformer.DIRECT_CODEC),
+         new RegistryDataLoader.RegistryData<>(Registries.BLOCK_STATE_PROVIDER, BlockStateProvider.DIRECT_CODEC)
+-    );
++    )); // Neo: Keep the list so custom registries can be added later
      public static final List<RegistryDataLoader.RegistryData<?>> DIMENSION_REGISTRIES = List.of(
          new RegistryDataLoader.RegistryData<>(Registries.LEVEL_STEM, LevelStem.CODEC)
      );
+-    public static final List<RegistryDataLoader.RegistryData<?>> RELOADABLE_REGISTRIES = List.of(
++    public static final List<RegistryDataLoader.RegistryData<?>> RELOADABLE_REGISTRIES = net.neoforged.neoforge.registries.DataPackRegistriesHooks.captureReloadableRegistries(List.of(
+         new RegistryDataLoader.RegistryData<>(Registries.LOOT_TABLE, LootTable.DIRECT_CODEC),
+         new RegistryDataLoader.RegistryData<>(Registries.PREDICATE, LootItemCondition.DIRECT_CODEC),
+         new RegistryDataLoader.RegistryData<>(Registries.CONTEXT_FLOAT_PROVIDER, ContextFloatProviders.DIRECT_CODEC),
+@@ -160,8 +_,8 @@
+         new RegistryDataLoader.RegistryData<>(Registries.SLOT_SOURCE, SlotSources.TYPED_CODEC),
+         new RegistryDataLoader.RegistryData<>(Registries.ADVANCEMENT, Advancement.CODEC),
+         new RegistryDataLoader.RegistryData<>(Registries.RECIPE, Recipe.DIRECT_CODEC)
+-    );
 -    public static final List<RegistryDataLoader.RegistryData<?>> SYNCHRONIZED_REGISTRIES = List.of(
-+    public static final List<RegistryDataLoader.RegistryData<?>> SYNCHRONIZED_REGISTRIES = net.neoforged.neoforge.registries.DataPackRegistriesHooks.grabNetworkableRegistries(List.of(
++    )); // Neo: Keep the list so custom registries can be added later
++    public static final List<RegistryDataLoader.RegistryData<?>> SYNCHRONIZED_REGISTRIES = net.neoforged.neoforge.registries.DataPackRegistriesHooks.captureSyncedRegistries(List.of(
          new RegistryDataLoader.RegistryData<>(Registries.BIOME, Biome.NETWORK_CODEC),
          new RegistryDataLoader.RegistryData<>(Registries.CHAT_TYPE, ChatType.DIRECT_CODEC),
          new RegistryDataLoader.RegistryData<>(Registries.TRIM_PATTERN, TrimPattern.DIRECT_CODEC),
-@@ -162,18 +_,30 @@
-         new RegistryDataLoader.RegistryData<>(Registries.DIALOG, Dialog.DIRECT_CODEC),
-         new RegistryDataLoader.RegistryData<>(Registries.WORLD_CLOCK, WorldClock.DIRECT_CODEC),
-         new RegistryDataLoader.RegistryData<>(Registries.TIMELINE, Timeline.NETWORK_CODEC)
+@@ -194,21 +_,33 @@
+         new RegistryDataLoader.RegistryData<>(Registries.DECORATED_POT_PATTERN, DecoratedPotPattern.CODEC),
+         new RegistryDataLoader.RegistryData<>(Registries.BLOCK_TRANSFORMER, BlockTransformer.DIRECT_CODEC),
+         new RegistryDataLoader.RegistryData<>(Registries.BLOCK_STATE_PROVIDER, BlockStateProvider.DIRECT_CODEC)
 -    );
 +    )); // Neo: Keep the list so custom registries can be added later
  
@@ -41,53 +66,75 @@
 +                return new ResourceManagerRegistryLoadTask<>(data, Lifecycle.stable(), loadingErrors, resourceManager, pendingTags);
              }
          };
-         return load(loaderFactory, contextRegistries, registriesToLoad, executor);
-@@ -192,9 +_,15 @@
+-        return load(loaderFactory, contextRegistries, registriesToLoad, executor);
++        return load(loaderFactory, contextRegistries, registriesToLoad, executor, true);
+     }
+ 
+     public static CompletableFuture<RegistryAccess.Frozen> load(
+@@ -224,14 +_,16 @@
                  return new NetworkRegistryLoadTask<>(data, Lifecycle.stable(), loadingErrors, entries, knownDataSource);
              }
          };
-+        // NeoFobric: forwards to the vanilla-shaped overload below. That is where Fabric's registry-sync
-+        // rebinds its ScopedValue context on the worker thread, so the async structure has to live in one
-+        // place - a copy here would leave the hook unbound for this path.
-         return load(loaderFactory, contextRegistries, registriesToLoad, executor);
+-        return load(loaderFactory, contextRegistries, registriesToLoad, executor);
++        return load(loaderFactory, contextRegistries, registriesToLoad, executor, false);
      }
  
-+    // NeoFobric: the vanilla signature, kept because mods inject into it - Fabric's registry-sync wraps
-+    // the supplyAsync call in this exact method to rebind its ScopedValue context on the worker thread,
-+    // and it cannot bind that context when the body has been moved into another overload.
-     public static CompletableFuture<RegistryAccess.Frozen> load(
++    // Neo: Added parameter to know we are loading server-side from resources
+     private static CompletableFuture<RegistryAccess.Frozen> load(
          RegistryDataLoader.LoaderFactory loaderFactory,
          List<HolderLookup.RegistryLookup<?>> contextRegistries,
-@@ -218,6 +_,28 @@
+         List<RegistryDataLoader.RegistryData<?>> registriesToLoad,
+-        Executor executor
++        Executor executor,
++        boolean fromResources
+     ) {
+         return CompletableFuture.<CompletableFuture<RegistryAccess.Frozen>>supplyAsync(
+                 () -> {
+@@ -250,6 +_,15 @@
                      return CompletableFuture.allOf(loadCompletions)
                          .thenApplyAsync(
                              ignored -> {
-+                                if (net.neoforged.neoforge.gametest.GameTestHooks.isGametestEnabled()) {
++                                if (fromResources && net.neoforged.neoforge.gametest.GameTestHooks.isGametestEnabled()) {
 +                                    var byKeyMap = loadTasks.stream().collect(java.util.stream.Collectors.toMap(d -> d.registryKey(), d -> d.readOnlyRegistry()));
 +                                    var envRegistry = (net.minecraft.core.WritableRegistry) byKeyMap.get(Registries.TEST_ENVIRONMENT);
 +                                    var testsRegistry = (net.minecraft.core.WritableRegistry) byKeyMap.get(Registries.TEST_INSTANCE);
 +                                    if (envRegistry != null && testsRegistry != null) {
-+                                        // NeoFobric: on a client the test registries came from the server, and a mod that
-+                                        // registers them here as well (Occultism, in dev where gametests are enabled) then
-+                                        // hits "Adding duplicate key". The server already owns the entries, so the duplicate
-+                                        // is expected on this side; anything else still fails the load as before.
-+                                        try {
-+                                            net.neoforged.fml.ModLoader.postEvent(new net.neoforged.neoforge.event.RegisterGameTestsEvent(envRegistry, testsRegistry));
-+                                        } catch (RuntimeException dup) {
-+                                            if (!net.neoforged.fml.loading.FMLEnvironment.getDist().isClient()
-+                                                    || !String.valueOf(dup).contains("Adding duplicate key")) {
-+                                                throw dup;
-+                                            }
-+                                            org.slf4j.LoggerFactory.getLogger("NeoFobric").warn(
-+                                                "Ignoring a duplicate game test registration on the client (the server owns these entries): {}", dup.getMessage());
-+                                        }
++                                        net.neoforged.fml.ModLoader.postEvent(new net.neoforged.neoforge.event.RegisterGameTestsEvent(envRegistry, testsRegistry));
 +                                    }
 +                                }
 +
                                  List<RegistryLoadTask<?>> frozenRegistries = loadTasks.stream().filter(task -> task.freezeRegistry(loadingErrors)).toList();
                                  if (!loadingErrors.isEmpty()) {
                                      throw logErrors(loadingErrors);
-@@ -312,7 +_,11 @@
+@@ -276,13 +_,25 @@
+         List<HolderLookup.RegistryLookup<?>> contextRegistries, List<RegistryLoadTask<?>> newRegistriesAndLoaders
+     ) {
+         final Map<ResourceKey<? extends Registry<?>>, HolderGetter<?>> result = new HashMap<>();
+-        contextRegistries.forEach(e -> result.put(e.key(), e));
+-        newRegistriesAndLoaders.forEach(e -> result.put(e.registryKey(), e.concurrentRegistrationGetter));
++        final Map<ResourceKey<? extends Registry<?>>, HolderLookup<?>> fullLookups = new HashMap<>();
++        contextRegistries.forEach(e -> {
++            result.put(e.key(), e);
++            fullLookups.put(e.key(), e);
++        });
++        newRegistriesAndLoaders.forEach(e -> {
++            result.put(e.registryKey(), e.concurrentRegistrationGetter);
++            fullLookups.put(e.registryKey(), e.registry);
++        });
+         return new RegistryOps.RegistryInfoLookup() {
+             @Override
+             public <T> Optional<HolderGetter<T>> lookup(ResourceKey<? extends Registry<? extends T>> key) {
+                 return Optional.ofNullable((HolderGetter<T>)result.get(key));
+             }
++
++            @Override
++            public <T> Optional<HolderLookup<T>> fullLookup(ResourceKey<? extends Registry<? extends T>> key) {
++                return Optional.ofNullable((HolderLookup<T>)fullLookups.get(key));
++            }
+         };
+     }
+ 
+@@ -340,7 +_,11 @@
      public record NetworkedRegistryData(List<RegistrySynchronization.PackedRegistryEntry> elements, TagNetworkSerialization.NetworkPayload tags) {
      }
  

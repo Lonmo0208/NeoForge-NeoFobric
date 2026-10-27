@@ -1,16 +1,18 @@
 --- a/net/minecraft/resources/RegistryLoadTask.java
 +++ b/net/minecraft/resources/RegistryLoadTask.java
-@@ -27,6 +_,9 @@
+@@ -27,6 +_,11 @@
  import net.minecraft.util.StrictJsonParser;
  
  public abstract class RegistryLoadTask<T> {
 +    private static final org.slf4j.Logger LOGGER = com.mojang.logging.LogUtils.getLogger();
-+    // Neo: Used as a marker to skip registration elements that were disabled due to conditions
++    // Neo: Used as a marker to skip registration for elements that were disabled due to conditions
++    private static final Exception SKIPPED_CONDITIONAL_ELEMENT_MARKER = new Exception();
++    // Neo: Used as a marker to skip registration for elements that were disabled due to other reasons (e.g., events)
 +    private static final Exception SKIPPED_ELEMENT_MARKER = new Exception();
      private final Object registryWriteLock = new Object();
      protected final RegistryDataLoader.RegistryData<T> data;
-     private final WritableRegistry<T> registry;
-@@ -35,12 +_,76 @@
+     final WritableRegistry<T> registry;
+@@ -35,8 +_,11 @@
      private volatile boolean elementsRegistered;
  
      protected RegistryLoadTask(RegistryDataLoader.RegistryData<T> data, Lifecycle lifecycle, Map<ResourceKey<?>, Exception> loadingErrors) {
@@ -20,90 +22,25 @@
          this.data = data;
 -        this.registry = new MappedRegistry<>(data.key(), lifecycle);
 +        this.registry = (WritableRegistry<T>) registryBuilder.disableRegistrationCheck().create();
-+        // NeoFobric: a registry that is both a built-in and loaded from datapacks (the codec-type
-+        // registries, like enchantment effect types) gets a fresh instance here, and anything a mod
-+        // registered into the built-in instance at init would not be in it. Carry the built-in's entries
-+        // over, so the loaded instance is a superset of the code-side view no matter when that
-+        // registration ran relative to the loader's own registry passes.
-+        carryBuiltInEntries(this.registry, data.key());
          this.loadingErrors = loadingErrors;
          this.concurrentRegistrationGetter = new ConcurrentHolderGetter<>(this.registryWriteLock, this.registry.createRegistrationLookup());
      }
- 
-+    /**
-+     * NeoFobric: copies every entry of the built-in registry with the same key that the target does not
-+     * have yet. A registry key that has no built-in counterpart (the everyday datapack registry) does
-+     * nothing here; the codec-type registries (which mods fill with plain {@code Registry.register} calls)
-+     * get their content carried.
-+     */
-+    @SuppressWarnings({"rawtypes", "unchecked"})
-+    private static <T> void carryBuiltInEntries(WritableRegistry<T> target, ResourceKey<? extends Registry<T>> key) {
-+        var builtIn = builtInFor(key);
-+        if (builtIn == null || builtIn == target) {
-+            return;
-+        }
-+
-+        var carried = 0;
-+        for (var entry : builtIn.entrySet()) {
-+            if (!target.containsKey(entry.getKey().identifier())) {
-+                target.register((ResourceKey) entry.getKey(), (T) entry.getValue(), RegistrationInfo.BUILT_IN);
-+                carried++;
-+            }
-+        }
-+
-+        if (carried > 0) {
-+            LOGGER.info("Carried {} built-in entr{} over into the datapack-loaded registry {}", carried,
-+                    carried == 1 ? "y" : "ies", key.identifier());
-+        }
-+    }
-+
-+    /**
-+     * NeoFobric: the built-in registry for {@code key}, or null when the key has none. The
-+     * registry-of-registries lookup misses registries whose root-registry entry was never made (the
-+     * codec-type registries, which are only reachable through their {@code BuiltInRegistries} field -
-+     * exactly the object a mod's {@code Registry.register} call writes into), so fall back to scanning
-+     * that class's fields.
-+     */
-+    private static net.minecraft.core.Registry<?> builtInFor(ResourceKey<? extends Registry<?>> key) {
-+        var byName = net.minecraft.core.registries.BuiltInRegistries.REGISTRY.getValue(key.identifier());
-+        if (byName != null) {
-+            return byName;
-+        }
-+        for (var field : net.minecraft.core.registries.BuiltInRegistries.class.getFields()) {
-+            if (!net.minecraft.core.Registry.class.isAssignableFrom(field.getType())) {
-+                continue;
-+            }
-+            try {
-+                var value = (net.minecraft.core.Registry<?>) field.get(null);
-+                if (value != null && value.key().equals(key)) {
-+                    return value;
-+                }
-+            } catch (ReflectiveOperationException ignored) {
-+                // A field we cannot read is simply not a candidate.
-+            }
-+        }
-+        return null;
-+    }
-+
-     protected ResourceKey<? extends Registry<T>> registryKey() {
-         return this.registry.key();
-     }
-@@ -64,7 +_,13 @@
+@@ -60,7 +_,13 @@
              elements.forEach(
                  element -> element.value
                      .ifLeft(value -> this.registry.register(element.key, (T)value, element.registrationInfo))
 -                    .ifRight(error -> this.loadingErrors.put(element.key, error))
 +                    .ifRight(error -> {
-+                        if (error == SKIPPED_ELEMENT_MARKER) {
++                        if (error == SKIPPED_CONDITIONAL_ELEMENT_MARKER) {
 +                            LOGGER.debug("Skipping loading registry entry {} as its conditions were not met", element.key);
-+                        } else {
++                        } else if (error != SKIPPED_ELEMENT_MARKER) {
 +                            this.loadingErrors.put(element.key, error);
 +                        }
 +                    })
              );
              this.elementsRegistered = true;
          }
-@@ -103,7 +_,15 @@
+@@ -99,7 +_,30 @@
          ) {
              try (Reader reader = thunk.openAsReader()) {
                  JsonElement json = StrictJsonParser.parse(reader);
@@ -112,11 +49,26 @@
 +                // Neo: Allow a condition to skip the entire element, in which case we return a special marker error to skip it in the loader. Look for uses of SKIPPED_ELEMENT_MARKER
 +                var conditionalDecoder = net.neoforged.neoforge.common.conditions.ConditionalOps.createConditionalCodec(net.neoforged.neoforge.common.util.NeoForgeExtraCodecs.decodeOnly(elementDecoder));
 +                var candidate = conditionalDecoder.parse(ops, json).getOrThrow();
-+                if (candidate.isPresent()) {
-+                    return Either.left(candidate.get());
-+                } else {
-+                    return Either.right(SKIPPED_ELEMENT_MARKER);
++                if (candidate.isEmpty()) {
++                    return Either.right(SKIPPED_CONDITIONAL_ELEMENT_MARKER);
 +                }
++
++                var elementCandidate = candidate.get();
++                // For loot tables, we fire the appropriate LootTableLoadEvent first; if the event hook returns null, skip it
++                if (elementKey.isFor(net.minecraft.core.registries.Registries.LOOT_TABLE) && elementCandidate instanceof net.minecraft.world.level.storage.loot.LootTable lootTable) {
++                    lootTable.setLootTableId(elementKey.identifier());
++                    var resultLootTable = net.neoforged.neoforge.event.EventHooks.loadLootTable(ops.lookupProvider::lookup, elementKey.identifier(), lootTable);
++                    if (resultLootTable == null) {
++                        return Either.right(SKIPPED_ELEMENT_MARKER);
++                    }
++                    // In case the loot table was freshly made and was not given its ID proeprly, set its ID
++                    resultLootTable.setLootTableId(elementKey.identifier());
++                    // The variable and type are known to be LootTable at this point
++                    //noinspection unchecked
++                    elementCandidate = (T) resultLootTable;
++                }
++
++                return Either.left(elementCandidate);
              } catch (Exception e) {
                  return Either.right(
                      new IllegalStateException(String.format(Locale.ROOT, "Failed to parse %s from pack %s", elementKey.identifier(), thunk.sourcePackId()), e)

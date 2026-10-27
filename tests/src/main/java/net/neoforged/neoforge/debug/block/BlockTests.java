@@ -16,6 +16,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
 import net.minecraft.core.Holder;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.data.BlockFamily;
@@ -25,7 +26,9 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerPlayer.RespawnConfig;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
+import net.minecraft.util.TriState;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
@@ -47,16 +50,19 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BubbleColumnBlock;
 import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.WallBlock;
 import net.minecraft.world.level.block.piston.PistonBaseBlock;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.level.block.state.properties.WallSide;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.fml.event.lifecycle.FMLLoadCompleteEvent;
+import net.neoforged.neoforge.common.data.BlockTagsProvider;
 import net.neoforged.neoforge.common.enums.BubbleColumnDirection;
 import net.neoforged.neoforge.common.world.poi.ExtendPoiTypesEvent;
 import net.neoforged.neoforge.registries.DeferredBlock;
@@ -82,7 +88,7 @@ public class BlockTests {
         test.onGameTest(helper -> helper.startSequence(() -> helper.makeTickingMockServerPlayerInCorner(GameType.SURVIVAL))
 
                 // Mine pot with sword
-                .thenExecute(() -> helper.setBlock(1, 1, 1, Blocks.DECORATED_POT.defaultBlockState()))
+                .thenExecute(() -> helper.placeBlock(1, 1, 1, Blocks.DECORATED_POT, Direction.DOWN))
                 .thenExecute(player -> player.setItemInHand(InteractionHand.MAIN_HAND, Items.DIAMOND_SWORD.getDefaultInstance()))
                 .thenExecute(player -> player.gameMode.destroyBlock(helper.absolutePos(new BlockPos(1, 1, 1))))
                 .thenExecute(player -> helper.assertTrue(
@@ -90,7 +96,7 @@ public class BlockTests {
                         "Decorated Pot should had dropped Bricks"))
                 .thenExecute(player -> helper.getLevel().getEntitiesOfClass(ItemEntity.class, player.getBoundingBox().expandTowards(2, 2, 2)).forEach(itemEntity -> itemEntity.remove(Entity.RemovalReason.DISCARDED)))
 
-                .thenExecute(() -> helper.setBlock(1, 1, 1, Blocks.DECORATED_POT.defaultBlockState()))
+                .thenExecute(() -> helper.placeBlock(1, 1, 1, Blocks.DECORATED_POT, Direction.DOWN))
                 .thenExecute(player -> player.setItemInHand(InteractionHand.MAIN_HAND, Items.DANDELION.getDefaultInstance()))
                 .thenExecute(player -> player.gameMode.destroyBlock(helper.absolutePos(new BlockPos(1, 1, 1))))
                 .thenExecute(player -> helper.assertTrue(
@@ -266,7 +272,7 @@ public class BlockTests {
             }
             for (BlockState state : states) {
                 Optional<Holder<PoiType>> type = PoiTypes.forState(state);
-                if (type.isEmpty() || type.get().getKey() != PoiTypes.MEETING) {
+                if (type.isEmpty() || !type.get().is(PoiTypes.MEETING)) {
                     test.fail("A state of the test block is missing from or assigned to the wrong PoI in PoiTypes.TYPE_BY_STATE");
                     return;
                 }
@@ -332,5 +338,50 @@ public class BlockTests {
                     helper.assertTrue(pistonHead.getRelocability(level, abovePos).isRelocatable(Set.of(lowerPos, abovePos)), "Piston head " + pistonHead + " incorrectly non-relocatable with base");
                 })
                 .thenSucceed();
+    }
+
+    @GameTest
+    @EmptyTemplate
+    @TestHolder(description = "Tests if double blocks correctly implement the isRelocatable block extension")
+    static void wallConnectionPreventionTest(final DynamicTest test, final RegistrationHelper reg) {
+        DeferredBlock<Block> wallBlock = reg.blocks().registerBlock("test_wall", props -> new WallBlock(props) {
+            @Override
+            protected boolean connectsTo(BlockState state, boolean faceSolid, Direction direction) {
+                return direction.getAxis() != Direction.Axis.X && super.connectsTo(state, faceSolid, direction);
+            }
+
+            @Override
+            public TriState canBeConnectedTo(BlockState state, Direction side, Block adjacentBlock) {
+                return side.getAxis() == Direction.Axis.X ? TriState.FALSE : TriState.DEFAULT;
+            }
+        }, () -> BlockBehaviour.Properties.ofFullCopy(Blocks.COBBLESTONE_WALL));
+        reg.addClientProvider(event -> new BlockTagsProvider(event.getGenerator().getPackOutput(), event.getReloadableLookupProvider(), reg.modId()) {
+            @Override
+            protected void addTags(HolderLookup.Provider registries) {
+                tag(BlockTags.WALLS).add(wallBlock.key());
+            }
+        });
+
+        test.onGameTest(helper -> {
+            BlockPos center = new BlockPos(1, 0, 1);
+
+            helper.setBlock(center, wallBlock.value());
+            helper.setBlock(center.north(), Blocks.COBBLESTONE_WALL);
+            helper.setBlock(center.south(), Blocks.COBBLESTONE_WALL);
+            helper.setBlock(center.west(), Blocks.COBBLESTONE_WALL);
+            helper.setBlock(center.east(), Blocks.COBBLESTONE_WALL);
+
+            helper.assertBlockProperty(center, WallBlock.NORTH, WallSide.LOW);
+            helper.assertBlockProperty(center, WallBlock.SOUTH, WallSide.LOW);
+            helper.assertBlockProperty(center, WallBlock.EAST, WallSide.NONE);
+            helper.assertBlockProperty(center, WallBlock.WEST, WallSide.NONE);
+
+            helper.assertBlockProperty(center.north(), WallBlock.SOUTH, WallSide.LOW);
+            helper.assertBlockProperty(center.south(), WallBlock.NORTH, WallSide.LOW);
+            helper.assertBlockProperty(center.west(), WallBlock.EAST, WallSide.NONE);
+            helper.assertBlockProperty(center.east(), WallBlock.WEST, WallSide.NONE);
+
+            helper.succeed();
+        });
     }
 }

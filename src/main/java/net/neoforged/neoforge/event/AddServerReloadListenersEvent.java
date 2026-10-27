@@ -7,14 +7,11 @@ package net.neoforged.neoforge.event;
 
 import com.mojang.logging.LogUtils;
 import java.util.Map;
-import net.minecraft.core.HolderLookup;
-import net.minecraft.core.RegistryAccess;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.ReloadableServerResources;
 import net.minecraft.server.packs.resources.PreparableReloadListener;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.common.conditions.ICondition;
-import net.neoforged.neoforge.resource.ContextAwareReloadListener;
 import net.neoforged.neoforge.resource.ListenerKey;
 import net.neoforged.neoforge.resource.VanillaServerListeners;
 import org.jetbrains.annotations.ApiStatus;
@@ -30,17 +27,12 @@ import org.slf4j.Logger;
 public class AddServerReloadListenersEvent extends SortedReloadListenerEvent {
     private static final Logger LOGGER = LogUtils.getLogger();
     private final ReloadableServerResources serverResources;
-    private final RegistryAccess registryAccess;
     private final Map<ListenerKey<?>, PreparableReloadListener> retainedListeners;
 
     @ApiStatus.Internal
-    public AddServerReloadListenersEvent(
-            ReloadableServerResources serverResources,
-            RegistryAccess registryAccess,
-            Map<ListenerKey<?>, PreparableReloadListener> retainedListeners) {
+    public AddServerReloadListenersEvent(ReloadableServerResources serverResources, Map<ListenerKey<?>, PreparableReloadListener> retainedListeners) {
         super(serverResources.listeners(), AddServerReloadListenersEvent::lookupName);
         this.serverResources = serverResources;
-        this.registryAccess = registryAccess;
         this.retainedListeners = retainedListeners;
     }
 
@@ -72,21 +64,6 @@ public class AddServerReloadListenersEvent extends SortedReloadListenerEvent {
      */
     public ICondition.IContext getConditionContext() {
         return serverResources.getConditionContext();
-    }
-
-    /// Provides access to the loaded registries associated with these server resources.
-    /// All built-in and dynamic registries are loaded and frozen by this point.
-    ///
-    /// @apiNote The returned [RegistryAccess] does NOT provide access to the tags loaded during the active reload.
-    /// To resolve tags the [HolderLookup.Provider] provided via [ContextAwareReloadListener#getRegistryLookup()]
-    /// must be used instead.
-    ///
-    /// @return The [RegistryAccess] context for the currently active reload.
-    ///
-    /// @deprecated Use [ContextAwareReloadListener#getRegistryLookup()] instead
-    @Deprecated(forRemoval = true, since = "26.1.2")
-    public RegistryAccess getRegistryAccess() {
-        return registryAccess;
     }
 
     private static Identifier lookupName(PreparableReloadListener listener) {

@@ -24,7 +24,7 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.common.NeoForgeMod;
-import net.neoforged.neoforge.common.config.NeoForgeCommonConfig;
+import net.neoforged.neoforge.common.config.NeoForgeLocalConfig;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.network.payload.SplitPacketPayload;
@@ -174,7 +174,7 @@ public class GenericPacketSplitter extends MessageToMessageEncoder<Packet<?>> im
         receivedBuffers.add(buffer);
         sizeCounter += buffer.length;
 
-        long maxSize = NeoForgeCommonConfig.INSTANCE.splitPacketMaxSizeLimitMb.getAsInt() * ONE_MB;
+        long maxSize = NeoForgeLocalConfig.INSTANCE.splitPacketMaxSizeLimitMb.getAsInt() * ONE_MB;
         if (sizeCounter > maxSize || receivedBuffers.size() > MAX_PACKETS_SAFETY_LIMIT) {
             // Reset data, as we are going to disconnect anyway
             sizeCounter = 0L;

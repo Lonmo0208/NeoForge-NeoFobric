@@ -1,6 +1,6 @@
 --- a/net/minecraft/world/item/enchantment/EnchantmentHelper.java
 +++ b/net/minecraft/world/item/enchantment/EnchantmentHelper.java
-@@ -47,7 +_,19 @@
+@@ -46,7 +_,19 @@
  import org.jspecify.annotations.Nullable;
  
  public class EnchantmentHelper {
@@ -20,7 +20,7 @@
          ItemEnchantments enchantments = piece.getOrDefault(DataComponents.ENCHANTMENTS, ItemEnchantments.EMPTY);
          return enchantments.getLevel(enchantment);
      }
-@@ -127,6 +_,12 @@
+@@ -126,6 +_,12 @@
      public static void runIterationOnItem(ItemStack piece, EnchantmentHelper.EnchantmentVisitor method) {
          ItemEnchantments enchantments = piece.getOrDefault(DataComponents.ENCHANTMENTS, ItemEnchantments.EMPTY);
  
@@ -33,7 +33,7 @@
          for (Entry<Holder<Enchantment>> entry : enchantments.entrySet()) {
              method.accept(entry.getKey(), entry.getIntValue());
          }
-@@ -135,6 +_,10 @@
+@@ -134,6 +_,10 @@
      public static void runIterationOnItem(ItemStack piece, EquipmentSlot slot, LivingEntity owner, EnchantmentHelper.EnchantmentInSlotVisitor method) {
          if (!piece.isEmpty()) {
              ItemEnchantments itemEnchantments = piece.get(DataComponents.ENCHANTMENTS);
@@ -44,35 +44,31 @@
              if (itemEnchantments != null && !itemEnchantments.isEmpty()) {
                  EnchantedItemInUse itemInUse = new EnchantedItemInUse(piece, slot, owner);
  
-@@ -339,7 +_,12 @@
-                             if (filteredEffect.enchanted() == EnchantmentTarget.VICTIM
-                                 && filteredEffect.affected() == EnchantmentTarget.VICTIM
-                                 && filteredEffect.matches(context)) {
--                                modifiedChance.setValue(filteredEffect.effect().process(level, random, modifiedChance.floatValue()));
+@@ -324,7 +_,13 @@
+         return Math.max(0, modifiedDurability.intValue());
+     }
+ 
++    /// @deprecated Neo: Use [#processEquipmentDropChance(ServerLevel,LivingEntity,DamageSource,float,EquipmentSlot)] for slot context.
++    @Deprecated
+     public static float processEquipmentDropChance(ServerLevel serverLevel, LivingEntity entity, DamageSource killingBlow, float chance) {
++        return processEquipmentDropChance(serverLevel, entity, killingBlow, chance, null);
++    }
 +
-+                                // Neo: Allow mods to modify the enchantment level for loot calculations with relevant context.
-+                                int realLevel = net.neoforged.neoforge.event.EventHooks.getEntityLootEnchantmentLevel(enchantment, level, context);
-+                                if (realLevel == 0) return;
++    public static float processEquipmentDropChance(ServerLevel serverLevel, LivingEntity entity, DamageSource killingBlow, float chance, @Nullable EquipmentSlot slot) {
+         MutableFloat modifiedChance = new MutableFloat(chance);
+         RandomSource random = entity.getRandom();
+         runIterationOnEquipment(
+@@ -364,6 +_,9 @@
+             );
+         }
+ 
++        // Neo: allow mods to modify the drop chance for equipment with the relevant context
++        net.neoforged.neoforge.event.EventHooks.onEquipmentDropChance(serverLevel, entity, killingBlow, modifiedChance, chance, slot);
 +
-+                                modifiedChance.setValue(filteredEffect.effect().process(realLevel, random, modifiedChance.floatValue()));
-                             }
-                         }
-                     );
-@@ -357,7 +_,12 @@
-                                 if (filteredEffect.enchanted() == EnchantmentTarget.ATTACKER
-                                     && filteredEffect.affected() == EnchantmentTarget.VICTIM
-                                     && filteredEffect.matches(context)) {
--                                    modifiedChance.setValue(filteredEffect.effect().process(level, random, modifiedChance.floatValue()));
-+
-+                                    // Neo: Allow mods to modify the enchantment level for loot calculations with relevant context.
-+                                    int realLevel = net.neoforged.neoforge.event.EventHooks.getEntityLootEnchantmentLevel(enchantment, level, context);
-+                                    if (realLevel == 0) return;
-+
-+                                    modifiedChance.setValue(filteredEffect.effect().process(realLevel, random, modifiedChance.floatValue()));
-                                 }
-                             }
-                         );
-@@ -420,6 +_,12 @@
+         return modifiedChance.floatValue();
+     }
+ 
+@@ -419,6 +_,12 @@
      public static boolean hasTag(ItemStack item, TagKey<Enchantment> tag) {
          ItemEnchantments enchantments = item.getOrDefault(DataComponents.ENCHANTMENTS, ItemEnchantments.EMPTY);
  
@@ -85,16 +81,14 @@
          for (Entry<Holder<Enchantment>> entry : enchantments.entrySet()) {
              Holder<Enchantment> enchantment = entry.getKey();
              if (enchantment.is(tag)) {
-@@ -574,7 +_,11 @@
+@@ -573,7 +_,9 @@
      public static List<EnchantmentInstance> getAvailableEnchantmentResults(int value, ItemStack itemStack, Stream<Holder<Enchantment>> source) {
          List<EnchantmentInstance> results = Lists.newArrayList();
          boolean isBook = itemStack.is(Items.BOOK);
 -        source.filter(enchantment -> enchantment.value().isPrimaryItem(itemStack) || isBook).forEach(holder -> {
 +        // Neo: Rewrite filter logic to call isPrimaryItemFor instead of hardcoded vanilla logic.
 +        // The original logic is recorded in the default implementation of IItemExtension#isPrimaryItemFor.
-+        // NeoFabric: the vanilla filter lambda (and its Enchantment#isPrimaryItem call) is kept as-is because Fabric
-+        // API's EnchantmentHelperMixin redirects exactly that call; the isPrimaryItemFor check still applies.
-+        source.filter(holder -> holder.value().isPrimaryItem(itemStack) || isBook || itemStack.isPrimaryItemFor(holder)).forEach(holder -> {
++        source.filter(itemStack::isPrimaryItemFor).forEach(holder -> {
              Enchantment enchantment = holder.value();
  
              for (int level = enchantment.getMaxLevel(); level >= enchantment.getMinLevel(); level--) {

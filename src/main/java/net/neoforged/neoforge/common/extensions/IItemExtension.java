@@ -41,13 +41,11 @@ import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.minecraft.world.item.context.UseOnContext;
-import net.minecraft.world.item.crafting.RecipeType;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.Enchantment.EnchantmentDefinition;
 import net.minecraft.world.item.enchantment.EnchantmentInstance;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.entity.FuelValues;
 import net.minecraft.world.phys.AABB;
 import net.neoforged.neoforge.common.CommonHooks;
 import net.neoforged.neoforge.common.ItemAbilities;
@@ -265,16 +263,17 @@ public interface IItemExtension {
         return entity.isEquippableInSlot(stack, armorType);
     }
 
-    /**
-     * Override this to set a non-default armor slot for an ItemStack, but <em>do
-     * not use this to get the armor slot of said stack; for that, use
-     * {@link LivingEntity#getEquipmentSlotForItem(ItemStack)}..</em>
-     *
-     * @param stack the ItemStack
-     * @return the armor slot of the ItemStack, or {@code null} to let the default
-     *         vanilla logic as per {@code LivingEntity.getSlotForItemStack(stack)}
-     *         decide
-     */
+    /// {@return the equipment slot for the stack, or `null` to use the vanilla logic in [LivingEntity#getEquipmentSlotForItem(ItemStack)]}
+    ///
+    /// Override this to set a non-default armor slot for an ItemStack, but _do
+    /// not_ call this to get the equipment slot of said stack; for that, use
+    /// [LivingEntity#getEquipmentSlotForItem(ItemStack)].
+    ///
+    /// @param stack the stack
+    /// @deprecated To be removed in 26.4. Apply the [net.minecraft.world.item.equipment.Equippable] component to your item instead, such as through the
+    ///             [Item.Properties#equippable(EquipmentSlot)] helper, using [Item.Properties#component(DataComponentType, Object)], or dynamically
+    ///             adding the component.
+    @Deprecated(forRemoval = true, since = "26.3")
     @Nullable
     default EquipmentSlot getEquipmentSlot(ItemStack stack) {
         return null;
@@ -345,6 +344,8 @@ public interface IItemExtension {
     default boolean canPerformAction(ItemInstance stack, ItemAbility itemAbility) {
         if (itemAbility == ItemAbilities.SWORD_SWEEP) {
             return stack.is(ItemTags.SWORDS);
+        } else if (itemAbility == ItemAbilities.SHOVEL_DOUSE) {
+            return stack.is(ItemTags.DOUSES_CAMPFIRES);
         }
         return false;
     }
@@ -524,16 +525,6 @@ public interface IItemExtension {
     }
 
     /**
-     * @return the fuel burn time for this item stack in a furnace. Return 0 to make it not act as a fuel.
-     * @apiNote This method takes precedence over the {@link net.neoforged.neoforge.registries.datamaps.builtin.NeoForgeDataMaps#FURNACE_FUELS data map}.
-     *          However, you should use the data map unless necessary (i.e. NBT-based burn times) so that users can configure burn times.
-     */
-    @ApiStatus.OverrideOnly
-    default int getBurnTime(ItemStack itemStack, @Nullable RecipeType<?> recipeType, FuelValues fuelValues) {
-        return fuelValues.burnDuration(itemStack);
-    }
-
-    /**
      * Called every tick when this item is equipped {@linkplain DataComponents#EQUIPPABLE as an armor item} by an animal.
      *
      * @param stack The armor stack
@@ -554,7 +545,7 @@ public interface IItemExtension {
      * @param onBroken The on-broken callback from vanilla
      * @return The amount of damage to pass to the vanilla logic
      */
-    default <T extends LivingEntity> int damageItem(ItemStack stack, int amount, @Nullable T entity, Consumer<Item> onBroken) {
+    default <T extends LivingEntity> int damageItem(ItemStack stack, int amount, @Nullable T entity, Consumer<ItemStack> onBroken) {
         return amount;
     }
 
@@ -681,9 +672,9 @@ public interface IItemExtension {
     /// If an entity has multiple items equipped that provide the gliding flight attribute, one of those items will be randomly selected
     /// to be called with this method.
     ///
-    /// @param stack the stack of the item providing the gliding flight attribute
+    /// @param stack  the stack of the item providing the gliding flight attribute
     /// @param wearer the entity wearing the item
-    /// @param slot the equipment slot occupied by the item
+    /// @param slot   the equipment slot occupied by the item
     /// @see IItemStackExtension#onGlideDamage(LivingEntity, EquipmentSlot)
     default void onGlideDamage(ItemStack stack, LivingEntity wearer, EquipmentSlot slot) {
         stack.hurtAndBreak(1, wearer, slot);

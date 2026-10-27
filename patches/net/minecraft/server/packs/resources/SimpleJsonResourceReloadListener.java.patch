@@ -1,120 +1,35 @@
 --- a/net/minecraft/server/packs/resources/SimpleJsonResourceReloadListener.java
 +++ b/net/minecraft/server/packs/resources/SimpleJsonResourceReloadListener.java
-@@ -42,7 +_,8 @@
- 
+@@ -36,13 +_,21 @@
      protected Map<Identifier, T> prepare(ResourceManager manager, ProfilerFiller profiler) {
          Map<Identifier, T> result = new HashMap<>();
--        scanDirectory(manager, this.lister, this.ops, this.codec, result);
-+        // Neo: add condition context
-+        scanDirectory(manager, this.lister, this.makeConditionalOps(this.ops), this.codec, result);
-         return result;
-     }
  
-@@ -52,22 +_,108 @@
-         scanDirectory(manager, FileToIdConverter.registry(registryKey), ops, codec, result);
-     }
- 
-+    public static <T> void scanDirectoryWithOptionalValues(
-+            ResourceManager manager,
-+            ResourceKey<? extends Registry<T>> registryKey,
-+            DynamicOps<JsonElement> ops,
-+            Codec<java.util.Optional<T>> codec,
-+            Map<Identifier, java.util.Optional<T>> result
-+    ) {
-+        scanDirectory(manager, FileToIdConverter.registry(registryKey), ops, codec, result);
+-        for (Entry<Identifier, Resource> entry : this.lister.listMatchingResources(manager).entrySet()) {
++        var conditionalOps = this.makeConditionalOps(this.ops);
++        return scanDirectory(manager, this.lister, conditionalOps, this.codec, result);
 +    }
 +
-     public static <T> void scanDirectory(
-         ResourceManager manager, FileToIdConverter lister, DynamicOps<JsonElement> ops, Codec<T> codec, Map<Identifier, T> result
-     ) {
++    public static <T> Map<Identifier, T> scanDirectory(ResourceManager manager, FileToIdConverter lister, DynamicOps<JsonElement> ops, Codec<T> codec, Map<Identifier, T> result) {
 +        var conditionalCodec = net.neoforged.neoforge.common.conditions.ConditionalOps.createConditionalCodec(codec);
-         for (Entry<Identifier, Resource> entry : lister.listMatchingResources(manager).entrySet()) {
++        for (Entry<Identifier, Resource> entry : lister.listMatchingResources(manager).entrySet()) {
              Identifier location = entry.getKey();
-             Identifier id = lister.fileToId(location);
+-            Identifier id = this.lister.fileToId(location);
++            Identifier id = lister.fileToId(location);
  
-+            // Neo: a Fabric jar's loot_modifiers files use a Forge-shaped schema its own (code-based) loot
-+            // API never reads; parsing them here only fails on the missing serializer, so they are left out.
-+            if (net.neoforged.neoforge.common.FabricResourceConditions.skipForLoader(lister.prefix(), id)) {
-+                continue;
-+            }
-+
              try (Reader reader = entry.getValue().openAsReader()) {
--                codec.parse(ops, StrictJsonParser.parse(reader)).ifSuccess(parsed -> {
+-                this.codec.parse(this.ops, StrictJsonParser.parse(reader)).ifSuccess(parsed -> {
 -                    if (result.putIfAbsent(id, (T)parsed) != null) {
-+                // Neo: the parse result is taken as an Object on purpose. Fabric's resource conditions
-+                // (fabric-resource-conditions-api-v1) wrap this very parse call and hand back their own
-+                // marker object in place of the parsed value when a file's conditions are not met. Typing
-+                // the lambda's parameter as the conditional codec's Optional would cast that marker at the
-+                // lambda's entry and die with ClassCastException (java.lang.Object -> java.util.Optional) -
-+                // which is exactly what happened once both condition systems met on the same file.
-+                com.mojang.serialization.DataResult<Object> parseResult = (com.mojang.serialization.DataResult<Object>) (com.mojang.serialization.DataResult<?>) conditionalCodec
-+                        .parse(ops, com.google.gson.JsonParser.parseReader(reader));
-+                parseResult.ifSuccess(parsed -> {
-+                    if (!(parsed instanceof java.util.Optional<?> optional)) {
-+                        // Fabric's marker: that loader wants the file skipped.
-+                        return;
-+                    }
-+                    // The map and the id come first on purpose: javac orders a lambda's captured parameters by
-+                    // first use, and Fabric API's resource-conditions mixin injects into this lambda's HEAD
-+                    // with the vanilla parameter shape (Map, Identifier, Object). Touching the id before the map
-+                    // - or touching the resource location at all - gives the lambda different leading
-+                    // parameters and the injection is rejected as "Invalid descriptor", which took the whole
-+                    // resource-conditions layer of that module down with it.
-+                    if (optional.isPresent() && result.putIfAbsent(id, (T) optional.get()) != null) {
++                conditionalCodec.parse(ops, StrictJsonParser.parse(reader)).ifSuccess(parsed -> {
++                    if (parsed.isEmpty()) {
++                        LOGGER.debug("Skipping loading data file '{}' from '{}' as its conditions were not met", id, location);
++                    } else if (result.putIfAbsent(id, parsed.get()) != null) {
                          throw new IllegalStateException("Duplicate data file ignored with ID " + id);
                      }
-+                    if (optional.isEmpty()) {
-+                        LOGGER.debug("Skipping loading data file '{}' as its conditions were not met", id);
-+                    }
                  }).ifError(error -> LOGGER.error("Couldn't parse data file '{}' from '{}': {}", id, location, error));
-             } catch (JsonParseException | IllegalArgumentException | IOException e) {
-                 LOGGER.error("Couldn't parse data file '{}' from '{}'", id, location, e);
-             }
+@@ -52,5 +_,9 @@
          }
-+    }
-+
-+    /// Neo: Overload of [#scanDirectory(ResourceManager, FileToIdConverter, DynamicOps, Codec, Map)] with support
-+    /// for modifying the raw JSON in bulk before it is deserialized.
-+    ///
-+    /// Implemented as a copy to ensure resources not using the modification support still use the shorter path
-+    /// without the intermediate storage.
-+    public static <T> void scanDirectoryWithModifier(
-+        ResourceManager manager, FileToIdConverter lister, DynamicOps<JsonElement> ops, Codec<T> codec, Map<Identifier, T> result, java.util.function.Consumer<Map<Identifier, JsonElement>> jsonConsumer
-+    ) {
-+        Map<Identifier, JsonElement> jsons = new HashMap<>();
-+        for (Entry<Identifier, Resource> entry : lister.listMatchingResources(manager).entrySet()) {
-+            Identifier location = entry.getKey();
-+            Identifier id = lister.fileToId(location);
-+
-+            try (Reader reader = entry.getValue().openAsReader()) {
-+                jsons.put(id, com.google.gson.JsonParser.parseReader(reader));
-+            } catch (IllegalArgumentException | IOException | JsonParseException var14) {
-+                LOGGER.error("Couldn't parse data file '{}' from '{}'", id, location, var14);
-+            }
-+        }
-+
-+        jsonConsumer.accept(jsons);
-+
-+        var conditionalCodec = net.neoforged.neoforge.common.conditions.ConditionalOps.createConditionalCodec(codec);
-+        for (Entry<Identifier, JsonElement> entry : jsons.entrySet()) {
-+            Identifier id = entry.getKey();
-+            JsonElement json = entry.getValue();
-+
-+            // Neo: Fabric data files carry fabric:load_conditions, and this copy of the scan is not
-+            // wrapped by fabric-resource-conditions-api-v1 (it hooks scanDirectory only): ask the bridge.
-+            if (!net.neoforged.neoforge.common.FabricResourceConditions.allow(json, lister.prefix(), id, ops)) {
-+                LOGGER.debug("Skipping loading data file '{}' as its Fabric conditions were not met", id);
-+                continue;
-+            }
-+
-+            conditionalCodec.parse(ops, json).ifSuccess(parsed -> {
-+                if (parsed.isEmpty()) {
-+                    LOGGER.debug("Skipping loading data file '{}' as its conditions were not met", id);
-+                } else if (result.putIfAbsent(id, parsed.get()) != null) {
-+                    throw new IllegalStateException("Duplicate data file ignored with ID " + id);
-+                }
-+            }).ifError(error -> LOGGER.error("Couldn't parse data file '{}': {}", id, error));
-+        }
+ 
+         return result;
 +    }
 +
 +    protected Identifier getPreparedPath(Identifier rl) {

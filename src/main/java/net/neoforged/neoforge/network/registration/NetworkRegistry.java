@@ -43,7 +43,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
 import net.neoforged.fml.ModLoader;
 import net.neoforged.neoforge.common.NeoForgeVersion;
-import net.neoforged.neoforge.common.config.NeoForgeCommonConfig;
+import net.neoforged.neoforge.common.config.NeoForgeLocalConfig;
 import net.neoforged.neoforge.common.extensions.ICommonPacketListener;
 import net.neoforged.neoforge.network.configuration.CommonRegisterTask;
 import net.neoforged.neoforge.network.configuration.CommonVersionTask;
@@ -750,7 +750,7 @@ public class NetworkRegistry {
      */
     public static void onMinecraftRegister(Connection connection, Set<Identifier> resourceLocations) {
         var channels = ChannelAttributes.getOrCreateAdHocChannels(connection);
-        if ((channels.size() + resourceLocations.size()) > NeoForgeCommonConfig.INSTANCE.maxAdhocChannelLimit.getAsInt()) {
+        if ((channels.size() + resourceLocations.size()) > NeoForgeLocalConfig.INSTANCE.maxAdhocChannelLimit.getAsInt()) {
             if (connection.getPacketListener() instanceof ICommonPacketListener listener) {
                 listener.disconnect(Component.translatable("neoforge.network.adhoc_channels.too_many"));
                 return;

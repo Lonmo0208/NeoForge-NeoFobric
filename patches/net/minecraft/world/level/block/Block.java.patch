@@ -1,7 +1,7 @@
 --- a/net/minecraft/world/level/block/Block.java
 +++ b/net/minecraft/world/level/block/Block.java
-@@ -81,7 +_,7 @@
-     public static final MapCodec<Block> CODEC = simpleCodec(Block::new);
+@@ -80,7 +_,7 @@
+ public class Block extends BlockBehaviour implements ItemLike, IBlockExtension {
      private static final Logger LOGGER = LogUtils.getLogger();
      private final Holder.Reference<Block> builtInRegistryHolder = BuiltInRegistries.BLOCK.createIntrusiveHolder(this);
 -    public static final IdMapper<BlockState> BLOCK_STATE_REGISTRY = new IdMapper<>();
@@ -9,7 +9,7 @@
      private static final LoadingCache<VoxelShape, Boolean> SHAPE_FULL_BLOCK_CACHE = CacheBuilder.newBuilder()
          .maximumSize(512L)
          .weakKeys()
-@@ -236,7 +_,7 @@
+@@ -230,7 +_,7 @@
          this.createBlockStateDefinition(builder);
          this.stateDefinition = builder.create(Block::defaultBlockState, BlockState::new);
          this.registerDefaultState(this.stateDefinition.any());
@@ -18,7 +18,7 @@
              String className = this.getClass().getSimpleName();
              if (!className.endsWith("Block")) {
                  LOGGER.error("Block classes should end with Block and {} doesn't.", className);
-@@ -289,7 +_,15 @@
+@@ -285,7 +_,15 @@
          }
      }
  
@@ -34,7 +34,7 @@
          VoxelShape occluder = neighborState.getFaceOcclusionShape(direction.getOpposite());
          if (occluder == Shapes.block()) {
              return false;
-@@ -299,6 +_,10 @@
+@@ -295,6 +_,10 @@
              return false;
          }
  
@@ -45,7 +45,7 @@
          if (occluder == Shapes.empty()) {
              return true;
          }
-@@ -371,22 +_,28 @@
+@@ -367,22 +_,28 @@
  
      public static void dropResources(BlockState state, Level level, BlockPos pos) {
          if (level instanceof ServerLevel serverLevel) {
@@ -77,7 +77,7 @@
          }
      }
  
-@@ -416,19 +_,26 @@
+@@ -412,19 +_,26 @@
      }
  
      private static void popResource(Level level, Supplier<ItemEntity> entityFactory, ItemStack itemStack) {
@@ -107,87 +107,16 @@
      public float getExplosionResistance() {
          return this.explosionResistance;
      }
-@@ -464,6 +_,8 @@
-         entity.causeFallDamage(fallDistance, 1.0F, entity.damageSources().fall());
+@@ -466,6 +_,8 @@
+     public void bounceOn(Level level, BlockState state, BlockPos pos, Entity entity, double fallDistance) {
      }
  
-+    /// @deprecated NeoForge: Use [net.neoforged.neoforge.common.extensions.IBlockStateExtension#getBounceRestitution()]
++    /// @deprecated NeoForge: Use [net.neoforged.neoforge.common.extensions.IBlockStateExtension#getBounceRestitution(Level, BlockPos, Entity)]
 +    @Deprecated
      public float getBounceRestitution() {
          return this.bounceRestitution;
      }
-@@ -472,6 +_,70 @@
-         return this.friction;
-     }
- 
-+    /**
-+     * {@return the friction this block was built with, read straight off the field}
-+     *
-+     * <p>NeoFobric: where an entity asks for the walk-off speed, a Fabric-side mixin replaces the <em>call</em>
-+     * to {@link #getFriction()}, but it cannot reach this read. Those call sites ask the vanilla way (so such a
-+     * mixin gets its say) and the platform's context-aware hook (so a NeoForge block does), and compare against
-+     * this to tell which of the two answered. With neither in play the value is what it always was.
-+     */
-+    public static float rawFriction(Block block) {
-+        return block.friction;
-+    }
-+
-+    /**
-+     * {@return the sound type this block was built with, read straight off the field}
-+     *
-+     * <p>NeoFobric: the same contract as {@link #rawFriction(Block)} - a Fabric-side mixin replaces calls to
-+     * {@code BlockState#getSoundType()}, never this read, so the two answers can be told apart at the call
-+     * sites that play a block's step, fall, break or hit sound.
-+     */
-+    public static SoundType rawSoundType(Block block) {
-+        return block.soundType;
-+    }
-+
-+    /**
-+     * {@return the explosion resistance this block was built with, read straight off the field}
-+     *
-+     * <p>NeoFobric: the same contract as {@link #rawFriction(Block)} - a Fabric-side mixin replaces calls to
-+     * {@code Block#getExplosionResistance()}, never this read.
-+     */
-+    public static float rawExplosionResistance(Block block) {
-+        return block.explosionResistance;
-+    }
-+
-+    /**
-+     * {@return the bounce restitution this block was built with, read straight off the field}
-+     *
-+     * <p>NeoFobric: the same contract as {@link #rawFriction(Block)} - a Fabric-side mixin replaces calls to
-+     * {@code Entity#getBlockBounciness(Block)}, never this read.
-+     */
-+    public static float rawBounceRestitution(Block block) {
-+        return block.bounceRestitution;
-+    }
-+
-+    /**
-+     * {@return the light emission of {@code state}, asked where no Fabric-side mixin looks}
-+     *
-+     * <p>NeoFobric: the state's own field is private to the state class, so the reference lives here instead.
-+     * Mixins wrap the {@code BlockState#getLightEmission()} calls they select, and this call site is not one of
-+     * them, which is what makes it usable as the "what the platform would say without any mod" answer.
-+     */
-+    public static int rawLightEmission(BlockState state) {
-+        return state.getLightEmission();
-+    }
-+
-+    /**
-+     * {@return whether {@code state} carries the vanilla scaffolding tag, asked where no Fabric-side mixin looks}
-+     *
-+     * <p>NeoFobric: the same contract as {@link #rawFriction(Block)} - mixins wrap the {@code BlockState#is}
-+     * calls they select, and this call site is not one of them.
-+     */
-+    public static boolean rawScaffolding(BlockState state) {
-+        return state.is(Blocks.SCAFFOLDING);
-+    }
-+
-     public float getSpeedFactor() {
-         return this.speedFactor;
-     }
-@@ -497,6 +_,7 @@
+@@ -507,6 +_,7 @@
      public void handlePrecipitation(BlockState state, Level level, BlockPos pos, Biome.Precipitation precipitation) {
      }
  
@@ -195,7 +124,7 @@
      public boolean dropFromExplosion(Explosion explosion) {
          return true;
      }
-@@ -579,6 +_,35 @@
+@@ -583,6 +_,35 @@
          return state.setValue(property, (T)value);
      }
  

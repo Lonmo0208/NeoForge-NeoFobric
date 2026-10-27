@@ -1,74 +1,29 @@
 --- a/net/minecraft/world/item/BoneMealItem.java
 +++ b/net/minecraft/world/item/BoneMealItem.java
-@@ -37,7 +_,18 @@
+@@ -38,7 +_,7 @@
          BlockPos pos = context.getClickedPos();
          BlockPos relative = pos.relative(context.getClickedFace());
          ItemStack boneMealStack = context.getItemInHand();
 -        if (growCrop(boneMealStack, level, pos)) {
-+        // NeoFobric: the call the vanilla line made is the one a Fabric-side mixin replaces - it decides which
-+        // blocks its own bone meal applies to - so it is the call this site makes, and growCrop forwards to the
-+        // platform's flow. Exactly one of the two runs, never both. The player rides in the carrier because the
-+        // vanilla shape has no room for it and the platform's path reports it to the NeoForge event.
-+        NEOFOBRIC_PLAYER.set(context.getPlayer());
-+        boolean applied;
-+        try {
-+            applied = growCrop(boneMealStack, level, pos);
-+        } finally {
-+            NEOFOBRIC_PLAYER.remove();
-+        }
-+        if (applied) {
++        if (applyBonemeal(boneMealStack, level, pos, context.getPlayer())) {
              if (!level.isClientSide()) {
                  boneMealStack.causeUseVibration(context.getPlayer(), GameEvent.ITEM_INTERACT_FINISH);
                  level.levelEvent(1505, pos, 15);
-@@ -61,12 +_,47 @@
+@@ -62,8 +_,17 @@
          }
      }
  
-+    /**
-+     * Carries the player across the vanilla-shaped door, whose signature has no room for it.
-+     *
-+     * <p>Set by {@link #useOn} for the duration of one call and read by {@link #growCrop}, on the same thread.
-+     */
-+    private static final ThreadLocal<net.minecraft.world.entity.player.@Nullable Player> NEOFOBRIC_PLAYER = new ThreadLocal<>();
-+
-+    /**
-+     * The vanilla-shaped door this class calls - and a Fabric-side mixin may replace.
-+     *
-+     * <p>NeoForge moved this method's body into {@link #applyBonemeal} (which takes the player and fires its
-+     * event), leaving this one a delegate. Calling the delegate from {@link #useOn} is what lets a mixin written
-+     * against the vanilla shape hear the call again: its own answer replaces the whole step, and its call to the
-+     * original lands here and forwards to the platform's flow - so the bone meal is applied once either way.
-+     */
 +    @Deprecated //Forge: Use Player/Hand version
      public static boolean growCrop(ItemStack itemStack, Level level, BlockPos pos) {
--        BlockState state = level.getBlockState(pos);
--        if (state.getBlock() instanceof BonemealableBlock block && block.isValidBonemealTarget(level, pos, state)) {
-+        // NeoFobric: the vanilla-shaped read and its getBlock() call stay in this method - a Fabric-side mixin
-+        // injects at that call and answers the grow attempt for its own blocks (the injection is cancellable),
-+        // while everything else relays to the platform flow below. The state and block the read produced are
-+        // handed on, so nothing is read twice and the bone meal is applied once either way.
-+        BlockState state = level.getBlockState(pos);
 +        if (level instanceof net.minecraft.server.level.ServerLevel)
-+            return applyBonemeal(itemStack, level, pos, NEOFOBRIC_PLAYER.get(), state, state.getBlock());
++            return applyBonemeal(itemStack, level, pos, null);
 +        return false;
 +    }
 +
 +    public static boolean applyBonemeal(ItemStack itemStack, Level level, BlockPos pos, net.minecraft.world.entity.player.@Nullable Player player) {
-+        BlockState state = level.getBlockState(pos);
-+        return applyBonemeal(itemStack, level, pos, player, state, state.getBlock());
-+    }
-+
-+    private static boolean applyBonemeal(ItemStack itemStack, Level level, BlockPos pos,
-+            net.minecraft.world.entity.player.@Nullable Player player, BlockState state,
-+            net.minecraft.world.level.block.Block block) {
-+        var event = net.neoforged.neoforge.event.EventHooks.fireBonemealEvent(player, level, pos, state, itemStack);
+         BlockState state = level.getBlockState(pos);
++        var event = net.neoforged.neoforge.event.EventHooks.fireBonemealEvent(player, level, pos, state, BonemealSource.INTERACTION, itemStack);
 +        if (event.isCanceled()) return event.isSuccessful();
-+        if (block instanceof BonemealableBlock bone && bone.isValidBonemealTarget(level, pos, state)) {
+         if (state.getBlock() instanceof BonemealableBlock block && block.isValidBonemealTarget(level, pos, state, BonemealSource.INTERACTION)) {
              if (level instanceof ServerLevel serverLevel) {
--                if (block.isBonemealSuccess(level, level.getRandom(), pos, state)) {
--                    block.performBonemeal(serverLevel, level.getRandom(), pos, state);
-+                if (bone.isBonemealSuccess(level, level.getRandom(), pos, state)) {
-+                    bone.performBonemeal(serverLevel, level.getRandom(), pos, state);
-                 }
- 
-                 itemStack.shrink(1);
+                 if (block.isBonemealSuccess(level, level.getRandom(), pos, state, BonemealSource.INTERACTION)) {

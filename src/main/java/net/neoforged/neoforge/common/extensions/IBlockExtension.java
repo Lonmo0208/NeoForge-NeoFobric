@@ -26,10 +26,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.FishingHook;
 import net.minecraft.world.entity.projectile.hurtingprojectile.WitherSkull;
-import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
-import net.minecraft.world.item.ShovelItem;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.item.enchantment.EnchantmentEffectComponents;
 import net.minecraft.world.level.BlockAndLightGetter;
@@ -42,7 +39,6 @@ import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.SignalGetter;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.block.BeaconBeamBlock;
-import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CampfireBlock;
@@ -53,22 +49,17 @@ import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.FireBlock;
 import net.minecraft.world.level.block.GrowingPlantHeadBlock;
 import net.minecraft.world.level.block.HalfTransparentBlock;
-import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.LadderBlock;
 import net.minecraft.world.level.block.LeavesBlock;
-import net.minecraft.world.level.block.ObserverBlock;
-import net.minecraft.world.level.block.RedStoneWireBlock;
-import net.minecraft.world.level.block.RepeaterBlock;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.TrapDoorBlock;
-import net.minecraft.world.level.block.WeatheringCopper;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.gameevent.GameEvent;
-import net.minecraft.world.level.levelgen.feature.configurations.TreeConfiguration;
+import net.minecraft.world.level.levelgen.feature.TreeFeature;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.MapColor;
 import net.minecraft.world.level.material.PushReaction;
@@ -76,7 +67,6 @@ import net.minecraft.world.level.pathfinder.PathType;
 import net.minecraft.world.level.pathfinder.WalkNodeEvaluator;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.capabilities.BlockCapabilityCache;
-import net.neoforged.neoforge.common.DataMapHooks;
 import net.neoforged.neoforge.common.ItemAbilities;
 import net.neoforged.neoforge.common.ItemAbility;
 import net.neoforged.neoforge.common.Tags;
@@ -85,6 +75,9 @@ import net.neoforged.neoforge.common.util.BlockRelocability;
 import net.neoforged.neoforge.common.world.AuxiliaryLightManager;
 import net.neoforged.neoforge.event.EventHooks;
 import net.neoforged.neoforge.model.data.ModelData;
+import net.neoforged.neoforge.model.data.ModelDataManager;
+import net.neoforged.neoforge.registries.datamaps.builtin.Flammable;
+import net.neoforged.neoforge.registries.datamaps.builtin.NeoForgeDataMaps;
 import org.jspecify.annotations.Nullable;
 
 @SuppressWarnings("deprecation")
@@ -248,10 +241,10 @@ public interface IBlockExtension {
     }
 
     /**
-     * Called when a block is removed by {@link PushReaction#DESTROY}. This is responsible for
+     * Called when a block is removed by {@link PushReaction#POPPED}. This is responsible for
      * actually destroying the block, and the block is intact at time of call.
      * <p>
-     * Will only be called if {@link BlockState#getPistonPushReaction} returns {@link PushReaction#DESTROY}.
+     * Will only be called if {@link BlockState#getPistonPushReaction} returns {@link PushReaction#POPPED}.
      * <p>
      * Note: When used in multiplayer, this is called on both client and
      * server sides!
@@ -268,24 +261,6 @@ public interface IBlockExtension {
     }
 
     /**
-     * Determines if this block is classified as a bed, replacing <code>instanceof BedBlock</code> checks.
-     * <p>
-     * If true, players may sleep in it, though the block must manually put the player to sleep
-     * by calling {@link Player#startSleepInBed} from {@link BlockBehaviour#useWithoutItem} or similar.
-     * <p>
-     * If you want players to be able to respawn at your bed, you also need to override {@link #getRespawnPosition}.
-     *
-     * @param state   The current state
-     * @param level   The current level
-     * @param pos     Block position in level
-     * @param sleeper The sleeping entity.
-     * @return True to treat this as a bed
-     */
-    default boolean isBed(BlockState state, BlockGetter level, BlockPos pos, LivingEntity sleeper) {
-        return self() instanceof BedBlock;
-    }
-
-    /**
      * Returns the position that the entity is moved to upon respawning at this block.
      *
      * @param state       The current state
@@ -297,31 +272,6 @@ public interface IBlockExtension {
      */
     default Optional<ServerPlayer.RespawnPosAngle> getRespawnPosition(BlockState state, EntityType<?> type, LevelReader levelReader, BlockPos pos, float orientation) {
         return Optional.empty();
-    }
-
-    /**
-     * Called when a user either starts or stops sleeping in the bed.
-     *
-     * @param level    The current level
-     * @param pos      Block position in level
-     * @param sleeper  The sleeper or camera entity, null in some cases.
-     * @param occupied True if we are occupying the bed, or false if they are stopping use of the bed
-     */
-    default void setBedOccupied(BlockState state, Level level, BlockPos pos, LivingEntity sleeper, boolean occupied) {
-        level.setBlock(pos, state.setValue(BedBlock.OCCUPIED, occupied), 3);
-    }
-
-    /**
-     * Returns the direction of the block. Same values that
-     * are returned by BlockDirectional. Called every frame tick for every living entity. Be VERY fast.
-     *
-     * @param state The current state
-     * @param level The current level
-     * @param pos   Block position in level
-     * @return Bed direction
-     */
-    default Direction getBedDirection(BlockState state, LevelReader level, BlockPos pos) {
-        return state.getValue(HorizontalDirectionalBlock.FACING);
     }
 
     /**
@@ -443,10 +393,10 @@ public interface IBlockExtension {
      * @param placeFunction Function to set blocks in the level for the tree, use this instead of the level directly
      * @param randomSource  The random source
      * @param pos           Position of the block to be set to dirt
-     * @param config        Configuration of the trunk placer. Consider azalea trees, which should place rooted dirt instead of regular dirt.
+     * @param tree          Configuration of the trunk placer. Consider azalea trees, which should place rooted dirt instead of regular dirt.
      * @return True to ignore vanilla behaviour
      */
-    default boolean onTreeGrow(BlockState state, WorldGenLevel level, BiConsumer<BlockPos, BlockState> placeFunction, RandomSource randomSource, BlockPos pos, TreeConfiguration config) {
+    default boolean onTreeGrow(BlockState state, WorldGenLevel level, BiConsumer<BlockPos, BlockState> placeFunction, RandomSource randomSource, BlockPos pos, TreeFeature tree) {
         return false;
     }
 
@@ -464,33 +414,6 @@ public interface IBlockExtension {
             return state.getValue(FarmlandBlock.MOISTURE) > 0;
 
         return false;
-    }
-
-    /**
-     * Determines if this block can be used as the frame of a conduit.
-     *
-     * @param level   The current level
-     * @param pos     Block position in level
-     * @param conduit Conduit position in level
-     * @return True, to support the conduit, and make it active with this block.
-     */
-    default boolean isConduitFrame(BlockState state, LevelReader level, BlockPos pos, BlockPos conduit) {
-        return state.getBlock() == Blocks.PRISMARINE ||
-                state.getBlock() == Blocks.PRISMARINE_BRICKS ||
-                state.getBlock() == Blocks.SEA_LANTERN ||
-                state.getBlock() == Blocks.DARK_PRISMARINE;
-    }
-
-    /**
-     * Determines if this block can be used as part of a frame of a nether portal.
-     *
-     * @param state The current state
-     * @param level The current level
-     * @param pos   Block position in level
-     * @return True, to support being part of a nether portal frame, false otherwise.
-     */
-    default boolean isPortalFrame(BlockState state, BlockGetter level, BlockPos pos) {
-        return state.is(Blocks.OBSIDIAN);
     }
 
     /**
@@ -666,32 +589,47 @@ public interface IBlockExtension {
         return state.isStickyBlock() || other.isStickyBlock();
     }
 
-    /**
-     * Chance that fire will spread and consume this block.
-     * 300 being a 100% chance, 0, being a 0% chance.
-     *
-     * @param state     The current state
-     * @param level     The current level
-     * @param pos       Block position in level
-     * @param direction The direction that the fire is coming from
-     * @return A number ranging from 0 to 300 relating used to determine if the block will be consumed by fire
-     */
-    default int getFlammability(BlockState state, BlockGetter level, BlockPos pos, Direction direction) {
-        return ((FireBlock) Blocks.FIRE).getBurnOdds(state);
+    /// Called when fire is updating, checks if a block face can catch fire.
+    ///
+    /// @param state     The current state
+    /// @param level     The current level
+    /// @param pos       Block position in level
+    /// @param direction The direction that the fire is coming from
+    /// @return True if the face can be on fire, false otherwise.
+    default boolean isFlammable(BlockState state, BlockGetter level, BlockPos pos, Direction direction) {
+        return state.getFireSpreadSpeed(level, pos, direction) > 0;
     }
 
-    /**
-     * Called when fire is updating, checks if a block face can catch fire.
-     *
-     *
-     * @param state     The current state
-     * @param level     The current level
-     * @param pos       Block position in level
-     * @param direction The direction that the fire is coming from
-     * @return True if the face can be on fire, false otherwise.
-     */
-    default boolean isFlammable(BlockState state, BlockGetter level, BlockPos pos, Direction direction) {
-        return state.getFlammability(level, pos, direction) > 0;
+    /// Called when fire is updating on a neighbor block.
+    /// The higher the number returned, the faster fire will spread around this block.
+    ///
+    /// @param state     The current state
+    /// @param level     The current level
+    /// @param pos       Block position in level
+    /// @param direction The direction that the fire is coming from
+    /// @return A number that is used to determine the speed of fire growth around the block
+    default int getFireSpreadSpeed(BlockState state, BlockGetter level, BlockPos pos, Direction direction) {
+        if (state.hasProperty(BlockStateProperties.WATERLOGGED) && state.getValue(BlockStateProperties.WATERLOGGED)) {
+            return 0;
+        }
+        Flammable flammable = state.getBlock().builtInRegistryHolder().getData(NeoForgeDataMaps.FLAMMABLE);
+        return flammable != null ? flammable.igniteOdds() : ((FireBlock) Blocks.FIRE).getIgniteOdds(state);
+    }
+
+    /// Chance that fire will spread and consume this block.
+    /// 300 being a 100% chance, 0, being a 0% chance.
+    ///
+    /// @param state     The current state
+    /// @param level     The current level
+    /// @param pos       Block position in level
+    /// @param direction The direction that the fire is coming from
+    /// @return A number ranging from 0 to 300 relating used to determine if the block will be consumed by fire
+    default int getFlammability(BlockState state, BlockGetter level, BlockPos pos, Direction direction) {
+        if (state.hasProperty(BlockStateProperties.WATERLOGGED) && state.getValue(BlockStateProperties.WATERLOGGED)) {
+            return 0;
+        }
+        Flammable flammable = state.getBlock().builtInRegistryHolder().getData(NeoForgeDataMaps.FLAMMABLE);
+        return flammable != null ? flammable.burnOdds() : ((FireBlock) Blocks.FIRE).getBurnOdds(state);
     }
 
     /**
@@ -699,29 +637,16 @@ public interface IBlockExtension {
      * <p>
      * The return value determines whether a flint-and-steel in a dispenser was used successfully and should be damaged
      *
-     * @param state     The current state
-     * @param level     The current level
-     * @param pos       Block position in level
-     * @param direction The direction that the fire is coming from
-     * @param igniter   The entity that lit the fire
+     * @param state        The current state
+     * @param level        The current level
+     * @param pos          Block position in level
+     * @param direction    The direction that the fire is coming from
+     * @param igniter      The entity that lit the fire
+     * @param ignitionItem The item that was used to light the fire
      * @return whether the block was successfully set on fire (i.e. TNT is allowed to explode and was primed)
      */
-    default boolean onCaughtFire(BlockState state, Level level, BlockPos pos, @Nullable Direction direction, @Nullable LivingEntity igniter) {
+    default boolean onCaughtFire(BlockState state, Level level, BlockPos pos, @Nullable Direction direction, @Nullable LivingEntity igniter, ItemStack ignitionItem) {
         return true;
-    }
-
-    /**
-     * Called when fire is updating on a neighbor block.
-     * The higher the number returned, the faster fire will spread around this block.
-     *
-     * @param state     The current state
-     * @param level     The current level
-     * @param pos       Block position in level
-     * @param direction The direction that the fire is coming from
-     * @return A number that is used to determine the speed of fire growth around the block
-     */
-    default int getFireSpreadSpeed(BlockState state, BlockGetter level, BlockPos pos, Direction direction) {
-        return ((FireBlock) Blocks.FIRE).getIgniteOdds(state);
     }
 
     /**
@@ -802,8 +727,6 @@ public interface IBlockExtension {
 
     /**
      * Returns the state that this block should transform into when right-clicked by a tool.
-     * For example: Used to determine if {@link ItemAbilities#AXE_STRIP an axe can strip},
-     * {@link ItemAbilities#SHOVEL_FLATTEN a shovel can path}, or {@link ItemAbilities#HOE_TILL a hoe can till}.
      * Returns {@code null} if nothing should happen.
      *
      * @param state       The current state
@@ -815,46 +738,20 @@ public interface IBlockExtension {
     @Nullable
     default BlockState getToolModifiedState(BlockState state, UseOnContext context, ItemAbility itemAbility, boolean simulate) {
         ItemStack itemStack = context.getItemInHand();
-        if (!itemStack.canPerformAction(itemAbility))
+        if (!itemStack.canPerformAction(itemAbility)) {
             return null;
+        }
 
-        if (ItemAbilities.AXE_STRIP == itemAbility) {
-            return AxeItem.getAxeStrippingState(state);
-        } else if (ItemAbilities.AXE_SCRAPE == itemAbility) {
-            return WeatheringCopper.getPrevious(state).orElse(null);
-        } else if (ItemAbilities.AXE_WAX_OFF == itemAbility) {
-            Block waxOffBlock = DataMapHooks.getBlockUnwaxed(state.getBlock());
-            return Optional.ofNullable(waxOffBlock).map(block -> block.withPropertiesOf(state)).orElse(null);
-        } else if (ItemAbilities.SHOVEL_FLATTEN == itemAbility) {
-            return ShovelItem.getShovelPathingState(state);
-        } else if (ItemAbilities.HOE_TILL == itemAbility) {
-            // Logic copied from HoeItem#TILLABLES; needs to be kept in sync during updating
-            Block block = state.getBlock();
-            if (block == Blocks.ROOTED_DIRT) {
-                if (!simulate && !context.getLevel().isClientSide()) {
-                    Block.popResourceFromFace(context.getLevel(), context.getClickedPos(), context.getClickedFace(), new ItemStack(Items.HANGING_ROOTS));
-                }
-                return Blocks.DIRT.defaultBlockState();
-            } else if ((block == Blocks.GRASS_BLOCK || block == Blocks.DIRT_PATH || block == Blocks.DIRT || block == Blocks.COARSE_DIRT) &&
-                    context.getLevel().getBlockState(context.getClickedPos().above()).isAir()) {
-                        return block == Blocks.COARSE_DIRT ? Blocks.DIRT.defaultBlockState() : Blocks.FARMLAND.defaultBlockState();
-                    }
-        } else if (ItemAbilities.SHEARS_TRIM == itemAbility) {
+        if (ItemAbilities.SHEARS_TRIM == itemAbility) {
             if (state.getBlock() instanceof GrowingPlantHeadBlock growingPlant && !growingPlant.isMaxAge(state)) {
-                if (!simulate)
-                    context.getLevel().playSound(context.getPlayer(), context.getClickedPos(), SoundEvents.GROWING_PLANT_CROP, SoundSource.BLOCKS, 1.0F, 1.0F);
-                return growingPlant.getMaxAgeState(state);
-            }
-        } else if (ItemAbilities.SHOVEL_DOUSE == itemAbility) {
-            if (state.getBlock() instanceof CampfireBlock && state.getValue(CampfireBlock.LIT)) {
                 if (!simulate) {
-                    CampfireBlock.dowse(context.getPlayer(), context.getLevel(), context.getClickedPos(), state);
+                    context.getLevel().playSound(context.getPlayer(), context.getClickedPos(), SoundEvents.GROWING_PLANT_CROP, SoundSource.BLOCKS, 1.0F, 1.0F);
                 }
-                return state.setValue(CampfireBlock.LIT, Boolean.valueOf(false));
+                return growingPlant.getMaxAgeState(state);
             }
         } else if (ItemAbilities.FIRESTARTER_LIGHT == itemAbility) {
             if (CampfireBlock.canLight(state) || CandleBlock.canLight(state) || CandleCakeBlock.canLight(state)) {
-                return state.setValue(BlockStateProperties.LIT, Boolean.valueOf(true));
+                return state.setValue(BlockStateProperties.LIT, true);
             }
         }
 
@@ -872,48 +769,6 @@ public interface IBlockExtension {
      */
     default boolean isScaffolding(BlockState state, LevelReader level, BlockPos pos, LivingEntity entity) {
         return state.is(Blocks.SCAFFOLDING);
-    }
-
-    /**
-     * Whether redstone dust should visually connect to this block on a given side
-     * <p>
-     * The default implementation is identical to
-     * {@code RedStoneWireBlock#shouldConnectTo(BlockState, Direction)}
-     *
-     * <p>
-     * {@link RedStoneWireBlock} updates its visual connection when
-     * {@link BlockState#updateShape(Direction, BlockState, LevelAccessor, BlockPos, BlockPos)}
-     * is called, this callback is used during the evaluation of its new shape.
-     *
-     * @param state     The current state
-     * @param level     The level
-     * @param pos       The block position in level
-     * @param direction The coming direction of the redstone dust connection (with respect to the block at pos)
-     * @return True if redstone dust should visually connect on the side passed
-     *         <p>
-     *         If the return value is evaluated based on level and pos (e.g. from BlockEntity), then the implementation of
-     *         this block should notify its neighbors to update their shapes when necessary. Consider using
-     *         {@link BlockState#updateNeighbourShapes(LevelAccessor, BlockPos, int, int)} or
-     *         {@link BlockState#updateShape(Direction, BlockState, LevelAccessor, BlockPos, BlockPos)}.
-     *         <p>
-     *         Example:
-     *         <p>
-     *         1. {@code yourBlockState.updateNeighbourShapes(level, yourBlockPos, UPDATE_ALL);}
-     *         <p>
-     *         2. {@code neighborState.updateShape(fromDirection, stateOfYourBlock, level, neighborBlockPos, yourBlockPos)},
-     *         where {@code fromDirection} is defined from the neighbor block's point of view.
-     */
-    default boolean canConnectRedstone(BlockState state, BlockGetter level, BlockPos pos, @Nullable Direction direction) {
-        if (state.is(Blocks.REDSTONE_WIRE)) {
-            return true;
-        } else if (state.is(Blocks.REPEATER)) {
-            Direction facing = state.getValue(RepeaterBlock.FACING);
-            return facing == direction || facing.getOpposite() == direction;
-        } else if (state.is(Blocks.OBSERVER)) {
-            return direction == state.getValue(ObserverBlock.FACING);
-        } else {
-            return state.isSignalSource() && direction != null;
-        }
     }
 
     /**
@@ -970,15 +825,14 @@ public interface IBlockExtension {
      * <li>A coral can live</li>
      * </ul>
      *
-     * @param state    the state of the block being hydrated
-     * @param getter   the getter which can get the block
-     * @param pos      the position of the block being hydrated
-     * @param fluid    the state of the fluid
-     * @param fluidPos the position of the fluid
+     * @param state  the state of the block being hydrated
+     * @param getter the getter which can get the block
+     * @param pos    the position of the block being hydrated
+     * @param fluid  the state of the fluid
      * @return {@code true} if the block can be hydrated, {@code false} otherwise
      */
-    default boolean canBeHydrated(BlockState state, BlockGetter getter, BlockPos pos, FluidState fluid, BlockPos fluidPos) {
-        return fluid.canHydrate(getter, fluidPos, state, pos);
+    default boolean canBeHydrated(BlockState state, BlockGetter getter, BlockPos pos, FluidState fluid) {
+        return fluid.canHydrate(getter, state, pos);
     }
 
     /**
@@ -1082,10 +936,10 @@ public interface IBlockExtension {
 
     /// Returns this blocks bounce restitution for the given state and position. Normally between 0 and 1
     ///
-    /// @param level The level this block is in
-    /// @param pos The position this block is located at in the given level
+    /// @param level      The level this block is in
+    /// @param pos        The position this block is located at in the given level
     /// @param blockState The state of this block
-    /// @param entity The entity currently querying for bounce restitution
+    /// @param entity     The entity currently querying for bounce restitution
     /// @return This blocks bounce restitution for the given state and position
     default float getBounceRestitution(Level level, BlockPos pos, BlockState blockState, Entity entity) {
         return self().getBounceRestitution();
@@ -1103,12 +957,48 @@ public interface IBlockExtension {
     /// {@link Tags.Blocks#RELOCATION_NOT_SUPPORTED}, in which case this method does not need to be overridden.
     ///
     /// @param level LevelReader which the block is being relocated from
-    /// @param pos BlockPos which the block is being relocated from
+    /// @param pos   BlockPos which the block is being relocated from
     /// @param state BlockState of the block being relocated
     /// @return BlockRelocability declaring whether the block may be relocated
     default BlockRelocability getRelocability(LevelReader level, BlockPos pos, BlockState state) {
         return state.is(Tags.Blocks.RELOCATION_NOT_SUPPORTED)
                 ? BlockRelocability.No.INSTANCE
                 : BlockRelocability.Yes.INSTANCE;
+    }
+
+    /// Determines whether the given adjacent block can connect to the given side of this block.
+    /// This is used by iron bars, glass panes, fences and walls to determine whether they can connect.
+    ///
+    /// - Returning [TriState#TRUE] forces the adjacent block to connect.
+    /// - Returning [TriState#DEFAULT] leaves the decision to the connecting block's further checks.
+    /// - Returning [TriState#FALSE] prevents the adjacent block from connecting.
+    ///
+    /// @param state         The state of this block
+    /// @param side          The side of this block being connected to
+    /// @param adjacentBlock The adjacent block attempting to connect to this block
+    /// @return whether the adjacent block can connect to this block.
+    default TriState canBeConnectedTo(BlockState state, Direction side, Block adjacentBlock) {
+        return TriState.DEFAULT;
+    }
+
+    /// Allows you to return additional model data.
+    ///
+    /// This data can be used to provide additional functionality in your `BlockStateModel`.
+    /// You need to schedule a refresh of your model data via [ModelDataManager#requestRefresh(BlockPos)] if the result of this function changes.
+    ///
+    /// This method is always called on the main client thread.
+    ///
+    /// @param blockState The current block state
+    /// @param level      Level containing this block
+    /// @param pos        Position of this block
+    /// @return Your model data
+    default ModelData getModelData(BlockState blockState, Level level, BlockPos pos) {
+        var blockEntity = level.getBlockEntity(pos);
+
+        if (blockEntity != null) {
+            return blockEntity.getModelData();
+        }
+
+        return ModelData.EMPTY;
     }
 }
