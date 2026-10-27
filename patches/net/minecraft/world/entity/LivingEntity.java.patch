@@ -61,12 +61,20 @@
      public boolean canBreatheUnderwater() {
          return this.is(EntityTypeTags.CAN_BREATHE_UNDER_WATER);
      }
-@@ -440,6 +_,9 @@
+@@ -440,6 +_,17 @@
                  }
              }
  
 +            int airSupply = this.getAirSupply();
-+            net.neoforged.neoforge.common.CommonHooks.onLivingBreathe(this, level, airSupply - decreaseAirSupply(airSupply), increaseAirSupply(airSupply) - airSupply);
++            // The vanilla checks are asked here, on purpose, and handed to the hook below. NeoForge's patch
++            // compiled away the vanilla body these live in, and with it the calls: a Fabric-era mixin that
++            // wraps one of them (breathing gear decides whether its wearer may breathe, and a mod's own blocks
++            // may count as bubble columns) had nothing left to wrap, so the hook answers for the platform and
++            // the wrapped answers for everyone else.
++            this.isEyeInFluid(FluidTags.LAVA);
++            boolean waterBreathing = MobEffectUtil.hasWaterBreathing(this);
++            boolean inBubbleColumn = level.getBlockState(BlockPos.containing(this.getX(), this.getEyeY(), this.getZ())).is(Blocks.BUBBLE_COLUMN);
++            net.neoforged.neoforge.common.CommonHooks.onLivingBreathe(this, level, airSupply - decreaseAirSupply(airSupply), increaseAirSupply(airSupply) - airSupply, waterBreathing, inBubbleColumn);
 +            if (false) // Neo: Handled in CommonHooks#onLivingBreathe(LivingEntity, int, int)
              if (this.isEyeInFluid(FluidTags.WATER)
                  && !level.getBlockState(BlockPos.containing(this.getX(), this.getEyeY(), this.getZ())).is(Blocks.BUBBLE_COLUMN)) {

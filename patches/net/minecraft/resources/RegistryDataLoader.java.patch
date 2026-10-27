@@ -80,7 +80,7 @@
      }
  
 +    // Neo: Added parameter to know we are loading server-side from resources
-     private static CompletableFuture<RegistryAccess.Frozen> load(
+     public static CompletableFuture<RegistryAccess.Frozen> load(
          RegistryDataLoader.LoaderFactory loaderFactory,
          List<HolderLookup.RegistryLookup<?>> contextRegistries,
          List<RegistryDataLoader.RegistryData<?>> registriesToLoad,

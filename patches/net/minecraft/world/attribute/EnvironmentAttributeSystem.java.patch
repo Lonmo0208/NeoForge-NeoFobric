@@ -1,6 +1,6 @@
 --- a/net/minecraft/world/attribute/EnvironmentAttributeSystem.java
 +++ b/net/minecraft/world/attribute/EnvironmentAttributeSystem.java
-@@ -24,6 +_,9 @@
+@@ -26,6 +_,9 @@
  import org.jspecify.annotations.Nullable;
  
  public class EnvironmentAttributeSystem implements EnvironmentAttributeReader {
@@ -10,7 +10,7 @@
      private final Map<EnvironmentAttribute<?>, EnvironmentAttributeSystem.ValueSampler<?>> attributeSamplers = new Reference2ObjectOpenHashMap<>();
  
      private EnvironmentAttributeSystem(Map<EnvironmentAttribute<?>, List<EnvironmentAttributeLayer<?>>> layersByAttribute) {
-@@ -105,8 +_,16 @@
+@@ -115,8 +_,16 @@
  
      @Override
      public <Value> Value getDimensionValue(EnvironmentAttribute<Value> attribute) {
