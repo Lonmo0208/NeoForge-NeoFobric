@@ -215,6 +215,21 @@
              profiler.popPush("frameLimiter");
              int framerateLimit = this.gameRenderer.gameRenderState().framerateLimit;
              if (framerateLimit < 260) {
+@@ -1423,6 +_,14 @@
+     @Override
+     public void framebufferSizeChanged() {
+         this.invalidateSurfaceConfiguration();
++        if (this.gui == null) {
++            // NeoFobric: EarlyWindowHandoff fires this from Minecraft's constructor, before the gui exists.
++            // resizeGui itself survives that (its body is guarded), but mod mixins at its HEAD do not - FancyMenu
++            // dereferences Minecraft.gui.screen() there and dies with an NPE. Keep the scale update and skip the
++            // gui resize; there is no gui to resize yet.
++            this.window.setGuiScale(this.window.calculateScale(this.options.guiScale().get(), this.isEnforceUnicode()));
++            return;
++        }
+         this.resizeGui();
+     }
+ 
 @@ -1430,12 +_,18 @@
      public void resizeGui() {
          int guiScale = this.window.calculateScale(this.options.guiScale().get(), this.isEnforceUnicode());

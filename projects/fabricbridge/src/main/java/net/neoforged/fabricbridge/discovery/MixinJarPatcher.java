@@ -6058,6 +6058,11 @@ public final class MixinJarPatcher {
                     versionMoved = addonGuardRemoved;
                     patched.put(entry.getName(), versionMoved);
                 }
+                var frozenLibDuckDefaults = neutraliseFrozenLibPlacementDuckDefaults(versionMoved, entry.getName());
+                if (frozenLibDuckDefaults != null) {
+                    versionMoved = frozenLibDuckDefaults;
+                    patched.put(entry.getName(), versionMoved);
+                }
                 if (!looksLikeMixinClass(entry.getName())) {
                     // Not a mixin: the only rewrites it may need are a call site of a renamed accessor
                     // member (Fabric's own implementation classes do the casting) or a page API that is
@@ -6701,6 +6706,79 @@ public final class MixinJarPatcher {
         LOGGER.info("[NeoFobric] Stripped {} field(s), {} method(s) and {} interface(s) declared for the {} side in {} - Fabric's loader removes them here too",
                 fields.size(), methods.size(), interfaces.size(), environment.equals("CLIENT") ? "server" : "client",
                 entryName.replace('/', '.'));
+        return writeClass(node);
+    }
+
+    /**
+     * Turns FrozenLib's placement duck-interface defaults into no-ops.
+     *
+     * <p>{@code StructureSetAndPlacementInterface} is a mixin duck interface: its three default methods
+     * throw {@code AssertionError} because FrozenLib expects the interface to reach a placement only
+     * through its own mixin, which implements them on {@code AbstractSpreadingStructurePlacement}. But
+     * FrozenLib's class tweaker also injects the interface into the {@code StructurePlacement} interface
+     * itself, so <em>every</em> placement is an instance - and Twilight Forest's
+     * {@code LandmarkGridPlacement} implements {@code StructurePlacement} directly, never sees the mixin,
+     * and inherits the throwing defaults. FrozenLib's dynamic-registry event then calls
+     * {@code addGenerationConditions} on every structure set and dies with the assertion while the world
+     * is being created.
+     *
+     * <p>A placement FrozenLib has no conditions for should simply have none, which is exactly what its
+     * own {@code instanceof} check in {@code StructureSetMixin} already does for placements outside the
+     * mixin's reach. Making the defaults answer "no conditions" instead of throwing keeps that meaning
+     * for the classes the injection reaches without touching Fabric's class-tweaker behaviour (Fabric
+     * API's own duck interfaces injected into game interfaces, like {@code FabricRegistry} into
+     * {@code Registry}, do the same thing and must keep working).
+     */
+    private static byte[] neutraliseFrozenLibPlacementDuckDefaults(byte[] classBytes, String entryName) {
+        if (!entryName.endsWith(".class")) {
+            return null;
+        }
+        var internalName = entryName.substring(0, entryName.length() - ".class".length());
+        if (!"net/frozenblock/lib/levelgen/structure/impl/placement/StructureSetAndPlacementInterface"
+                .equals(internalName)) {
+            return null;
+        }
+        ClassNode node;
+        try {
+            node = new ClassNode();
+            new ClassReader(classBytes).accept(node, 0);
+        } catch (Throwable t) {
+            return null;
+        }
+        var patched = 0;
+        for (var method : node.methods) {
+            var isAdd = ("frozenLib$addGenerationConditions".equals(method.name)
+                    || "frozenLib$addExclusions".equals(method.name))
+                    && "(Ljava/util/List;)V".equals(method.desc);
+            var isGet = "frozenLib$getGenerationConditions".equals(method.name)
+                    && "()Ljava/util/List;".equals(method.desc);
+            if (!isAdd && !isGet) {
+                continue;
+            }
+            method.instructions.clear();
+            if (method.tryCatchBlocks != null) {
+                method.tryCatchBlocks.clear();
+            }
+            method.localVariables = null;
+            if (isGet) {
+                method.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "java/util/List", "of",
+                        "()Ljava/util/List;", false));
+                method.instructions.add(new InsnNode(Opcodes.ARETURN));
+                method.maxStack = 1;
+                method.maxLocals = 1;
+            } else {
+                method.instructions.add(new InsnNode(Opcodes.RETURN));
+                method.maxStack = 0;
+                method.maxLocals = 2;
+            }
+            patched++;
+        }
+        if (patched == 0) {
+            return null;
+        }
+        LOGGER.info("[NeoFobric] Turned {} throwing default(s) of FrozenLib's placement duck interface into"
+                + " no-ops - a placement the mixin does not reach (Twilight Forest's landmark grid) now has no"
+                + " generation conditions instead of killing the world load", patched);
         return writeClass(node);
     }
 
