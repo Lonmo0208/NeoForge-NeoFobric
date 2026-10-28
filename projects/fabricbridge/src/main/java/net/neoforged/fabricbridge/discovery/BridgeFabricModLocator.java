@@ -554,13 +554,20 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         }
 
         pipeline.addModFile(modFile);
+        var hiddenEffective = new java.util.HashSet<Path>();
         for (var entry : fabricJars.entrySet()) {
             // The registry must point at the jar that actually carries the mixin configs the bridge
             // will read back, i.e. the realigned copy when there is one.
             var effective = realignedJars.getOrDefault(entry.getKey(), entry.getKey());
             FabricJarRegistry.register(effective, entry.getValue());
             FabricJarRegistry.markGameLayerPath(effective);
+            // The bootstrap reads configs from the realigned jar, so record the path it will actually
+            // see for a duplicate whose classes were hidden (see hiddenDuplicateJars).
+            if (duplicatePackages.containsKey(entry.getKey())) {
+                hiddenEffective.add(effective);
+            }
         }
+        hiddenDuplicateJars = java.util.Set.copyOf(hiddenEffective);
 
         // Publish what the Mods screen should show. NeoForge's own screen knows only FML's mod list,
         // which the composite game library deliberately is not part of (single-module JPMS merge), so
@@ -2089,6 +2096,24 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     private static boolean isAlwaysPlatformLibrary(String packageName) {
         return packageName.equals("com.llamalad7.mixinextras")
                 || packageName.startsWith("com.llamalad7.mixinextras.");
+    }
+
+    /**
+     * The Fabric jars whose classes were hidden in favour of a newer copy of the same mod.
+     *
+     * <p>{@link #duplicateFabricPackages} moves every package of an older duplicate out of the composite
+     * classpath, but a mixin config is not a class: it stays visible to the bootstrap pass, and the pass
+     * registers the <em>first</em> copy of a shared config path. When the older jar happens to come first,
+     * Mixin ends up owning a package from the newer jar with the older jar's list - a Sodium 0.9.2 config
+     * ("no OptionInstanceAccessor") next to Sodium 0.9.3 classes, which dies with
+     * {@code Illegal classload request for accessor mixin ... missing from sodium-common.mixins.json}
+     * during the resource reload. Recording the hidden jars lets the bootstrap skip their configs too.
+     */
+    private static volatile java.util.Set<Path> hiddenDuplicateJars = java.util.Set.of();
+
+    /** {@return whether the jar's classes were hidden in favour of a newer copy of the same mod} */
+    public static boolean isHiddenDuplicateJar(Path path) {
+        return hiddenDuplicateJars.contains(path);
     }
 
     /**

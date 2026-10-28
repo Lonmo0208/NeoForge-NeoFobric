@@ -385,6 +385,16 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
         for (var entry : net.neoforged.fabricbridge.discovery.FabricJarRegistry.getEntries().entrySet()) {
             var info = entry.getValue();
 
+            // The classes of an older duplicate mod were already hidden in favour of the newer copy. Its
+            // mixin config is not a class and would still be registered - and when it sorts first, Mixin
+            // owns the package with the older list while the classes come from the newer jar (Sodium 0.9.2
+            // config + 0.9.3 classes = "accessor mixin ... missing from sodium-common.mixins.json").
+            if (net.neoforged.fabricbridge.discovery.BridgeFabricModLocator.isHiddenDuplicateJar(entry.getKey())) {
+                LOGGER.info("[NeoFobric] Skipping the mixin configs of {} ({}) - a newer copy of the same mod owns its classes",
+                        info.modId(), entry.getKey().getFileName());
+                continue;
+            }
+
             // fabric-loader does not load a mod whose environment is the other side, so its mixins never
             // apply there - and a client-only module's mixins are written against classes that side does
             // not have. Fabric's screen module is the visible case: registering its config on a dedicated
