@@ -1008,8 +1008,7 @@ public class CommonHooks {
     }
 
     /** NeoFobric: the fluid types built for Fabric fluid behaviours, one per behaviour. */
-    private static final java.util.Map<Object, FluidType> FABRIC_FLUID_TYPES =
-            java.util.Collections.synchronizedMap(new java.util.IdentityHashMap<>());
+    private static final java.util.Map<Object, FluidType> FABRIC_FLUID_TYPES = java.util.Collections.synchronizedMap(new java.util.IdentityHashMap<>());
 
     // FIXME: is this still needed
     /*public static TagKey<Block> getTagFromVanillaTier(Tiers tier) {

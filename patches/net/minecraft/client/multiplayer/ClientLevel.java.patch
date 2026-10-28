@@ -188,12 +188,20 @@
              }
          }
  
-@@ -1276,10 +_,26 @@
+@@ -1276,10 +_,34 @@
                      ClientLevel.this.dragonParts.removeAll(Arrays.asList(dragon.getSubEntities()));
                      break;
                  default:
 +                    if (entity.isMultipartEntity()) {
-+                        ClientLevel.this.dragonParts.removeAll(Arrays.asList(entity.getParts()));
++                        // NeoFobric: the same bridge as onTrackingStart. A Fabric mod's multipart entity declares
++                        // the vanilla Entity[] getParts(), which cannot override the platform's PartEntity[] one,
++                        // so the platform call would read the interface default (null) and Arrays.asList would
++                        // throw - the remove_entities packet then disconnected the client.
++                        for (var subEntity : net.neoforged.fabricbridge.FabricBridgeHooks.entityParts(entity)) {
++                            if (subEntity instanceof net.neoforged.neoforge.entity.PartEntity<?> part) {
++                                ClientLevel.this.dragonParts.remove(part);
++                            }
++                        }
 +                    }
              }
 +

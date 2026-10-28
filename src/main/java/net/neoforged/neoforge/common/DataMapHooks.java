@@ -104,12 +104,12 @@ public class DataMapHooks {
         }
         if (!transformerDatamapTransformers.isEmpty() || !blockDatamapTransformers.isEmpty()) {
             return Iterables.concat(
-                // NeoFobric: a Fabric strippable registration carries its own transformer - some ask for the
-                // original state's properties to be copied - and vanilla 26.3 no longer reads the legacy
-                // STRIPPABLES map an AxeItem patch would have kept reachable, so the lookup rides along here.
-                toolTransformers,
-                transformerDatamapTransformers,
-                blockDatamapTransformers);
+                    // NeoFobric: a Fabric strippable registration carries its own transformer - some ask for the
+                    // original state's properties to be copied - and vanilla 26.3 no longer reads the legacy
+                    // STRIPPABLES map an AxeItem patch would have kept reachable, so the lookup rides along here.
+                    toolTransformers,
+                    transformerDatamapTransformers,
+                    blockDatamapTransformers);
         }
         return toolTransformers;
     }

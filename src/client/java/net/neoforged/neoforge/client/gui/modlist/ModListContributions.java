@@ -36,11 +36,13 @@ import org.slf4j.Logger;
 /// that are not running.
 ///
 /// Manifest location: {@code <gameDir>/.neofobric/mods-menu.json}, shape:
+/// 
 /// <pre>{@code
 /// { "mods": [ { "id": "...", "name": "...", "version": "...", "description": "...",
 ///               "authors": "...", "license": "...", "website": "...", "issues": "...",
 ///               "icon": "assets/example/icon.png", "root": "C:/.../example.jar" } ] }
 /// }</pre>
+/// 
 /// Every field except {@code id} is optional; {@code icon} is a path inside {@code root}.
 @ApiStatus.Internal
 final class ModListContributions {

@@ -283,7 +283,7 @@
                  }
              }
  
-@@ -2032,25 +_,62 @@
+@@ -2032,25 +_,67 @@
                  if (ServerLevel.this.isUpdatingNavigations) {
                      String message = "onTrackingStart called during navigation iteration";
                      Util.logAndPauseIfInIde(
@@ -297,9 +297,15 @@
  
 -            if (entity instanceof EnderDragon dragon) {
 -                for (EnderDragonPart subEntity : dragon.getSubEntities()) {
+-                    ServerLevel.this.dragonParts.remove(subEntity.getId());
 +            if (entity.isMultipartEntity()) {
-+                for(net.neoforged.neoforge.entity.PartEntity<?> subEntity : entity.getParts()) {
-                     ServerLevel.this.dragonParts.remove(subEntity.getId());
++                // NeoFobric: the same bridge as onTrackingStart. A Fabric mod's multipart entity declares the
++                // vanilla Entity[] getParts(), which cannot override the platform's PartEntity[] one; reading
++                // the platform method returned null and the for-each threw while the chunk was unloaded.
++                for (var subEntity : net.neoforged.fabricbridge.FabricBridgeHooks.entityParts(entity)) {
++                    if (subEntity instanceof net.neoforged.neoforge.entity.PartEntity<?> part) {
++                        ServerLevel.this.dragonParts.remove(part.getId());
++                    }
                  }
              }
  
