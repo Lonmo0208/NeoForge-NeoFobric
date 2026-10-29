@@ -133,6 +133,18 @@ public final class MixinJarPatcher {
      * {@code RegistryDataLoaderMixin} names the same four-argument list as its {@code method} selector,
      * and that one must keep pointing at the four-argument overload.
      */
+    /**
+     * Per-mixin override of the rewrite applied to class-qualified {@code @At} targets.
+     *
+     * <p>On 26.1.2 registry-sync's {@code wrapIsServerCall} has to stay on the four-argument loader-factory
+     * entry point: its {@code Operation.call} sits inside a lambda, which the handler-widening pass cannot
+     * grow with the extra boolean, so pointing it at the wider overload leaves the handler uninjectable.
+     * The same module's method selectors, however, must follow the wider overload (that is where the body
+     * actually runs). An empty map keeps this mixin's targets exactly as written.
+     */
+    private static final Map<String, Map<String, String>> SCOPED_AT_TARGET_REALIGNMENTS = Map.of(
+            "net/fabricmc/fabric/mixin/registry/sync/RegistryDataLoaderMixin", Map.of());
+
     private static final Map<String, Map<String, String>> SCOPED_ANNOTATION_TARGET_REALIGNMENTS = Map.of(
             // fabric-menu-api-v1 injects three times inside vanilla's openMenu(MenuProvider): a redirect of the
             // closeContainer() call, an inject at the send(Packet) call that either pins the opened menu or
@@ -150,23 +162,20 @@ public final class MixinJarPatcher {
             Map.of(
                     "(Lnet/minecraft/world/MenuProvider;)",
                     "(Lnet/minecraft/world/MenuProvider;Ljava/util/function/Consumer;)"),
+            // 26.1.2: WorldLoader still calls the vanilla four-argument load(...) directly (NeoForge only
+            // added the boolean to the loader-factory overload), so this module's selector resolves as
+            // written and no realignment is needed here.
             "net/fabricmc/fabric/mixin/registry/sync/WorldLoaderMixin",
-            Map.of(
-                    "(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;)",
-                    "(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;Ljava/util/List;)"),
-            // Same module, second half of the same story: wrapIsServerCall binds registry-sync's
-            // IS_SERVER ScopedValue around the LoaderFactory call inside the four-argument overload.
-            // NeoForge's five-argument overload builds its loader factory itself and calls the
-            // LoaderFactory overload directly, so that shim is off the live path and the value is never
-            // bound: RegistryDataLoader's own beforeLoad wrap then sees IS_SERVER=false and never fires
-            // DynamicRegistrySetupCallback, and fabric-registry-sync's testmod - which asserts the
-            // callback ran before the server starts - kills the server with
-            // "DRM setup was not called before startup!". Pointing the wrap at the five-argument
-            // overload puts it back on the live path.
+            Map.of(),
+            // 26.1.2: NeoForge's loader-factory overload gained a trailing boolean (fromResources), so
+            // registry-sync's selectors and its wrapped call - all written against the four-argument
+            // vanilla shape - must follow it there. Without the realignment the wraps never install and
+            // the load's asynchronous body reads an unbound IS_SERVER ScopedValue:
+            // "NoSuchElementException: ScopedValue not bound" on every world load.
             "net/fabricmc/fabric/mixin/registry/sync/RegistryDataLoaderMixin",
             Map.of(
-                    "(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;)",
-                    "(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;Ljava/util/List;)"),
+                    "(Lnet/minecraft/resources/RegistryDataLoader$LoaderFactory;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;)",
+                    "(Lnet/minecraft/resources/RegistryDataLoader$LoaderFactory;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;Z)"),
             // fabric-networking-api-v1 keeps its "what can the peer receive" bookkeeping in the buffers the
             // connection hands out: ServerConfigurationPacketListenerImplMixin wraps the vanilla one-argument
             // RegistryFriendlyByteBuf#decorator and stamps every buffer it produces with the channels the peer
@@ -1598,11 +1607,15 @@ public final class MixinJarPatcher {
 
         var internalName = entryName.endsWith(".class") ? entryName.substring(0, entryName.length() - ".class".length()) : entryName;
         var scoped = SCOPED_ANNOTATION_TARGET_REALIGNMENTS.getOrDefault(internalName, Map.of());
+        // Class-qualified @At targets can need a different rewrite than bare method selectors: on 26.1.2
+        // registry-sync's wrap must stay on the four-argument shim (its handler's Operation.call sits inside
+        // a lambda the widening pass cannot grow), while its method selectors follow the wider overload.
+        var atTargets = SCOPED_AT_TARGET_REALIGNMENTS.getOrDefault(internalName, scoped);
 
         var changed = false;
         for (var method : node.methods) {
-            changed |= realignAnnotations(method.visibleAnnotations, scoped);
-            changed |= realignAnnotations(method.invisibleAnnotations, scoped);
+            changed |= realignAnnotations(method.visibleAnnotations, scoped, atTargets);
+            changed |= realignAnnotations(method.invisibleAnnotations, scoped, atTargets);
         }
         if (!changed) {
             return null;
@@ -1615,6 +1628,11 @@ public final class MixinJarPatcher {
     }
 
     static boolean realignAnnotations(List<AnnotationNode> annotations, Map<String, String> scoped) {
+        return realignAnnotations(annotations, scoped, scoped);
+    }
+
+    static boolean realignAnnotations(List<AnnotationNode> annotations, Map<String, String> scoped,
+            Map<String, String> atTargets) {
         if (annotations == null) {
             return false;
         }
@@ -1626,7 +1644,7 @@ public final class MixinJarPatcher {
             for (var i = 1; i < annotation.values.size(); i += 2) {
                 var value = annotation.values.get(i);
                 if (value instanceof String text) {
-                    var replaced = replacementFor(text, scoped);
+                    var replaced = replacementFor(text, text.startsWith("L") ? atTargets : scoped);
                     if (replaced != null) {
                         annotation.values.set(i, replaced);
                         changed = true;
@@ -1635,7 +1653,7 @@ public final class MixinJarPatcher {
                     for (var j = 0; j < list.size(); j++) {
                         var element = list.get(j);
                         if (element instanceof String text) {
-                            var replaced = replacementFor(text, scoped);
+                            var replaced = replacementFor(text, text.startsWith("L") ? atTargets : scoped);
                             if (replaced != null) {
                                 ((List<Object>) list).set(j, replaced);
                                 changed = true;
@@ -1644,13 +1662,13 @@ public final class MixinJarPatcher {
                             // Array-valued members hold nested annotations too: MixinExtras declares
                             // slice()/@Slice's from as arrays, so @WrapOperation(slice = @Slice(from =
                             // @At(target = ...))) reaches the target through a list, not a direct node.
-                            changed |= realignAnnotations(java.util.List.of(nested), scoped);
+                            changed |= realignAnnotations(java.util.List.of(nested), scoped, atTargets);
                         }
                     }
                 } else if (value instanceof AnnotationNode nested) {
                     // Targets also live in nested annotations - @Inject(at = @At(target = ...)), and
                     // @WrapOperation(..., slice = @Slice(from = @At(target = ...))) two levels down.
-                    changed |= realignAnnotations(java.util.List.of(nested), scoped);
+                    changed |= realignAnnotations(java.util.List.of(nested), scoped, atTargets);
                 }
             }
         }
@@ -3933,9 +3951,9 @@ public final class MixinJarPatcher {
             var prefix = new Type[operationIndex];
             System.arraycopy(args, 0, prefix, 0, operationIndex);
 
-            var target = annotationDescriptor(wrap);
+            var target = ownerQualifiedDescriptor(wrap);
             if (target == null) {
-                LOGGER.debug("[NeoFobric] Not widening @WrapOperation handler {}#{}: no target descriptor in the annotation",
+                LOGGER.debug("[NeoFobric] Not widening @WrapOperation handler {}#{}: no class-qualified target descriptor in the annotation",
                         node.name.replace('/', '.'), handler.name);
                 continue;
             }
@@ -4185,6 +4203,46 @@ public final class MixinJarPatcher {
      * and MixinExtras puts the same thing inside {@code slice = @Slice(from = @At(...))}. Looking only at
      * the annotation's own {@code target} key finds nothing for those and the whole rewrite quietly skips.
      */
+    /**
+     * {@return the annotation's class-qualified target descriptor}
+     *
+     * <p>Same walk as {@link #annotationDescriptor}, but a bare method selector
+     * ({@code load(…)} - the host the injection sits in) is not accepted: only a value that names its
+     * owner ({@code Lowner;name(…)ret}) says which method the wrapped call resolves to. Taking the
+     * selector instead made the widening pass read the host's own descriptor and skip the handler.
+     */
+    private static String ownerQualifiedDescriptor(AnnotationNode annotation) {
+        if (annotation.values == null) {
+            return null;
+        }
+        for (var i = 1; i < annotation.values.size(); i += 2) {
+            var value = annotation.values.get(i);
+            if (value instanceof String text && text.startsWith("L") && text.indexOf('(') > 0 && text.indexOf(')') > 0) {
+                return text;
+            }
+            if (value instanceof AnnotationNode nested) {
+                var found = ownerQualifiedDescriptor(nested);
+                if (found != null) {
+                    return found;
+                }
+            }
+            if (value instanceof List<?> list) {
+                for (var element : list) {
+                    if (element instanceof String text && text.startsWith("L") && text.indexOf('(') > 0 && text.indexOf(')') > 0) {
+                        return text;
+                    }
+                    if (element instanceof AnnotationNode nested) {
+                        var found = ownerQualifiedDescriptor(nested);
+                        if (found != null) {
+                            return found;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     private static String annotationDescriptor(AnnotationNode annotation) {
         if (annotation.values == null) {
             return null;

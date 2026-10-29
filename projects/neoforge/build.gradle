@@ -348,6 +348,15 @@ neoDev {
             client()
             sourceSet = sourceSets.client
             loadedMods = [joinedMod, neoDev.mods."neoforge-coremods"]
+            // NeoFobric: quick-play is only passed when the command line asks for it; the default is the
+            // main menu, so nobody lands in a world they did not choose.
+            //   ./gradlew :neoforge:runClient -Pneofobric.quickPlayServer=127.0.0.1:25565
+            //   ./gradlew :neoforge:runClient -Pneofobric.quickPlayWorld=<save-folder>
+            if (project.hasProperty('neofobric.quickPlayServer')) {
+                programArguments.addAll('--quickPlayMultiplayer', project.property('neofobric.quickPlayServer'))
+            } else if (project.hasProperty('neofobric.quickPlayWorld')) {
+                programArguments.addAll('--quickPlaySingleplayer', project.property('neofobric.quickPlayWorld'))
+            }
         }
         server {
             server()

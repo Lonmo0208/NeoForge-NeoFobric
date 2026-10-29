@@ -18,11 +18,28 @@
  
      public static CompletableFuture<RegistryAccess.Frozen> load(
          ResourceManager resourceManager,
-@@ -173,7 +_,7 @@
+@@ -173,7 +_,25 @@
                  return new ResourceManagerRegistryLoadTask<>(data, Lifecycle.stable(), loadingErrors, resourceManager);
              }
          };
--        return load(loaderFactory, contextRegistries, registriesToLoad, executor);
++        // NeoFobric: go through the four-argument shim on purpose. Fabric's registry sync wraps the call
++        // with the vanilla four-argument shape to bind its IS_SERVER ScopedValue around the load (its
++        // handler's Operation.call sits inside a lambda, which the bridge's handler widening cannot grow
++        // with the extra boolean). The shim forwards to the wider method with fromResources=true.
+         return load(loaderFactory, contextRegistries, registriesToLoad, executor);
++    }
++
++    /**
++     * NeoFobric: the vanilla-shaped loader-factory entry point, kept because Fabric's registry sync wraps
++     * exactly this call. The body lives in the wider overload; this forwards with {@code fromResources=true},
++     * which is what the resource-manager path needs.
++     */
++    static CompletableFuture<RegistryAccess.Frozen> load(
++        RegistryDataLoader.LoaderFactory loaderFactory,
++        List<HolderLookup.RegistryLookup<?>> contextRegistries,
++        List<RegistryDataLoader.RegistryData<?>> registriesToLoad,
++        Executor executor
++    ) {
 +        return load(loaderFactory, contextRegistries, registriesToLoad, executor, true);
      }
  
