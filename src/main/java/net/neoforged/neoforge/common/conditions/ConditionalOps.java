@@ -28,6 +28,9 @@ public class ConditionalOps<T> extends RegistryOps<T> {
     public ConditionalOps(RegistryOps<T> ops, ICondition.IContext context) {
         super(ops);
         this.context = context;
+        // NeoFobric: Fabric's loot events look their registry lookup up by the ops instance they are handed;
+        // wrapping it here would hide the entry Fabric stored for the ops that was just wrapped.
+        net.neoforged.fabricbridge.FabricBridgeHooks.aliasFabricLootOps(ops, this);
     }
 
     public ConditionalOps(DynamicOps<T> ops, RegistryOps.RegistryInfoLookup lookupProvider, ICondition.IContext context) {
