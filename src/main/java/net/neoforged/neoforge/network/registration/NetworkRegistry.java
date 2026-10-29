@@ -43,6 +43,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
 import net.neoforged.fml.ModLoader;
 import net.neoforged.neoforge.common.NeoForgeVersion;
+import net.neoforged.neoforge.common.config.NeoForgeCommonConfig;
 import net.neoforged.neoforge.common.extensions.ICommonPacketListener;
 import net.neoforged.neoforge.network.configuration.CommonRegisterTask;
 import net.neoforged.neoforge.network.configuration.CommonVersionTask;
@@ -99,11 +100,7 @@ public class NetworkRegistry {
             ModdedNetworkPayload.ID, ModdedNetworkPayload.STREAM_CODEC,
             ModdedNetworkSetupFailedPayload.ID, ModdedNetworkSetupFailedPayload.STREAM_CODEC,
             CommonVersionPayload.ID, CommonVersionPayload.STREAM_CODEC,
-            CommonRegisterPayload.ID, CommonRegisterPayload.STREAM_CODEC,
-            // Neo: Register legacy Dinnerbone protocol payloads to prevent decode failures
-            // when the server sends old-format register/unregister packets.
-            Identifier.fromNamespaceAndPath("legacy", "register"), MinecraftRegisterPayload.STREAM_CODEC,
-            Identifier.fromNamespaceAndPath("legacy", "unregister"), MinecraftUnregisterPayload.STREAM_CODEC);
+            CommonRegisterPayload.ID, CommonRegisterPayload.STREAM_CODEC);
 
     /**
      * Registry of all custom payload handlers. The initial state of this map should reflect the protocols which support custom payloads.
@@ -244,6 +241,10 @@ public class NetworkRegistry {
     public static StreamCodec<? super FriendlyByteBuf, ? extends CustomPacketPayload> getCodec(Identifier id, ConnectionProtocol protocol, PacketFlow flow) {
         // Custom modded packets which can be sent before a payload setup is negotiated.
         if (BUILTIN_PAYLOADS.containsKey(id)) {
+            if (flow == PacketFlow.SERVERBOUND
+                    && (id.equals(ModdedNetworkPayload.ID) || id.equals(ModdedNetworkSetupFailedPayload.ID))) {
+                return null;
+            }
             return BUILTIN_PAYLOADS.get(id);
         }
 
@@ -272,104 +273,6 @@ public class NetworkRegistry {
     }
 
     /**
-     * {@return the codec of the payload registered under this id, whichever protocol it belongs to, or
-     * {@code null} when this registry does not know it}
-     *
-     * <p>This is the fallback for a type list that carries no connection context - a mod building its own
-     * codec through the vanilla {@code CustomPacketPayload#codec(fallback, types)}, for instance. The packet
-     * classes pass {@link #contextualTypes(ConnectionProtocol, PacketFlow, List)} instead, so their lookups
-     * keep the flow validation of {@link #getCodec(Identifier, ConnectionProtocol, PacketFlow)}.
-     *
-     * @apiNote This method must not throw exceptions, as it is called within another codec on the network thread.
-     */
-    @Nullable
-    @SuppressWarnings("unchecked")
-    public static StreamCodec<? super FriendlyByteBuf, ? extends CustomPacketPayload> getCodec(Identifier id) {
-        // Custom modded packets which can be sent before a payload setup is negotiated.
-        if (BUILTIN_PAYLOADS.containsKey(id)) {
-            return BUILTIN_PAYLOADS.get(id);
-        }
-
-        for (Map<Identifier, PayloadRegistration<?>> byId : PAYLOAD_REGISTRATIONS.values()) {
-            PayloadRegistration<?> registration = byId.get(id);
-            if (registration != null) {
-                return (StreamCodec<? super FriendlyByteBuf, ? extends CustomPacketPayload>) registration.codec();
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * {@return the payload type list for one of the custom payload packet codecs, carrying the connection
-     * context that codec is built for}
-     *
-     * <p>NeoForge used to pass the protocol and the flow as extra arguments of
-     * {@code CustomPacketPayload#codec}, which moved the call out of the vanilla two-argument shape that
-     * mods wrap - Fabric API's networking module anchors one {@code @WrapOperation} per codec on exactly
-     * that shape, and without it every Fabric payload type was silently left out of the codec. Keeping the
-     * shape and handing the context over inside the list gives both: the wrap still matches, and
-     * {@link #getCodec(Identifier, ConnectionProtocol, PacketFlow)} still sees the protocol and the flow.
-     */
-    public static <B extends FriendlyByteBuf> List<CustomPacketPayload.TypeAndCodec<? super B, ?>> contextualTypes(
-            ConnectionProtocol protocol, PacketFlow flow, List<CustomPacketPayload.TypeAndCodec<? super B, ?>> types) {
-        return new ContextualPayloadTypes<>(protocol, flow, types);
-    }
-
-    /**
-     * {@return the registered-codec lookup for the codec being built over this type list}
-     *
-     * <p>A list built by {@link #contextualTypes(ConnectionProtocol, PacketFlow, List)} resolves against the
-     * registration of its own protocol and gets the full validation; anything else falls back to the
-     * context-free search, which is what a mod-built codec gets.
-     */
-    public static <B extends FriendlyByteBuf> java.util.function.Function<Identifier, StreamCodec<? super B, ? extends CustomPacketPayload>> registeredCodecLookup(
-            List<CustomPacketPayload.TypeAndCodec<? super B, ?>> types) {
-        if (types instanceof ContextualPayloadTypes<?> contextual) {
-            return id -> getCodec(id, contextual.protocol(), contextual.flow());
-        }
-        return NetworkRegistry::getCodec;
-    }
-
-    /**
-     * A payload type list that also carries the connection context of the codec built over it. A plain
-     * delegating {@link java.util.AbstractList}: everything that reads or copies the list - including the
-     * Mixin handlers that pass it on to another call - sees the same contents.
-     */
-    private static final class ContextualPayloadTypes<B extends FriendlyByteBuf>
-            extends java.util.AbstractList<CustomPacketPayload.TypeAndCodec<? super B, ?>>
-            implements java.util.RandomAccess {
-        private final ConnectionProtocol protocol;
-        private final PacketFlow flow;
-        private final List<CustomPacketPayload.TypeAndCodec<? super B, ?>> delegate;
-
-        private ContextualPayloadTypes(ConnectionProtocol protocol, PacketFlow flow,
-                List<CustomPacketPayload.TypeAndCodec<? super B, ?>> delegate) {
-            this.protocol = protocol;
-            this.flow = flow;
-            this.delegate = delegate;
-        }
-
-        ConnectionProtocol protocol() {
-            return this.protocol;
-        }
-
-        PacketFlow flow() {
-            return this.flow;
-        }
-
-        @Override
-        public CustomPacketPayload.TypeAndCodec<? super B, ?> get(int index) {
-            return this.delegate.get(index);
-        }
-
-        @Override
-        public int size() {
-            return this.delegate.size();
-        }
-    }
-
-    /**
      * Checks if a payload is a modded payload. A modded payload is any payload that does not have `minecraft` as the domain, and is not a discarded payload.
      * <p>
      * The special handling for {@link DiscardedPayload} is because it falsely reports its type as the type that failed to decode.
@@ -377,39 +280,7 @@ public class NetworkRegistry {
      * @return True if the payload is modded, and modded payload handling should be invoked for it.
      */
     public static boolean isModdedPayload(CustomPacketPayload payload) {
-        if (payload instanceof DiscardedPayload) {
-            return false;
-        }
-
-        Identifier id = payload.type().id();
-
-        if ("minecraft".equals(id.getNamespace())) {
-            return false;
-        }
-
-        // NeoFobric: a payload that has a registration in this registry is NeoForge's to handle, no matter
-        // what its namespace looks like. The Fabric heuristics below exist for channels that only Fabric
-        // knows about, and one of those by definition carries no registration from here. Asking them first
-        // let them claim registered payloads and skip the very handler that was registered for them:
-        // modernfix registers its load-finished sentinel as an optional payload, the bridge's exposure
-        // shells put every NeoForge mod's namespace into the Fabric namespace set, so the sentinel was
-        // classified as a Fabric payload, its client handler never ran, the client never answered the
-        // server and modernfix's integrated-server suspension stayed up for the whole session - all entity
-        // ticking frozen, no item pickup, creative flight never falling.
-        for (var byId : PAYLOAD_REGISTRATIONS.values()) {
-            if (byId.containsKey(id)) {
-                return true;
-            }
-        }
-
-        // NeoFobric: a payload type a Fabric mod registered with Fabric's networking API is delivered by
-        // Fabric's own networking - its addons hook the vanilla custom payload handling - and never takes
-        // part in this registry's negotiation. Routing such a payload into the modded handling below would
-        // reject it for having no payload setup and disconnect with "No Payload Setup", which is exactly
-        // what a Fabric mod whose channel is registered per connection (no declaration, no NeoForge
-        // registration) would hit. Both loaders keep their own bookkeeping, so Fabric's payloads are left
-        // to Fabric.
-        return !net.neoforged.fabricbridge.FabricBridgeHooks.isFabricChannel(id.toString());
+        return !(payload instanceof DiscardedPayload) && !"minecraft".equals(payload.type().id().getNamespace());
     }
 
     /**
@@ -563,16 +434,7 @@ public class NetworkRegistry {
                 return;
             }
 
-            if (hasChannel(listener, customPayloadPacket.payload().type().id())) {
-                return;
-            }
-
-            // NeoFobric: a channel a Fabric mod declared through Fabric's networking API is not in this
-            // registry and never will be - Fabric keeps its own channel bookkeeping, and the payloads
-            // themselves travel fine because both sides speak vanilla's custom payload packet. Fabric has
-            // already validated the send on its side (it refuses a channel with no receiver), so its
-            // channels are let through here instead of killing the connection.
-            if (net.neoforged.fabricbridge.FabricBridgeHooks.isFabricChannel(id.toString())) {
+            if (hasChannel(listener, id)) {
                 return;
             }
 
@@ -594,13 +456,7 @@ public class NetworkRegistry {
                 return;
             }
 
-            if (hasChannel(listener, customPayloadPacket.payload().type().id())) {
-                return;
-            }
-
-            // NeoFobric: same as the clientbound direction above - Fabric mods register their channels
-            // with Fabric, not with this registry.
-            if (net.neoforged.fabricbridge.FabricBridgeHooks.isFabricChannel(id.toString())) {
+            if (hasChannel(listener, id)) {
                 return;
             }
 
@@ -690,21 +546,10 @@ public class NetworkRegistry {
                 return;
             }
 
-            // NeoFobric: a Fabric mod's payload travels through Fabric's networking, which does not take
-            // part in this setup - its channel can never show up in it, so the packet was dropped. A bundle
-            // whose payloads were all Fabric's therefore filtered down to nothing, and vanilla's
-            // PacketBundleUnpacker refuses to produce zero messages: the connection died with
-            // "PacketBundleUnpacker must produce at least one message" (what Fabric's play test mod hit with
-            // its nested bundles).
-            if (net.neoforged.fabricbridge.FabricBridgeHooks.isFabricChannel(id.toString())) {
-                toSend.add(packet);
-                return;
-            }
-
             NetworkChannel channel = payloadSetup.getChannel(ConnectionProtocol.PLAY, id);
 
             if (channel == null) {
-                LOGGER.trace("Somebody tried to send: {} to a client which cannot accept it. Not sending packet.", customPayloadPacket.payload().type().id());
+                LOGGER.trace("Somebody tried to send: {} to a client which cannot accept it. Not sending packet.", id);
                 return;
             }
 
@@ -744,7 +589,15 @@ public class NetworkRegistry {
      * @param resourceLocations The resource locations to add.
      */
     public static void onMinecraftRegister(Connection connection, Set<Identifier> resourceLocations) {
-        ChannelAttributes.getOrCreateAdHocChannels(connection).addAll(resourceLocations);
+        var channels = ChannelAttributes.getOrCreateAdHocChannels(connection);
+        if ((channels.size() + resourceLocations.size()) > NeoForgeCommonConfig.INSTANCE.maxAdhocChannelLimit.getAsInt()) {
+            if (connection.getPacketListener() instanceof ICommonPacketListener listener) {
+                listener.disconnect(Component.translatable("neoforge.network.adhoc_channels.too_many"));
+                return;
+            }
+            throw new RuntimeException("Too many ad-hoc channels.");
+        }
+        channels.addAll(resourceLocations);
     }
 
     /**
@@ -772,7 +625,7 @@ public class NetworkRegistry {
         nowForgottenChannels.add(MinecraftRegisterPayload.ID);
         nowForgottenChannels.add(MinecraftUnregisterPayload.ID);
         PAYLOAD_REGISTRATIONS.get(ConnectionProtocol.PLAY).entrySet().stream()
-                .filter(registration -> registration.getValue().flow().isEmpty() || registration.getValue().flow().get() == PacketFlow.SERVERBOUND)
+                .filter(registration -> registration.getValue().matchesFlow(PacketFlow.SERVERBOUND))
                 .filter(registration -> registration.getValue().optional())
                 .forEach(registration -> nowForgottenChannels.add(registration.getKey()));
         return nowForgottenChannels.build();

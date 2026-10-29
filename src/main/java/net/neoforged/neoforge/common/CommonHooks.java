@@ -11,6 +11,7 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
+import com.google.common.graph.Graph;
 import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.DynamicCommandExceptionType;
@@ -22,6 +23,8 @@ import com.mojang.serialization.Lifecycle;
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.MapLike;
 import com.mojang.serialization.RecordBuilder;
+import it.unimi.dsi.fastutil.objects.Object2IntMap;
+import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -62,6 +65,7 @@ import net.minecraft.core.component.DataComponentMap;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.dispenser.BlockSource;
 import net.minecraft.core.dispenser.ShearsDispenseItemBehavior;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -100,7 +104,9 @@ import net.minecraft.world.clock.WorldClock;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffectUtil;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityFluidInteraction;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.ExperienceOrb;
@@ -146,6 +152,7 @@ import net.minecraft.world.level.biome.BiomeGenerationSettings;
 import net.minecraft.world.level.biome.BiomeSpecialEffects;
 import net.minecraft.world.level.biome.MobSpawnSettings;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DispenserBlock;
 import net.minecraft.world.level.block.GameMasterBlock;
 import net.minecraft.world.level.block.Rotation;
@@ -170,10 +177,13 @@ import net.minecraft.world.phys.Vec3;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.ModLoader;
 import net.neoforged.fml.i18n.MavenVersionTranslator;
+import net.neoforged.fml.loading.toposort.CyclePresentException;
+import net.neoforged.fml.loading.toposort.TopologicalSort;
 import net.neoforged.neoforge.common.conditions.ConditionalOps;
 import net.neoforged.neoforge.common.config.NeoForgeServerConfig;
 import net.neoforged.neoforge.common.damagesource.DamageContainer;
 import net.neoforged.neoforge.common.extensions.IBlockExtension;
+import net.neoforged.neoforge.common.extensions.IEntityExtension;
 import net.neoforged.neoforge.common.loot.IGlobalLootModifier;
 import net.neoforged.neoforge.common.loot.LootModifierManager;
 import net.neoforged.neoforge.common.loot.LootTableIdCondition;
@@ -197,10 +207,12 @@ import net.neoforged.neoforge.event.entity.EntityTravelToDimensionEvent;
 import net.neoforged.neoforge.event.entity.item.ItemTossEvent;
 import net.neoforged.neoforge.event.entity.living.ArmorHurtEvent;
 import net.neoforged.neoforge.event.entity.living.EnderManAngerEvent;
+import net.neoforged.neoforge.event.entity.living.LivingBreatheEvent;
 import net.neoforged.neoforge.event.entity.living.LivingChangeTargetEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDropsEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDrownEvent;
 import net.neoforged.neoforge.event.entity.living.LivingEvent;
 import net.neoforged.neoforge.event.entity.living.LivingFallEvent;
 import net.neoforged.neoforge.event.entity.living.LivingGetProjectileEvent;
@@ -825,7 +837,7 @@ public class CommonHooks {
     public static boolean onPlayerAttackTarget(Player player, Entity target) {
         if (NeoForge.EVENT_BUS.post(new AttackEntityEvent(player, target)).isCanceled())
             return false;
-        ItemStack stack = player.getMainHandItem();
+        ItemStack stack = player.getWeaponItem();
         return stack.isEmpty() || !stack.getItem().onLeftClickEntity(stack, player, target);
     }
 
@@ -1517,55 +1529,56 @@ public class CommonHooks {
         };
     }
 
-// TODO: Reimplement with Entity/Fluid interaction patches
-//
-//    /**
-//     * Handles living entities being underwater. This fires the {@link LivingBreatheEvent} and if the entity's air supply is less than or equal to zero also the {@link LivingDrownEvent}. Additionally, when the entity is underwater it will
-//     * dismount if {@link IEntityExtension#canBeRiddenUnderFluidType(FluidType, Entity)} returns false.
-//     *
-//     * @param entity           The living entity which is currently updated
-//     * @param consumeAirAmount The amount of air to consume when the entity is unable to breathe
-//     * @param refillAirAmount  The amount of air to refill when the entity is able to breathe
-//     * @implNote This method needs to closely replicate the logic found right after the call site in {@link LivingEntity#baseTick()} as it overrides it.
-//     */
-//    public static void onLivingBreathe(LivingEntity entity, int consumeAirAmount, int refillAirAmount) {
-//        // Check things that vanilla considers to be air - these will cause the air supply to be increased.
-//        boolean isAir = entity.getEyeInFluidType().isAir() || entity.level().getBlockState(BlockPos.containing(entity.getX(), entity.getEyeY(), entity.getZ())).is(Blocks.BUBBLE_COLUMN);
-//        boolean canBreathe = isAir;
-//        // The following effects cause the entity to not drown, but do not cause the air supply to be increased.
-//        if (!isAir && (MobEffectUtil.hasWaterBreathing(entity) || !entity.canDrownInFluidType(entity.getEyeInFluidType()) || (entity instanceof Player player && player.getAbilities().invulnerable))) {
-//            canBreathe = true;
-//            refillAirAmount = 0;
-//        }
-//        LivingBreatheEvent breatheEvent = new LivingBreatheEvent(entity, canBreathe, consumeAirAmount, refillAirAmount);
-//        NeoForge.EVENT_BUS.post(breatheEvent);
-//        if (breatheEvent.canBreathe()) {
-//            entity.setAirSupply(Math.min(entity.getAirSupply() + breatheEvent.getRefillAirAmount(), entity.getMaxAirSupply()));
-//        } else {
-//            entity.setAirSupply(entity.getAirSupply() - breatheEvent.getConsumeAirAmount());
-//        }
-//
-//        if (entity.getAirSupply() <= 0) {
-//            LivingDrownEvent drownEvent = new LivingDrownEvent(entity);
-//            if (!NeoForge.EVENT_BUS.post(drownEvent).isCanceled() && drownEvent.isDrowning()) {
-//                entity.setAirSupply(0);
-//                Vec3 vec3 = entity.getDeltaMovement();
-//
-//                for (int i = 0; i < drownEvent.getBubbleCount(); ++i) {
-//                    double d2 = entity.getRandom().nextDouble() - entity.getRandom().nextDouble();
-//                    double d3 = entity.getRandom().nextDouble() - entity.getRandom().nextDouble();
-//                    double d4 = entity.getRandom().nextDouble() - entity.getRandom().nextDouble();
-//                    entity.level().addParticle(ParticleTypes.BUBBLE, entity.getX() + d2, entity.getY() + d3, entity.getZ() + d4, vec3.x, vec3.y, vec3.z);
-//                }
-//
-//                if (drownEvent.getDamageAmount() > 0) entity.hurt(entity.damageSources().drown(), drownEvent.getDamageAmount());
-//            }
-//        }
-//
-//        if (!isAir && !entity.level().isClientSide() && entity.isPassenger() && entity.getVehicle() != null && !entity.getVehicle().canBeRiddenUnderFluidType(entity.getEyeInFluidType(), entity)) {
-//            entity.stopRiding();
-//        }
-//    }
+    /**
+     * Handles living entities being underwater. This fires the {@link LivingBreatheEvent} and if the entity's air supply is less than or equal to zero also the {@link LivingDrownEvent}. Additionally, when the entity is underwater it will
+     * dismount if {@link IEntityExtension#canBeRiddenUnderFluidType(FluidType, Entity)} returns false.
+     *
+     * @param entity           The living entity which is currently updated
+     * @param consumeAirAmount The amount of air to consume when the entity is unable to breathe
+     * @param refillAirAmount  The amount of air to refill when the entity is able to breathe
+     * @implNote This method needs to closely replicate the logic found right after the call site in {@link LivingEntity#baseTick()} as it overrides it.
+     */
+    public static void onLivingBreathe(LivingEntity entity, ServerLevel level, int consumeAirAmount, int refillAirAmount) {
+        // Check things that vanilla considers to be air - these will cause the air supply to be increased.
+        EntityFluidInteraction fluidInteraction = entity.getFluidInteraction();
+        boolean isAir = !fluidInteraction.isEyeInFluidMatching(entity, (_, type, _) -> !type.isAir()) || entity.level().getBlockState(BlockPos.containing(entity.getX(), entity.getEyeY(), entity.getZ())).is(Blocks.BUBBLE_COLUMN);
+        boolean canBreathe = isAir;
+        // The following effects cause the entity to not drown, but do not cause the air supply to be increased.
+        if (!isAir && (MobEffectUtil.hasWaterBreathing(entity) || !fluidInteraction.isEyeInFluidMatching(entity, (e, type, _) -> e.canDrownInFluidType(type)) || (entity instanceof Player player && player.getAbilities().invulnerable))) {
+            canBreathe = true;
+            refillAirAmount = 0;
+        }
+        LivingBreatheEvent breatheEvent = new LivingBreatheEvent(entity, canBreathe, consumeAirAmount, refillAirAmount);
+        NeoForge.EVENT_BUS.post(breatheEvent);
+        if (breatheEvent.canBreathe()) {
+            entity.setAirSupply(Math.min(entity.getAirSupply() + breatheEvent.getRefillAirAmount(), entity.getMaxAirSupply()));
+        } else {
+            entity.setAirSupply(entity.getAirSupply() - breatheEvent.getConsumeAirAmount());
+        }
+
+        if (entity.getAirSupply() <= 0) {
+            LivingDrownEvent drownEvent = new LivingDrownEvent(entity);
+            if (!NeoForge.EVENT_BUS.post(drownEvent).isCanceled() && drownEvent.isDrowning()) {
+                entity.setAirSupply(0);
+                Vec3 vec3 = entity.getDeltaMovement();
+
+                for (int i = 0; i < drownEvent.getBubbleCount(); ++i) {
+                    double d2 = entity.getRandom().nextDouble() - entity.getRandom().nextDouble();
+                    double d3 = entity.getRandom().nextDouble() - entity.getRandom().nextDouble();
+                    double d4 = entity.getRandom().nextDouble() - entity.getRandom().nextDouble();
+                    entity.level().addParticle(ParticleTypes.BUBBLE, entity.getX() + d2, entity.getY() + d3, entity.getZ() + d4, vec3.x, vec3.y, vec3.z);
+                }
+
+                if (drownEvent.getDamageAmount() > 0) {
+                    entity.hurtServer(level, entity.damageSources().drown(), drownEvent.getDamageAmount());
+                }
+            }
+        }
+
+        if (!isAir && entity.isPassenger() && entity.getVehicle() != null && fluidInteraction.isEyeInFluidMatching(entity, (e, type, _) -> !e.getVehicle().canBeRiddenUnderFluidType(type, e))) {
+            entity.stopRiding();
+        }
+    }
 
     private static final Set<Class<?>> checkedComponentClasses = ConcurrentHashMap.newKeySet();
 
@@ -1937,5 +1950,42 @@ public class CommonHooks {
     @ApiStatus.Internal
     public static boolean onCustomClickAction(@Nullable ServerPlayer player, GameProfile profile, Identifier id, Optional<Tag> payload) {
         return NeoForge.EVENT_BUS.post(new CustomClickActionEvent(player, profile, id, payload.orElse(null))).isCanceled();
+    }
+
+    /// Toposort the given graph, throwing a descriptive exception if the graph contains cycles.
+    ///
+    /// @param graph           The graph to sort
+    /// @param values          The values of the graph in insertion order for secondary ordering
+    /// @param typeDescription A descriptive name of the type being sorted
+    /// @param valuePrinter    A function converting the sorted values to a human-readable representation
+    /// @return the sorted list of values
+    public static <T> List<T> sortGraphChecked(Graph<T> graph, Collection<T> values, String typeDescription, Function<T, ?> valuePrinter) {
+        // Build the index mapping in a way that can be used as a comparator to preserve insertion order.
+        Object2IntMap<T> insertionOrder = new Object2IntOpenHashMap<>();
+        int idx = 0;
+        for (T value : values) {
+            insertionOrder.put(value, idx++);
+        }
+
+        // Do the sort.
+        try {
+            return TopologicalSort.topologicalSort(graph, Comparator.comparingInt(insertionOrder::getInt));
+        } catch (CyclePresentException ex) {
+            // Build a real error message and re-throw.
+            StringBuilder sb = new StringBuilder();
+            sb.append("Cycles were detected during ").append(typeDescription).append(" sorting:\n");
+
+            Set<Set<T>> cycles = ex.getCycles();
+            idx = 0;
+            for (Set<T> cycle : cycles) {
+                sb.append(idx++).append(": ");
+                for (T key : cycle) {
+                    sb.append(valuePrinter.apply(key)).append("->");
+                }
+                sb.append(valuePrinter.apply(cycle.iterator().next())).append('\n');
+            }
+
+            throw new IllegalArgumentException(sb.toString());
+        }
     }
 }
