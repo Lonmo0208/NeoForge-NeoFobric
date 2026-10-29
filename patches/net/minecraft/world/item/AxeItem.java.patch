@@ -9,22 +9,40 @@
      protected static final Map<Block, Block> STRIPPABLES = new Builder<Block, Block>()
          .put(Blocks.OAK_WOOD, Blocks.STRIPPED_OAK_WOOD)
          .put(Blocks.OAK_LOG, Blocks.STRIPPED_OAK_LOG)
-@@ -64,7 +_,7 @@
+@@ -64,7 +_,15 @@
          if (playerHasBlockingItemUseIntent(context)) {
              return InteractionResult.PASS;
          } else {
 -            Optional<BlockState> newBlock = this.evaluateNewBlockState(level, pos, player, level.getBlockState(pos));
-+            Optional<BlockState> newBlock = this.evaluateNewBlockState(level, pos, player, level.getBlockState(pos), context);
++            // NeoFobric: the vanilla-shaped overload stays on the live path - a Fabric-side mixin wraps this call
++            // to run its own axe behaviour first, and the platform's tool-modified lookup is what it relays to.
++            Optional<BlockState> newBlock;
++            NEOFOBRIC_USE_CONTEXT.set(context);
++            try {
++                newBlock = this.evaluateNewBlockState(level, pos, player, level.getBlockState(pos));
++            } finally {
++                NEOFOBRIC_USE_CONTEXT.remove();
++            }
              if (newBlock.isEmpty()) {
                  return InteractionResult.PASS;
              } else {
-@@ -91,19 +_,18 @@
+@@ -91,19 +_,29 @@
              && !player.isSecondaryUseActive();
      }
  
--    private Optional<BlockState> evaluateNewBlockState(Level level, BlockPos pos, @Nullable Player player, BlockState oldState) {
++    /**
++     * Carries the interaction context into {@link #evaluateNewBlockState(Level, BlockPos, Player, BlockState)}:
++     * that signature is the one a Fabric-side mixin wraps, and the platform lookup it relays to needs the
++     * context the wrapped call cannot pass.
++     */
++    private static final ThreadLocal<UseOnContext> NEOFOBRIC_USE_CONTEXT = new ThreadLocal<>();
++
+     private Optional<BlockState> evaluateNewBlockState(Level level, BlockPos pos, @Nullable Player player, BlockState oldState) {
 -        Optional<BlockState> strippedBlock = this.getStripped(oldState);
-+    private Optional<BlockState> evaluateNewBlockState(Level level, BlockPos pos, @Nullable Player player, BlockState oldState, UseOnContext context) {
++        return evaluateNewBlockState(level, pos, player, oldState, NEOFOBRIC_USE_CONTEXT.get());
++    }
++
++    private Optional<BlockState> evaluateNewBlockState(Level level, BlockPos pos, @Nullable Player player, BlockState oldState, @Nullable UseOnContext context) {
 +        Optional<BlockState> strippedBlock = Optional.ofNullable(oldState.getToolModifiedState(context, net.neoforged.neoforge.common.ItemAbilities.AXE_STRIP, false));
          if (strippedBlock.isPresent()) {
              level.playSound(player, pos, SoundEvents.AXE_STRIP, SoundSource.BLOCKS, 1.0F, 1.0F);
