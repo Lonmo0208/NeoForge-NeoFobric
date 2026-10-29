@@ -22,14 +22,17 @@ import org.gradle.api.tasks.PathSensitivity;
  */
 public abstract class IdentifiedFile {
     public static Provider<List<IdentifiedFile>> listFromConfiguration(Project project, Configuration configuration) {
+        // NeoFobric: capture only the ObjectFactory - the mapped provider is stored by the
+        // configuration cache, which forbids serializing Project instances.
+        var objectFactory = project.getObjects();
         return configuration.getIncoming().getArtifacts().getResolvedArtifacts().map(
                 artifacts -> artifacts.stream()
-                        .map(artifact -> IdentifiedFile.of(project, artifact))
+                        .map(artifact -> of(objectFactory, artifact))
                         .toList());
     }
 
-    private static IdentifiedFile of(Project project, ResolvedArtifactResult resolvedArtifact) {
-        var identifiedFile = project.getObjects().newInstance(IdentifiedFile.class);
+    private static IdentifiedFile of(org.gradle.api.model.ObjectFactory objectFactory, ResolvedArtifactResult resolvedArtifact) {
+        var identifiedFile = objectFactory.newInstance(IdentifiedFile.class);
         identifiedFile.getFile().set(resolvedArtifact.getFile());
         identifiedFile.getIdentifier().set(DependencyUtils.guessMavenIdentifier(resolvedArtifact));
         return identifiedFile;

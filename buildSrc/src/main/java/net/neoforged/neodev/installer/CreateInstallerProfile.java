@@ -188,7 +188,14 @@ public abstract class CreateInstallerProfile extends DefaultTask {
                 getMinecraftVersion().get(),
                 "/version.json",
                 "/big_logo.png",
-                "Welcome to the simple NeoForge installer",
+                // NeoFobric: the welcome string is what the installer's window shows - branding, so the fork
+                // renames it. The profile name stays "NeoForge" on purpose: launchers classify an installer
+                // by its profile (and later show a foreign "Forge" entry for an unknown name), and this field
+                // is not visible in the launchers people actually use, while the welcome text is. The version
+                // id keeps the "neoforge" prefix for the same reason: launchers look for that word in the id
+                // and mangle an id without it. The mod id, the maven coordinates and every library path stay
+                // NeoForge too.
+                "Welcome to the simple NeoFobric installer",
                 "https://mirrors.neoforged.net",
                 true,
                 data,

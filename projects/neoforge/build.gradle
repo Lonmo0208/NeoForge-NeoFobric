@@ -143,6 +143,25 @@ dependencies {
     compileOnly "org.jetbrains:annotations:${project.jetbrains_annotations_version}"
 
     userdevCompileOnly jarJar("io.github.llamalad7:mixinextras-neoforge:${project.mixin_extras_version}")
+    // NeoFobric: in development, NeoForge loads from class folders, so the JiJ expansion that
+    // provides MixinExtras in production installs does not happen. MixinExtras carries an
+    // FMLModType manifest attribute, so putting it on the dev runtime classpath makes FML's
+    // InDevJarLocator load it as a game library - which Fabric mixin configurations need for
+    // @WrapOperation/@WrapMethod/MIXINEXTRAS:EXPRESSION. Production installs still get it from
+    // the universal jar's JiJ entry only (runtimeOnly is not part of the launcher profile).
+    runtimeOnly "io.github.llamalad7:mixinextras-neoforge:${project.mixin_extras_version}"
+
+    // NeoFobric: the bridge that integrates the fabric-loader runtime into NeoForge. The bridge jar
+    // is a proper Maven artifact; the fabric-loader fat jar is exposed through the bridge's
+    // fabricLoaderBundle variant, which carries fabric-loader's Maven coordinates (required by
+    // the userdev tooling). With neofobric.fabricLoader.local=false, fabric-loader resolves from
+    // Maven instead.
+    libraries(project(':fabricbridge'))
+    if (rootProject.fabricLoaderLocalMode) {
+        libraries(project(path: ':fabricbridge', configuration: 'fabricLoaderBundle'))
+    } else {
+        libraries("net.fabricmc:fabric-loader:${rootProject.fabricLoaderBaseVersion}")
+    }
 
     userdevTestFixtures("net.neoforged.fancymodloader:junit-fml:${project.fancy_mod_loader_version}") {
         endorseStrictVersions()
@@ -159,6 +178,53 @@ dependencies {
     }
 }
 
+// NeoFobric: resolve the bridge and fabric-loader jars for embedding into the production installer.
+// Neither artifact is hosted on a public Maven repository, so they are embedded into the
+// installer's maven directory (like NeoForge's own universal jar in artifact-including builds);
+// the installer extracts embedded artifacts into the libraries directory before downloading.
+configurations {
+    fabricbridgeEmbedded {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+    fabricLoaderEmbedded {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+}
+dependencies {
+    fabricbridgeEmbedded(project(':fabricbridge'))
+    if (rootProject.fabricLoaderLocalMode) {
+        fabricLoaderEmbedded(project(path: ':fabricbridge', configuration: 'fabricLoaderBundle'))
+    } else {
+        fabricLoaderEmbedded("net.fabricmc:fabric-loader:${rootProject.fabricLoaderBaseVersion}")
+    }
+}
+
+tasks.named('installerJar', Zip).configure {
+    from(configurations.fabricbridgeEmbedded) {
+        into "maven/net/neoforged/fabricbridge/${project.version}/"
+    }
+    // The artifact's classifier is not part of its Maven coordinates, so embed it under the
+    // classifier-less name the library entries in install_profile.json/version.json reference.
+    // Capture values at configuration time: the closures run at execution time.
+    final fabricLoaderVersion = rootProject.fabricLoaderEmbedVersion
+    from(configurations.fabricLoaderEmbedded) {
+        into "maven/net/fabricmc/fabric-loader/${fabricLoaderVersion}/"
+        rename { String fileName -> "fabric-loader-${fabricLoaderVersion}.jar" }
+    }
+}
+
+// NeoFobric: the profile tasks list libraries as IdentifiedFiles, whose file inputs do not carry
+// the producer task dependencies of project/file-based artifacts (bridge + fabric-loader).
+// Depending on the configuration directly builds its artifacts before the tasks run.
+tasks.withType(net.neoforged.neodev.installer.CreateInstallerProfile).configureEach {
+    dependsOn configurations.launcherProfileClasspath
+}
+tasks.withType(net.neoforged.neodev.installer.CreateLauncherProfile).configureEach {
+    dependsOn configurations.launcherProfileClasspath
+}
+
 // Select runtimeElements rather than universalJar from the main source set
 // If you don't believe it... try to remove this block, and run the following command:
 // gradlew :neoforge:dependencyInsight --configuration clientRuntimeClasspath --dependency net.neoforged:neoforge --scan
@@ -173,6 +239,110 @@ neoDev {
         configureEach {
             gameDirectory = layout.projectDir.dir("run/$name")
             systemProperty("terminal.ansi", "true")
+            if (project.hasProperty('neofobric.traceEntrypoints')) {
+                systemProperty("neofobric.traceEntrypoints", "true")
+            }
+            // Diagnostic: the JVM prints every class it loads, in order. Needed to tell "this class was
+            // loaded before the Fabric mixin configs were registered" apart from "the mixin was registered
+            // and refused", which look identical in every other log.
+            if (project.hasProperty('neofobric.classLoadLog')) {
+                jvmArgument('-verbose:class')
+            }
+            // A/B diagnosis: -Pneofobric.disabled=true runs NeoForge without the Fabric bridge.
+            if (project.hasProperty('neofobric.disabled')) {
+                systemProperty("neofobric.disabled", "true")
+            }
+            // A/B diagnosis: switch off individual bridge stages to find the culprit.
+            for (var flag : ['neofobric.noJarPatcher', 'neofobric.noConflictFilter', 'neofobric.noClassTweaker', 'neofobric.noAccessorTrim', 'neofobric.noAccessorRenames', 'neofobric.noClassPatch', 'neofobric.noPrepareModInit', 'neofobric.noClientEntrypoints', 'neofobric.noHandlerFix', 'neofobric.noFabricMixins', 'neofobric.registerAllMixinConfigs', 'neofobric.noDefaultMixinSkips']) {
+                if (project.hasProperty(flag)) {
+                    systemProperty(flag, "true")
+                }
+            }
+            // Mixin verbose logging, for finding why a specific injection did not install.
+            if (project.hasProperty('neofobric.mixinDebug')) {
+                systemProperty("mixin.debug.verbose", "true")
+                systemProperty("mixin.debug.export", "true")
+                systemProperty("mixin.checks", "true")
+            }
+            // Dumps the classes Mixin produced into run/<name>/.mixin.out, so a transformation can be read
+            // back with javap. Cheaper and far less invasive than the full debug switch above: it changes
+            // nothing about how the classes are built.
+            if (project.hasProperty('neofobric.mixinExport')) {
+                systemProperty("mixin.debug.export", "true")
+            }
+            if (project.hasProperty('neofobric.traceMixinClasses')) {
+                systemProperty("neofobric.traceMixinClasses", "true")
+            }
+            // A/B diagnostic: leave Fabric's transfer transactions on Fabric's own stack, so a failure can
+            // be attributed to the transaction transplant or ruled out.
+            if (project.hasProperty('neofobric.noTransferBridge')) {
+                systemProperty("neofobric.noTransferBridge", "true")
+            }
+            // TEMPORARY DIAGNOSTIC: comma list of mods whose Fabric entrypoints are skipped, to separate
+            // entrypoint-driven behaviour from jar-presence-driven behaviour.
+            if (project.hasProperty('neofobric.debugSkipEntrypoints')) {
+                systemProperty("neofobric.debugSkipEntrypoints", project.property('neofobric.debugSkipEntrypoints'))
+            }
+            if (project.hasProperty('neofobric.debugDropNoxesiumMixins')) {
+                systemProperty("neofobric.debugDropNoxesiumMixins", project.property('neofobric.debugDropNoxesiumMixins'))
+            }
+            // Shades the platform-namespace classes a Fabric jar carries that this NeoForge does not have
+            // (see MixinJarPatcher#platformNamespaceShadingPlan).
+            if (project.hasProperty('neofobric.shadePlatformCopies')) {
+                systemProperty("neofobric.shadePlatformCopies", "true")
+            }
+            // Prints the static predicate registry state where the failing loot table is decoded.
+            if (project.hasProperty('neofobric.registryProbe')) {
+                systemProperty("neofobric.registryProbe", "true")
+            }
+            // Asks whether the vanilla component codec knows the content type a mod registered through
+            // its own @Mixin into ComponentSerialization#bootstrap (see BridgeSelfCheck#componentProbe).
+            if (project.hasProperty('neofobric.componentProbe')) {
+                systemProperty("neofobric.componentProbe", "true")
+            }
+            // Prints the state of Create's own registries and of the type lists it rebuilds from them at the
+            // tail of BuiltInRegistries.freeze() (see BridgeSelfCheck#createFeatureProbe).
+            if (project.hasProperty('neofobric.createProbe')) {
+                systemProperty("neofobric.createProbe", "true")
+            }
+            // Reproduces a schematic upload without touching the GUI, and reports both sides
+            // (see BridgeSelfCheck#schematicUploadDriver). Needs a schematic in run/<name>/schematics.
+            if (project.hasProperty('neofobric.schematicTest')) {
+                systemProperty("neofobric.schematicTest", "true")
+            }
+            // Checks the Fabric <-> NeoForge transfer bridge against a real journalled handler and logs
+            // PASS/FAIL (see FabricTransferHooks#selfTest).
+            if (project.hasProperty('neofobric.transferProbe')) {
+                systemProperty("neofobric.transferProbe", "true")
+            }
+            // MC's GL state validation runs in dev only (production never enables it from its very
+            // definition: VALIDATION = IS_RUNNING_IN_IDE && !disable). It assumes the vanilla renderer
+            // owns the pipeline and the GL state, which stops being true the moment Sodium or iris drive
+            // the renderer - with a shader pack active it reported three of their legitimate states as
+            // fatal in a row (an unchecked array index in validateDraw, then "Missing sampler Sampler1").
+            // Dev runs therefore start with it off, matching production; pass
+            // -Pneoforge.enableGlValidation=true to turn it back on when debugging the vanilla path.
+            if (!project.hasProperty('neoforge.enableGlValidation')) {
+                systemProperty("neoforge.disableGlValidation", "true")
+            }
+            if (project.hasProperty('neofobric.skipMixinConfigs')) {
+                systemProperty("neofobric.skipMixinConfigs", project.property('neofobric.skipMixinConfigs'))
+            }
+            if (project.hasProperty('neofobric.onlyMixinConfigs')) {
+                systemProperty("neofobric.onlyMixinConfigs", project.property('neofobric.onlyMixinConfigs'))
+            }
+            if (project.hasProperty('neofobric.skipMixinClasses')) {
+                systemProperty("neofobric.skipMixinClasses", project.property('neofobric.skipMixinClasses'))
+            }
+            // Both change the bytes the patcher writes (the cache key records them), so a run that wants to
+            // see their effect has to hand them to the game JVM: the extra classes whose constructor
+            // selectors are checked against the repair, and the continuity probes.
+            if (project.hasProperty('neofobric.ctorRetarget')) {
+                systemProperty("neofobric.ctorRetarget", project.property('neofobric.ctorRetarget'))
+            }
+            if (project.hasProperty('neofobric.debugContinuity')) {
+                systemProperty("neofobric.debugContinuity", "true")
+            }
         }
         client {
             client()

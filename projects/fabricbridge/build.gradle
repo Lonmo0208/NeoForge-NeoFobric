@@ -1,0 +1,101 @@
+plugins {
+    id 'java-library'
+}
+
+base {
+    archivesName = 'fabricbridge'
+}
+
+// Fobric: the fabric-loader fat jar, built from the local checkout by the root build (or resolved
+// from Maven when neofobric.fabricLoader.local=false). Declared as a file collection outside the
+// dependencies block so the task dependency (builtBy) survives. Neither the file nor the variant
+// below exists in Maven mode, where fabric-loader already is a resolvable Maven artifact.
+if (rootProject.fabricLoaderLocalMode) {
+    configurations {
+        // Exposes the fabric-loader fat jar as a consumable variant carrying fabric-loader's own Maven
+        // coordinates (net.fabricmc:fabric-loader). NeoForge's userdev tooling requires every library
+        // to be resolvable to Maven identifiers, which bare file dependencies cannot provide.
+        fabricLoaderBundle {
+            canBeConsumed = true
+            canBeResolved = false
+        }
+    }
+
+    configurations.fabricLoaderBundle {
+        outgoing {
+            // The released coordinate, not the fat jar's own "+local" name: this is what the dev
+            // runtime resolves fabric-loader by, and what the installer's profile references.
+            capability("net.fabricmc:fabric-loader:${rootProject.fabricLoaderBaseVersion}")
+            artifact(rootProject.fabricLoaderFatJar) {
+                builtBy rootProject.tasks.named('buildFabricLoader')
+            }
+        }
+    }
+
+    dependencies {
+        compileOnly(files(rootProject.fabricLoaderFatJar) {
+            builtBy rootProject.tasks.named('buildFabricLoader')
+        })
+    }
+}
+
+// The bridge runs on the bootstrap classpath next to FML itself. Everything it compiles against
+// (FML, sponge-mixin, ASM, fabric-loader) is provided at runtime by NeoForge's own libraries or
+// by the fabric-loader fat jar, so all dependencies are compileOnly here.
+dependencies {
+    compileOnly("net.neoforged.fancymodloader:loader:${fancy_mod_loader_version}") {
+        transitive = false
+    }
+    // Provides net.neoforged.api.distmarker.Dist on the bootstrap classpath.
+    compileOnly("net.neoforged:mergetool:${mergetool_version}:api") { transitive = false }
+    compileOnly("org.slf4j:slf4j-api:2.0.17")
+    // Reads and rewrites the Fabric mixin configs (folding the dist sections into "mixins"); the game
+    // already ships gson, so it is compile-time only here.
+    compileOnly("com.google.code.gson:gson:2.10.1")
+    compileOnly("net.fabricmc:sponge-mixin:${mixin_version}") { transitive = false }
+    // asm-commons carries ClassRemapper/Remapper, which the platform-namespace shading pass uses to move a
+    // Fabric jar's net.neoforged classes (and every reference to them) out of the platform's namespaces.
+    for (var asmModule : ["org.ow2.asm:asm", "org.ow2.asm:asm-tree", "org.ow2.asm:asm-commons"]) {
+        compileOnly(asmModule) {
+            version {
+                strictly project.asm_version
+            }
+        }
+    }
+
+    if (rootProject.fabricLoaderLocalMode) {
+        compileOnly(files(rootProject.fabricLoaderFatJar) {
+            builtBy rootProject.tasks.named('buildFabricLoader')
+        })
+    } else {
+        compileOnly("net.fabricmc:fabric-loader:${rootProject.fabricLoaderBaseVersion}")
+    }
+}
+
+tasks.withType(Javadoc.class).configureEach {
+    enabled = false
+}
+
+
+// The jar patcher's passes are bytecode in, bytecode out, so their pure helpers get unit tests instead of
+// another end-to-end run: the shapes that have each been wrong once - a descriptor reader that dropped
+// primitives, a member rename that only matched whole strings, an anchor spelling that lost its owner - are
+// cheaper to pin down here than to rediscover from a client that quietly lost a feature.
+dependencies {
+    testImplementation(platform("org.junit:junit-bom:${project.jupiter_api_version}"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testRuntimeOnly("org.slf4j:slf4j-api:2.0.17")
+    // main sees ASM as compileOnly; the tests build their own fixtures with it.
+    for (var asmModule : ["org.ow2.asm:asm", "org.ow2.asm:asm-tree", "org.ow2.asm:asm-commons"]) {
+        testImplementation(asmModule) {
+            version {
+                strictly project.asm_version
+            }
+        }
+    }
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+}

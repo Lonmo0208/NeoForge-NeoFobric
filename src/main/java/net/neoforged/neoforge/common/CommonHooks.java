@@ -157,6 +157,7 @@ import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
 import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.storage.LevelStorageSource;
 import net.minecraft.world.level.storage.WorldData;
@@ -635,7 +636,11 @@ public class CommonHooks {
             level.captureBlockSnapshots = true;
 
         ItemStack copy = itemstack.copy();
-        InteractionResult ret = itemstack.getItem().useOn(context);
+        // NeoFabric: Fabric API fires ItemEvents.USE_ON by wrapping the Item#useOn call inside ItemStack#useOn, which
+        // on the logical server is this one; the bridge hands Fabric the same chance to answer (ItemStack asks for
+        // the client-side call).
+        var fabricResult = net.neoforged.fabricbridge.FabricBridgeHooks.fireFabricItemUseOn(context);
+        InteractionResult ret = fabricResult != null ? (InteractionResult) fabricResult : itemstack.getItem().useOn(context);
         if (itemstack.isEmpty())
             EventHooks.onPlayerDestroyItem(player, copy, context.getHand());
 
@@ -879,6 +884,19 @@ public class CommonHooks {
         NeoForge.EVENT_BUS.post(new PlayerInteractEvent.RightClickEmpty(player, hand));
     }
 
+    /**
+     * Fires {@link PlayerInteractEvent.RightClickEmpty} only for an empty hand. The emptiness check
+     * lives here rather than in the caller so that {@code Minecraft.startUseItem} does not gain an
+     * extra {@code ItemStack.isEmpty} call, which would shift the call sites Fabric mixins target
+     * by ordinal.
+     */
+    public static void onEmptyClick(Player player, InteractionHand hand, ItemStack stack) {
+        if (!stack.isEmpty()) {
+            return;
+        }
+        onEmptyClick(player, hand);
+    }
+
     public static void onEmptyLeftClick(Player player) {
         NeoForge.EVENT_BUS.post(new PlayerInteractEvent.LeftClickEmpty(player));
     }
@@ -933,7 +951,51 @@ public class CommonHooks {
             return NeoForgeMod.LAVA_TYPE.value();
         if (NeoForgeMod.MILK.asOptional().filter(milk -> milk == fluid).isPresent() || NeoForgeMod.FLOWING_MILK.asOptional().filter(milk -> milk == fluid).isPresent())
             return NeoForgeMod.MILK_TYPE.value();
+        // NeoFobric: a fluid from a mod that only knows Fabric cannot override getFluidType - Fabric has no
+        // such concept - so this guard can never be satisfied for it, and the throw turned every one of its
+        // tick-time lookups into a crash (reached from EntityFluidInteraction's tag lookup, where a Fabric
+        // mod's custom fluid is being queried while a player ticks). What Fabric mods do declare is a fluid
+        // behaviour against a fluid tag, and NeoForge reads the same physics off a fluid type - so the bridge
+        // translates that declaration here, and a fluid it says nothing about falls back to the empty type,
+        // the one NeoForge uses for "no fluid", so its tag-based queries land on a tracker instead of killing
+        // the server. Fluids from NeoForge mods keep the loud failure.
+        if (net.neoforged.fabricbridge.FabricBridgeHooks.isFabricModClass(fluid.getClass())) {
+            var behavior = net.neoforged.fabricbridge.FabricBridgeHooks.fabricFluidBehavior(fluid);
+            return behavior != null ? fabricFluidType(behavior) : NeoForgeMod.EMPTY_TYPE.value();
+        }
         throw new RuntimeException("Mod fluids must override getFluidType.");
+    }
+
+    /**
+     * NeoFobric: the NeoForge fluid type a Fabric fluid declaration describes.
+     *
+     * <p>A fluid Fabric registered as water-like gets NeoForge's own water type: the two describe the same
+     * physics, and sharing the instance keeps every lookup - by tag, by type - on the same tracker.
+     */
+    private static FluidType fabricFluidType(net.neoforged.fabricbridge.FabricBridgeHooks.FabricFluidBehavior behavior) {
+        if (behavior.waterLike()) {
+            return NeoForgeMod.WATER_TYPE.value();
+        }
+
+        return new FluidType(FluidType.Properties.create()
+                .canSwim(behavior.canSwim())
+                .canDrown(behavior.canDrown())
+                .canPushEntity(behavior.canPushEntity())
+                .supportsBoating(behavior.supportsBoating())
+                .motionScale(behavior.motionScale())
+                .fallDistanceModifier(behavior.fallDistanceModifier())) {
+            @Override
+            public boolean move(FluidState state, LivingEntity entity, Vec3 movementVector, double gravity) {
+                // NeoFobric: NeoForge hands movement in a modded fluid to its type, and everything Fabric
+                // declared about that movement - its gravity multiplier, its speed and slowdown, whether mobs
+                // float in it - is in the behaviour, so it is run from here. The two values its method takes
+                // that this hook does not pass are recomputed the way LivingEntity#travelInFluid computes
+                // them, which is where the hook is called from.
+                return net.neoforged.fabricbridge.FabricBridgeHooks.moveInFabricFluid(
+                        behavior.behavior(), behavior.tag(), entity, movementVector, gravity,
+                        entity.getDeltaMovement().y <= 0.0, entity.getY());
+            }
+        };
     }
 
     // FIXME: is this still needed
@@ -1172,7 +1234,33 @@ public class CommonHooks {
     /** FOR INTERNAL USE ONLY, DO NOT CALL DIRECTLY */
     @Deprecated
     public static void modifyAttributes() {
+        // NeoFobric: rebase on the vanilla map before the events fire. Fabric API's default attribute registry
+        // does not go through EntityAttributeCreationEvent - it writes into the vanilla map itself (its mixin
+        // swaps DefaultAttributes' immutable field for a mutable copy) - and this pass runs a second time after
+        // the Fabric entrypoints. Without the rebase the events below would combine onto NeoForge's own, older
+        // copy and a Fabric mod's replacement would never be seen ("Pig does not have test attribute").
+        FORGE_ATTRIBUTES.putAll(DefaultAttributes.vanillaSuppliers());
         ModLoader.postEvent(new EntityAttributeCreationEvent(FORGE_ATTRIBUTES));
+        applyAttributeModifications();
+    }
+
+    /**
+     * NeoFobric: the attribute pass the Fabric entrypoints leave for later - the rebase, and only the
+     * modification event after it.
+     *
+     * <p>Two things happen between the two passes: Fabric's default attribute registry writes into the vanilla
+     * map (so the rebase above finds its per-entity replacements), and a NeoForge mod may have registered its
+     * attributes through {@code EntityAttributeCreationEvent} already - that event refuses a second entry for the
+     * same entity ("Duplicate DefaultAttributes entry", which is how bagus_lib's mob died on the second pass), and
+     * its entries are still in the map because the rebase only adds vanilla keys. Re-applying the modification
+     * event instead re-layers what mods asked for on top of the rebased values, which is idempotent.
+     */
+    public static void rebaseAttributesAfterFabricEntrypoints() {
+        FORGE_ATTRIBUTES.putAll(DefaultAttributes.vanillaSuppliers());
+        applyAttributeModifications();
+    }
+
+    private static void applyAttributeModifications() {
         Map<EntityType<? extends LivingEntity>, AttributeSupplier.Builder> finalMap = new HashMap<>();
         ModLoader.postEvent(new EntityAttributeModificationEvent(finalMap));
 
@@ -1773,6 +1861,15 @@ public class CommonHooks {
 
         final var isValid = isEntityClass && mixinsInjectingEda.isEmpty();
         if (isValid) {
+            return;
+        }
+
+        if (Boolean.getBoolean("neofobric.allowForeignEntityData")) {
+            // Fabric mods add synced data to vanilla entities through mixins; that is the normal pattern
+            // on Fabric and both peers in a bridge install carry the same mod set. Keep the warning, but
+            // do not turn it into a boot failure.
+            LOGGER.warn("Allowing synced data from {} for {} because the Fabric compatibility layer is active",
+                    callerClass.getName(), holderClass.getName());
             return;
         }
 

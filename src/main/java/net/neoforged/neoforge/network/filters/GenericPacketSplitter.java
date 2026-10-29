@@ -5,7 +5,6 @@
 
 package net.neoforged.neoforge.network.filters;
 
-import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToMessageEncoder;
@@ -17,11 +16,11 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.HandlerNames;
 import net.minecraft.network.PacketEncoder;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.common.NeoForgeMod;
@@ -87,6 +86,25 @@ public class GenericPacketSplitter extends MessageToMessageEncoder<Packet<?>> im
             return;
         }
 
+        // NeoFobric: Fabric carries and splits its own payloads - its splitter is driven by the payload types
+        // it registered, and its context-carrying payload codecs refuse to be encoded outside Fabric's own
+        // send path. Measuring one here re-encodes it outside that path, and the first context payload ended
+        // the connection with "PacketContext is required, but it wasn't set up!". Fabric channels are
+        // therefore left to Fabric, exactly as they are on a Fabric server.
+        if (isFabricPayload(packet)) {
+            out.add(packet);
+            return;
+        }
+
+        // NeoFobric: a terminal packet swaps the protocol phase right after it is encoded, and the swap
+        // is performed on the encoder the packet passes through. Measuring one must not run that swap,
+        // and terminal packets are far too small to ever need splitting; Fabric's own splitter lets
+        // terminal packets pass untouched as well.
+        if (packet.isTerminal()) {
+            out.add(packet);
+            return;
+        }
+
         if (!((ctx.pipeline().get(HandlerNames.ENCODER) instanceof PacketEncoder<?> encoder))) {
             // No encoder in pipeline, pipeline is probably unbound
             out.add(packet);
@@ -99,9 +117,11 @@ public class GenericPacketSplitter extends MessageToMessageEncoder<Packet<?>> im
 
         FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
         try {
-            @SuppressWarnings({ "unchecked", "rawtypes" }) // Eclipse requires the extra rawtype cast first.
-            var codec = (StreamCodec<ByteBuf, Packet<?>>) (StreamCodec) encoder.getProtocolInfo().codec();
-            codec.encode(buf, packet);
+            // NeoFobric: measure through the encoder's own encode path. Fabric mixins wrap that method
+            // to expose the packet context (polymer & co. read it while serializing), and measuring
+            // with a raw codec call serializes without the context and kicks such mods off the
+            // connection. Fabric's splitter measures through PacketEncoder#encode as well.
+            encoder.encodeForSplitting(ctx, packet, buf);
             if (buf.readableBytes() <= sizeLimits.packet()) {
                 out.add(packet);
                 return;
@@ -164,6 +184,25 @@ public class GenericPacketSplitter extends MessageToMessageEncoder<Packet<?>> im
             case SERVERBOUND -> new ServerboundCustomPayloadPacket(new SplitPacketPayload(payload));
             case CLIENTBOUND -> new ClientboundCustomPayloadPacket(new SplitPacketPayload(payload));
         };
+    }
+
+    /**
+     * {@return whether the packet carries a payload type a Fabric mod registered}
+     *
+     * <p>See the note in {@link #encode}: Fabric's own splitter takes care of those, and their codecs are
+     * only encodable from Fabric's send path.
+     */
+    private static boolean isFabricPayload(Packet<?> packet) {
+        CustomPacketPayload payload = null;
+
+        if (packet instanceof ClientboundCustomPayloadPacket clientboundCustomPayloadPacket) {
+            payload = clientboundCustomPayloadPacket.payload();
+        } else if (packet instanceof ServerboundCustomPayloadPacket serverboundCustomPayloadPacket) {
+            payload = serverboundCustomPayloadPacket.payload();
+        }
+
+        return payload != null
+                && net.neoforged.fabricbridge.FabricBridgeHooks.isFabricChannel(payload.type().id().toString());
     }
 
     @Override
