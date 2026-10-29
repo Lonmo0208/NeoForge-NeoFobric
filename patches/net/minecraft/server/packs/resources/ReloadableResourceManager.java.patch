@@ -13,7 +13,7 @@
      public void registerReloadListener(PreparableReloadListener listener) {
          this.listeners.add(listener);
      }
-@@ -74,5 +_,24 @@
+@@ -74,5 +_,28 @@
      @Override
      public Stream<PackResources> listPacks() {
          return this.resources.listPacks();
@@ -31,10 +31,14 @@
 +    /**
 +     * Neo: Updates the {@link #listeners} with the sorted list from the event.
 +     *
-+     * @implNote The returned list is immutable, so after this method is called, {@link #registerReloadListener(PreparableReloadListener)} will throw.
++     * <p>NeoFobric: the result stays mutable. Fabric mods register reload listeners through the vanilla
++     * {@code registerReloadListener} call from their client initializers, which run after this event;
++     * an immutable list turned that registration into an {@code UnsupportedOperationException} before
++     * the game window even opened. A listener added that late lands at the end of the list - it is
++     * registered before the first reload, which is all it needs - instead of taking the game down.
 +     */
 +    @org.jetbrains.annotations.ApiStatus.Internal
 +    public void updateListenersFrom(net.neoforged.neoforge.event.SortedReloadListenerEvent event) {
-+        this.listeners = net.neoforged.neoforge.resource.ReloadListenerSort.sort(event);
++        this.listeners = new java.util.ArrayList<>(net.neoforged.neoforge.resource.ReloadListenerSort.sort(event));
      }
  }
