@@ -210,24 +210,14 @@ public class ResourcePackLoader {
                     .orElse(FeatureFlagSet.of());
 
             MetadataSectionType<OverlayMetadataSection> vanillaOverlayType = OverlayMetadataSection.forPackType(type);
-            List<String> vanillaOverlays = List.of();
-            try {
-                vanillaOverlays = Optional.ofNullable(primaryResources.getMetadataSection(vanillaOverlayType))
-                        .map(section -> section.overlaysForVersion(currentVersion))
-                        .orElse(List.of());
-            } catch (JsonParseException exception) {
-                LOGGER.warn("Error reading vanilla overlays for {}, falling back to empty overlays", location.id(), exception);
-            }
+            final List<String> vanillaOverlays = Optional.ofNullable(primaryResources.getMetadataSection(vanillaOverlayType))
+                    .map(section -> section.overlaysForVersion(currentVersion))
+                    .orElse(List.of());
 
             MetadataSectionType<OverlayMetadataSection> neoOverlayType = OverlayMetadataSection.forPackTypeNeoForge(type);
-            List<String> neoOverlays = List.of();
-            try {
-                neoOverlays = Optional.ofNullable(primaryResources.getMetadataSection(neoOverlayType))
-                        .map(section -> section.overlaysForVersion(currentVersion))
-                        .orElse(List.of());
-            } catch (JsonParseException exception) {
-                LOGGER.warn("Error reading NeoForge-added overlays for {}, falling back to empty overlays", location.id(), exception);
-            }
+            final List<String> neoOverlays = Optional.ofNullable(primaryResources.getMetadataSection(neoOverlayType))
+                    .map(section -> section.overlaysForVersion(currentVersion))
+                    .orElse(List.of());
 
             List<String> overlays = new ArrayList<>(vanillaOverlays);
             overlays.addAll(neoOverlays);

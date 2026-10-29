@@ -5,7 +5,6 @@
 
 package net.neoforged.neoforge.event.entity.living;
 
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.neoforged.bus.api.ICancellableEvent;
 import net.neoforged.neoforge.common.CommonHooks;
@@ -14,7 +13,7 @@ import net.neoforged.neoforge.common.NeoForge;
 /**
  * LivingBreatheEvent is fired whenever a living entity ticks.<br>
  * <br>
- * This event is fired via {@link CommonHooks#onLivingBreathe(LivingEntity, ServerLevel, int, int)}.<br>
+ * This event is fired via {@link CommonHooks#onLivingBreathe(LivingEntity, int, int)}.<br>
  * <br>
  * This event is not {@link ICancellableEvent}.<br>
  * <br>

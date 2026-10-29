@@ -76,13 +76,7 @@ public abstract class StackCopySlot extends Slot {
         ItemStack stack = getStackCopy().copy();
         ItemStack ret = stack.split(amount);
         set(stack);
-        clearCachedReturnStack();
-        return ret;
-    }
-
-    /// Clears the current cached return stack to prevent a [#setChanged] call from potentially overriding the contents of this slot.
-    /// This is useful when the slot's backing inventory may have been modified directly.
-    protected void clearCachedReturnStack() {
         cachedReturnedStack = null;
+        return ret;
     }
 }

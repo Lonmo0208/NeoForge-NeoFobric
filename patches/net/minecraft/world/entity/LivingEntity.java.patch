@@ -37,7 +37,7 @@
  
      protected LivingEntity(EntityType<? extends LivingEntity> type, Level level) {
          super(type, level);
-@@ -337,7 +_,9 @@
+@@ -337,13 +_,15 @@
              .add(Attributes.MOVEMENT_EFFICIENCY)
              .add(Attributes.ATTACK_KNOCKBACK)
              .add(Attributes.CAMERA_DISTANCE)
@@ -48,6 +48,13 @@
      }
  
      @Override
+     protected void checkFallDamage(double ya, boolean onGround, BlockState onState, BlockPos pos) {
+         if (!this.isInWater()) {
+-            this.updateFluidInteraction();
++            this.updateFluidInteraction(); // TODO: prior to 26.1-snapshot-8 we called our patched in method 'this.updateInWaterStateAndDoWaterCurrentPushing(false)'
+         }
+ 
+         if (this.level() instanceof ServerLevel level && onGround && this.fallDistance > 0.0) {
 @@ -364,7 +_,8 @@
  
                  double scale = Math.min(0.2F + power / 15.0, 2.5);
@@ -66,16 +73,6 @@
      public boolean canBreatheUnderwater() {
          return this.is(EntityTypeTags.CAN_BREATHE_UNDER_WATER);
      }
-@@ -414,6 +_,9 @@
-                 }
-             }
- 
-+            int airSupply = this.getAirSupply();
-+            net.neoforged.neoforge.common.CommonHooks.onLivingBreathe(this, level, airSupply - decreaseAirSupply(airSupply), increaseAirSupply(airSupply) - airSupply);
-+            if (false) // Neo: Handled in CommonHooks#onLivingBreathe(LivingEntity, int, int)
-             if (this.isEyeInFluid(FluidTags.WATER)
-                 && !level.getBlockState(BlockPos.containing(this.getX(), this.getEyeY(), this.getZ())).is(Blocks.BUBBLE_COLUMN)) {
-                 boolean canDrownInWater = !this.canBreatheUnderwater()
 @@ -763,7 +_,11 @@
          } else {
              ItemEntity entity = this.createItemStackToDrop(itemStack, randomly, thrownFromHand);
@@ -222,7 +219,7 @@
              if (damage < 0.0F) {
                  damage = 0.0F;
              }
-@@ -1181,20 +_,29 @@
+@@ -1181,24 +_,38 @@
              if (Float.isNaN(damage) || Float.isInfinite(damage)) {
                  damage = Float.MAX_VALUE;
              }
@@ -241,20 +238,29 @@
 +                this.damageContainers.peek().setReduction(net.neoforged.neoforge.common.damagesource.DamageContainer.Reduction.INVULNERABILITY, this.lastHurt);
                  this.actuallyHurt(level, source, damage - this.lastHurt);
 -                this.lastHurt = damage;
-+                // lastHurt, in both blocks, needs to always be set to the value of `damage` since it is pre-reduction. Using a post reduction value invalidates iframes.
-+                // Since we're in the "damage while invuln is active" block, we need to make sure we don't reduce the lastHurt amount.
-+                this.lastHurt = java.lang.Math.max(this.lastHurt, damage);
++                // Vanilla updates lastHurt to the local var `damage`, but we throw an event in actuallyHurt that might mess with the damage.
++                // Also, since we're in the "damage while invuln is active" block, we need to make sure we don't reduce the lastHurt amount.
++                this.lastHurt = java.lang.Math.max(this.lastHurt, this.damageContainers.peek().getInflictedDamage());
 +                this.invulnerableTime = this.damageContainers.peek().getPostAttackInvulnerabilityTicks();
                  tookFullDamage = false;
              } else {
 -                this.lastHurt = damage;
 -                this.invulnerableTime = 20;
                  this.actuallyHurt(level, source, damage);
-+                this.lastHurt = damage;
++                this.lastHurt = this.damageContainers.peek().getInflictedDamage();
 +                this.invulnerableTime = this.damageContainers.peek().getPostAttackInvulnerabilityTicks();
                  this.hurtDuration = 10;
                  this.hurtTime = this.hurtDuration;
              }
+ 
++            // Neo: Note that we don't update the local tookFullDamage.
++            //      Its name doesn't really mean that, and it is instead used to track if we're inside the invuln block above.
++            //      Also, we need to update the `damage` local with the post-Pre-event value.
++            damage = this.damageContainers.peek().getInflictedDamage();
++
+             this.resolveMobResponsibleForDamage(source);
+             this.resolvePlayerResponsibleForDamage(source);
+             if (tookFullDamage) {
 @@ -1267,6 +_,10 @@
                  CriteriaTriggers.PLAYER_HURT_ENTITY.trigger(sourcePlayer, this, source, damage, damage, blocked);
              }
@@ -547,15 +553,6 @@
      }
  
      protected float getWaterSlowDown() {
-@@ -2372,7 +_,7 @@
-     }
- 
-     protected boolean shouldTravelInFluid(FluidState fluidState) {
--        return (this.isInWater() || this.isInLava()) && this.isAffectedByFluids() && !this.canStandOnFluid(fluidState);
-+        return (this.isInWater() || this.isInLava() || this.isInFluidType(fluidState)) && this.isAffectedByFluids() && !this.canStandOnFluid(fluidState);
-     }
- 
-     protected void travelFlying(Vec3 input, float speed) {
 @@ -2397,7 +_,7 @@
  
      private void travelInAir(Vec3 input) {
@@ -565,21 +562,22 @@
          float friction = blockFriction * 0.91F;
          Vec3 movement = this.handleRelativeFrictionAndCalculateMovement(input, blockFriction);
          double movementY = movement.y;
-@@ -2424,10 +_,13 @@
+@@ -2420,7 +_,15 @@
+         }
+     }
+ 
++    /**
++     * @deprecated Neo: use {@link #travelInFluid(Vec3, FluidState)} instead
++     */
++    @Deprecated
+     private void travelInFluid(Vec3 input) {
++        travelInFluid(input, net.minecraft.world.level.material.Fluids.EMPTY.defaultFluidState());
++    }
++
++    private void travelInFluid(Vec3 input, FluidState fluidState) {
          boolean isFalling = this.getDeltaMovement().y <= 0.0;
          double oldY = this.getY();
          double baseGravity = this.getEffectiveGravity();
-+        if (this.getFluidInteraction().isInFluidMatching(this, (entity, type, _) -> !type.isVanilla() && entity.moveInFluid(type, input, baseGravity))) {
-+            return;
-+        }
-         if (this.isInWater()) {
-             this.travelInWater(input, baseGravity, isFalling, oldY);
-             this.floatInWaterWhileRidden();
--        } else {
-+        } else if (this.isInLava()) { // Neo: only apply lava movement if the player is actually in lava and not another fluid
-             this.travelInLava(input, baseGravity, isFalling, oldY);
-         }
-     }
 @@ -2449,6 +_,7 @@
              slowDown = 0.96F;
          }
@@ -588,15 +586,6 @@
          this.moveRelative(speed, input);
          this.move(MoverType.SELF, this.getDeltaMovement());
          Vec3 ladderMovement = this.getDeltaMovement();
-@@ -2488,7 +_,7 @@
- 
-     private void floatInWaterWhileRidden() {
-         boolean canEntityFloatInWater = this.is(EntityTypeTags.CAN_FLOAT_WHILE_RIDDEN);
--        if (canEntityFloatInWater && this.isVehicle() && this.getFluidHeight(FluidTags.WATER) > this.getFluidJumpThreshold()) {
-+        if (canEntityFloatInWater && this.isVehicle() && this.getFluidInteraction().getMaxFluidHeightMatching(this, (_, type, _) -> type.getIsWaterLike()) > this.getFluidJumpThreshold()) {
-             this.setDeltaMovement(this.getDeltaMovement().add(0.0, 0.04F, 0.0));
-         }
-     }
 @@ -2622,7 +_,7 @@
              double xd = Mth.clamp(delta.x, -0.15F, 0.15F);
              double zd = Mth.clamp(delta.z, -0.15F, 0.15F);
@@ -614,27 +603,9 @@
                  if (changedItems == null) {
                      changedItems = Maps.newEnumMap(EquipmentSlot.class);
                  }
-@@ -2991,6 +_,10 @@
-         profiler.push("jump");
-         if (this.jumping && this.isAffectedByFluids()) {
-             double fluidHeight;
-+            net.neoforged.neoforge.fluids.FluidType fluidType = this.getFluidInteraction().getMaxHeightFluidType();
-+            if (!fluidType.isAir()) {
-+                fluidHeight = this.getFluidTypeHeight(fluidType);
-+            } else
-             if (this.isInLava()) {
-                 fluidHeight = this.getFluidHeight(FluidTags.LAVA);
-             } else {
-@@ -3001,15 +_,17 @@
-             double fluidJumpThreshold = this.getFluidJumpThreshold();
-             if (!inWaterAndHasFluidHeight || this.onGround() && !(fluidHeight > fluidJumpThreshold)) {
-                 if (!this.isInLava() || this.onGround() && !(fluidHeight > fluidJumpThreshold)) {
-+                    if (fluidType.isAir() || this.onGround() && !(fluidHeight > fluidJumpThreshold)) {
-                     if ((this.onGround() || inWaterAndHasFluidHeight && fluidHeight <= fluidJumpThreshold) && this.noJumpDelay == 0) {
-                         this.jumpFromGround();
+@@ -3006,10 +_,10 @@
                          this.noJumpDelay = 10;
                      }
-+                    } else this.jumpInFluid(fluidType);
                  } else {
 -                    this.jumpInLiquid(FluidTags.LAVA);
 +                    this.jumpInFluid(net.neoforged.neoforge.common.NeoForgeMod.LAVA_TYPE.value());

@@ -15,7 +15,6 @@ import net.neoforged.bus.api.ICancellableEvent;
 import net.neoforged.fml.LogicalSide;
 import net.neoforged.neoforge.common.NeoForge;
 import org.jetbrains.annotations.ApiStatus;
-import org.joml.Vector2ic;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -141,8 +140,6 @@ public abstract class InputEvent extends Event {
     public static class MouseScrollingEvent extends InputEvent implements ICancellableEvent {
         private final double scrollDeltaX;
         private final double scrollDeltaY;
-        private final int accumulatedScrollX;
-        private final int accumulatedScrollY;
         private final double mouseX;
         private final double mouseY;
         private final boolean leftDown;
@@ -150,11 +147,9 @@ public abstract class InputEvent extends Event {
         private final boolean rightDown;
 
         @ApiStatus.Internal
-        public MouseScrollingEvent(double scrollDeltaX, double scrollDeltaY, Vector2ic accumulatedScroll, boolean leftDown, boolean middleDown, boolean rightDown, double mouseX, double mouseY) {
+        public MouseScrollingEvent(double scrollDeltaX, double scrollDeltaY, boolean leftDown, boolean middleDown, boolean rightDown, double mouseX, double mouseY) {
             this.scrollDeltaX = scrollDeltaX;
             this.scrollDeltaY = scrollDeltaY;
-            this.accumulatedScrollX = accumulatedScroll.x();
-            this.accumulatedScrollY = accumulatedScroll.y();
             this.leftDown = leftDown;
             this.middleDown = middleDown;
             this.rightDown = rightDown;
@@ -174,22 +169,6 @@ public abstract class InputEvent extends Event {
          */
         public double getScrollDeltaY() {
             return this.scrollDeltaY;
-        }
-
-        /// Returns the integral horizontal scroll amount accumulated since the last scroll action
-        /// that resulted in a non-zero integral scroll amount.
-        ///
-        /// @return the accumulated integral horizontal scroll amount
-        public int getAccumulatedScrollX() {
-            return accumulatedScrollX;
-        }
-
-        /// Returns the integral vertical scroll amount accumulated since the last scroll action
-        /// that resulted in a non-zero integral scroll amount.
-        ///
-        /// @return the accumulated integral vertical scroll amount
-        public int getAccumulatedScrollY() {
-            return accumulatedScrollY;
         }
 
         /**

@@ -30,7 +30,6 @@ import net.neoforged.fml.ModLoader;
 import net.neoforged.fml.loading.progress.StartupNotificationManager;
 import net.neoforged.neoforge.common.CommonHooks;
 import net.neoforged.neoforge.common.CreativeModeTabRegistry;
-import net.neoforged.neoforge.common.tooltip.ItemTooltipHandler;
 import net.neoforged.neoforge.event.BlockEntityTypeAddBlocksEvent;
 import org.jetbrains.annotations.ApiStatus;
 import org.slf4j.Logger;
@@ -106,7 +105,6 @@ public class GameData {
             ModLoader.postEvent(new BlockEntityTypeAddBlocksEvent());
             CreativeModeTabRegistry.sortTabs();
             GameRuleCategory.registerModdedCategories();
-            ItemTooltipHandler.init();
         }
     }
 
