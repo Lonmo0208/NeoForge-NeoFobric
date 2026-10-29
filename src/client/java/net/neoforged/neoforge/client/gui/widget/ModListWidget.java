@@ -54,34 +54,60 @@ public class ModListWidget extends ObjectSelectionList<ModListWidget.ModEntry> {
     }
 
     public class ModEntry extends ObjectSelectionList.Entry<ModEntry> {
-        private final ModContainer container;
+        private final ModListScreen.ModRow row;
         private final ModListScreen parent;
 
-        ModEntry(ModContainer info, ModListScreen parent) {
-            this.container = info;
+        ModEntry(ModListScreen.ModRow row, ModListScreen parent) {
+            this.row = row;
             this.parent = parent;
         }
 
         @Override
         public Component getNarration() {
-            return Component.translatable("narrator.select", container.getModInfo().getDisplayName());
+            return Component.translatable("narrator.select", row.displayName());
         }
 
         @Override
         public void extractContent(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, boolean hovered, float partialTick) {
-            Component name = Component.literal(stripControlCodes(container.getModInfo().getDisplayName()));
-            Component version = Component.literal(stripControlCodes(MavenVersionTranslator.artifactVersionToString(container.getModInfo().getVersion())));
-            VersionChecker.CheckResult vercheck = VersionChecker.getResult(container.getModInfo());
+            Component name = Component.literal(stripControlCodes(row.displayName()));
+            Component version = Component.literal(stripControlCodes(row.version()));
             int left = getContentX();
             int top = getContentY();
             Font font = this.parent.getFontRenderer();
             guiGraphics.text(font, Language.getInstance().getVisualOrder(FormattedText.composite(font.substrByWidth(name, listWidth))), left + 3, top + 2, 0xFFFFFFFF, false);
-            guiGraphics.text(font, Language.getInstance().getVisualOrder(FormattedText.composite(font.substrByWidth(version, listWidth))), left + 3, top + 2 + font.lineHeight, 0xFFCCCCCC, false);
-            if (vercheck.status().shouldDraw()) {
-                //TODO: Consider adding more icons for visualization
-                int entryHeight = getContentHeight();
-                guiGraphics.blit(RenderPipelines.GUI_TEXTURED, VERSION_CHECK_ICONS, getX() + width - 12, top + entryHeight / 4, vercheck.status().getSheetOffset() * 8, (vercheck.status().isAnimated() && ((System.currentTimeMillis() / 800 & 1)) == 1) ? 8 : 0, 8, 8, 64, 16);
+            var versionLine = Language.getInstance().getVisualOrder(FormattedText.composite(font.substrByWidth(version, listWidth)));
+            guiGraphics.text(font, versionLine, left + 3, top + 2 + font.lineHeight, 0xFFCCCCCC, false);
+            // Which loader a row's mod came from. Fabric mods are contributed by the bridge and would
+            // otherwise look exactly like FML's own.
+            drawLoaderChip(guiGraphics, font, left + 3 + font.width(versionLine) + 5, top + 2 + font.lineHeight, row.fabric());
+            if (!row.fabric()) {
+                VersionChecker.CheckResult vercheck = VersionChecker.getResult(row.container().getModInfo());
+                if (vercheck.status().shouldDraw()) {
+                    //TODO: Consider adding more icons for visualization
+                    int entryHeight = getContentHeight();
+                    guiGraphics.blit(RenderPipelines.GUI_TEXTURED, VERSION_CHECK_ICONS, getX() + width - 12, top + entryHeight / 4, vercheck.status().getSheetOffset() * 8, (vercheck.status().isAnimated() && ((System.currentTimeMillis() / 800 & 1)) == 1) ? 8 : 0, 8, 8, 64, 16);
+                }
             }
+        }
+
+        /** A dark chip with a 1px brand-coloured border and brand-coloured text, drawn from primitives. */
+        private void drawLoaderChip(GuiGraphicsExtractor graphics, Font font, int x, int y, boolean fabric) {
+            String label = fabric ? "Fabric" : "NeoForge";
+            int color = fabric ? 0xFFDBC1A4 : 0xFFFFA033;
+            int width = font.width(label);
+            int left = x - 2;
+            int top = y - 1;
+            int right = x + width + 2;
+            int bottom = y + font.lineHeight;
+            if (right > getContentRight()) {
+                return; // Not enough room next to the version; the chip is decoration, not data.
+            }
+            graphics.fill(left, top, right, bottom, 0xC0181818);
+            graphics.fill(left, top, right, top + 1, color);
+            graphics.fill(left, bottom - 1, right, bottom, color);
+            graphics.fill(left, top, left + 1, bottom, color);
+            graphics.fill(right - 1, top, right, bottom, color);
+            graphics.text(font, label, x, y, color);
         }
 
         @Override
@@ -107,11 +133,19 @@ public class ModListWidget extends ObjectSelectionList<ModListWidget.ModEntry> {
         }
 
         public IModInfo getInfo() {
-            return container.getModInfo();
+            return row.container().getModInfo();
         }
 
         public ModContainer getContainer() {
-            return container;
+            return row.container();
+        }
+
+        public ModListScreen.ModRow getRow() {
+            return row;
+        }
+
+        public String getId() {
+            return row.id();
         }
     }
 }

@@ -70,9 +70,20 @@ public class ModListScreen extends Screen {
         return StringUtil.stripColor(value);
     }
 
+    /**
+     * One row of the mod list: either an FML mod, or a mod another loader's bridge contributed (the
+     * bridge publishes them in {@code .neofobric/mods-menu.json}, read by {@link ModListContributions}).
+     * Fabric rows have no FML container - the synthetic one keeps the selection and configuration paths
+     * working - so everything the screen shows about them comes from the manifest.
+     */
+    public record ModRow(ModContainer container, boolean fabric, String id, String displayName, String version,
+            @Nullable Component authors, @Nullable Component description, @Nullable Component license,
+            @Nullable String website, @Nullable String bundledBy) {
+    }
+
     private static final Logger LOGGER = LogManager.getLogger();
 
-    private enum SortType implements Comparator<ModContainer> {
+    private enum SortType implements Comparator<ModRow> {
         NORMAL,
         A_TO_Z {
             @Override
@@ -94,9 +105,9 @@ public class ModListScreen extends Screen {
         }
 
         @Override
-        public int compare(ModContainer o1, ModContainer o2) {
-            String name1 = stripControlCodes(o1.getModInfo().getDisplayName()).toLowerCase(Locale.ROOT);
-            String name2 = stripControlCodes(o2.getModInfo().getDisplayName()).toLowerCase(Locale.ROOT);
+        public int compare(ModRow o1, ModRow o2) {
+            String name1 = stripControlCodes(o1.displayName()).toLowerCase(Locale.ROOT);
+            String name2 = stripControlCodes(o2.displayName()).toLowerCase(Locale.ROOT);
             return compare(name1, name2);
         }
 
@@ -113,8 +124,8 @@ public class ModListScreen extends Screen {
     private InfoPanel modInfo;
     private ModListWidget.ModEntry selected = null;
     private int listWidth;
-    private List<ModContainer> mods;
-    private final List<ModContainer> unsortedMods;
+    private List<ModRow> mods;
+    private final List<ModRow> unsortedMods;
     private Button configButton, openModsFolderButton, doneButton;
 
     private int buttonMargin = 1;
@@ -129,8 +140,30 @@ public class ModListScreen extends Screen {
     public ModListScreen(Screen parentScreen) {
         super(Component.translatable("fml.menu.mods.title"));
         this.parentScreen = parentScreen;
-        this.unsortedMods = Collections.unmodifiableList(ModList.get().getSortedMods());
+        this.unsortedMods = buildRows();
         this.mods = this.unsortedMods;
+    }
+
+    private static List<ModRow> buildRows() {
+        var rows = new ArrayList<ModRow>();
+        var fmlIds = new java.util.HashSet<String>();
+        for (var mod : ModList.get().getSortedMods()) {
+            var info = mod.getModInfo();
+            fmlIds.add(info.getModId());
+            rows.add(new ModRow(mod, false, info.getModId(), info.getDisplayName(),
+                    MavenVersionTranslator.artifactVersionToString(info.getVersion()), null, null, null, null, null));
+        }
+        // Fabric mods are not part of FML's list - the bridge carries their metadata in a manifest.
+        for (var contributed : ModListContributions.contributions()) {
+            if (!fmlIds.add(contributed.id())) {
+                continue;
+            }
+            rows.add(new ModRow(net.neoforged.neoforge.common.FabricConfigHooks.containerForModId(contributed.id()), true,
+                    contributed.id(), contributed.displayName().getString(), contributed.version(),
+                    contributed.authors(), contributed.description(), contributed.license(), contributed.website(),
+                    contributed.bundledBy()));
+        }
+        return Collections.unmodifiableList(rows);
     }
 
     class InfoPanel extends ScrollPanel {
@@ -239,7 +272,7 @@ public class ModListScreen extends Screen {
         public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
             final Style component = findTextLine((int) event.x(), (int) event.y());
             if (component != null && component.getClickEvent() != null) {
-                defaultHandleGameClickEvent(component.getClickEvent(), minecraft, ModListScreen.this);
+                defaultHandleClickEvent(component.getClickEvent(), minecraft, ModListScreen.this);
                 return true;
             }
             return super.mouseClicked(event, doubleClick);
@@ -257,8 +290,8 @@ public class ModListScreen extends Screen {
     @Override
     public void init() {
         for (var mod : mods) {
-            listWidth = Math.max(listWidth, getFontRenderer().width(mod.getModInfo().getDisplayName()) + 10);
-            listWidth = Math.max(listWidth, getFontRenderer().width(MavenVersionTranslator.artifactVersionToString(mod.getModInfo().getVersion())) + 5);
+            listWidth = Math.max(listWidth, getFontRenderer().width(stripControlCodes(mod.displayName())) + 10);
+            listWidth = Math.max(listWidth, getFontRenderer().width(mod.version()) + 5);
         }
         listWidth = Math.max(Math.min(listWidth, width / 3), 100);
         listWidth += listWidth % numButtons != 0 ? (numButtons - listWidth % numButtons) : 0;
@@ -326,19 +359,20 @@ public class ModListScreen extends Screen {
             mods.sort(sortType);
             modList.refreshList();
             if (selected != null) {
-                selected = modList.children().stream().filter(e -> e.getInfo() == selected.getInfo()).findFirst().orElse(null);
+                String selectedId = selected.getId();
+                selected = modList.children().stream().filter(e -> e.getId().equals(selectedId)).findFirst().orElse(null);
                 updateCache();
             }
             sorted = true;
         }
     }
 
-    public <T extends ObjectSelectionList.Entry<T>> void buildModList(Consumer<T> modListViewConsumer, Function<ModContainer, T> newEntry) {
+    public <T extends ObjectSelectionList.Entry<T>> void buildModList(Consumer<T> modListViewConsumer, Function<ModRow, T> newEntry) {
         mods.forEach(mod -> modListViewConsumer.accept(newEntry.apply(mod)));
     }
 
     private void reloadMods() {
-        this.mods = this.unsortedMods.stream().filter(mi -> stripControlCodes(mi.getModInfo().getDisplayName()).toLowerCase(Locale.ROOT).contains(search.getValue().toLowerCase(Locale.ROOT))).collect(Collectors.toCollection(ArrayList::new));
+        this.mods = this.unsortedMods.stream().filter(mi -> stripControlCodes(mi.displayName()).toLowerCase(Locale.ROOT).contains(search.getValue().toLowerCase(Locale.ROOT))).collect(Collectors.toCollection(ArrayList::new));
         lastFilterText = search.getValue();
     }
 
@@ -379,7 +413,37 @@ public class ModListScreen extends Screen {
             this.modInfo.clearInfo();
             return;
         }
-        IModInfo selectedMod = selected.getInfo();
+        final ModRow row = selected.getRow();
+        if (row.fabric()) {
+            // A contributed row has no FML mod info to read: everything known about it is in the
+            // manifest, and its configuration screen is not reachable through FML's extension point.
+            this.configButton.active = false;
+            List<String> lines = new ArrayList<>();
+            lines.add(row.displayName());
+            if (!row.version().isBlank()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.version", row.version()));
+            }
+            lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.loader", "Fabric"));
+            if (row.authors() != null && !row.authors().getString().isBlank()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.authors", row.authors().getString()).replace("\r\n", "\n"));
+            }
+            if (row.license() != null && !row.license().getString().isBlank()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.license", row.license().getString()).replace("\r\n", "\n"));
+            }
+            if (row.website() != null && !row.website().isBlank()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.displayurl", row.website()).replace("\r\n", "\n"));
+            }
+            if (row.bundledBy() != null && !row.bundledBy().isBlank()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.bundledby", row.bundledBy()).replace("\r\n", "\n"));
+            }
+            lines.add(null);
+            if (row.description() != null && !row.description().getString().isBlank()) {
+                lines.add(row.description().getString());
+            }
+            this.modInfo.setInfo(lines, null, new Size2i(0, 0));
+            return;
+        }
+        IModInfo selectedMod = row.container().getModInfo();
         this.configButton.active = IConfigScreenFactory.getForMod(selectedMod).isPresent();
         List<String> lines = new ArrayList<>();
         VersionChecker.CheckResult vercheck = VersionChecker.getResult(selectedMod);
