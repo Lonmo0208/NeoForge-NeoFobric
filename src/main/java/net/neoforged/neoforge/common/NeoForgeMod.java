@@ -623,6 +623,9 @@ public class NeoForgeMod {
 
     public void preInit(FMLCommonSetupEvent evt) {
         VersionChecker.startVersionCheck();
+        // NeoFobric: every registry NeoForge owns exists by now (the register events have run), and Fabric's
+        // registry sync wants its attributed copy of them before a server starts - see the method's note.
+        net.neoforged.fabricbridge.FabricBridgeHooks.markBuiltInRegistriesSynced();
     }
 
     public void loadComplete(FMLLoadCompleteEvent event) {}

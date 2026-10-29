@@ -10,7 +10,7 @@
          return result;
      }
  
-@@ -52,22 +_,101 @@
+@@ -52,22 +_,108 @@
          scanDirectory(manager, FileToIdConverter.registry(registryKey), ops, codec, result);
      }
  
@@ -99,6 +99,13 @@
 +        for (Entry<Identifier, JsonElement> entry : jsons.entrySet()) {
 +            Identifier id = entry.getKey();
 +            JsonElement json = entry.getValue();
++
++            // NeoFobric: Fabric data files carry fabric:load_conditions, and this copy of the scan is not
++            // wrapped by fabric-resource-conditions-api-v1 (it hooks scanDirectory only): ask the bridge.
++            if (!net.neoforged.neoforge.common.FabricResourceConditions.allow(json, lister.prefix(), id, ops)) {
++                LOGGER.debug("Skipping loading data file '{}' as its Fabric conditions were not met", id);
++                continue;
++            }
 +
 +            conditionalCodec.parse(ops, json).ifSuccess(parsed -> {
 +                if (parsed.isEmpty()) {

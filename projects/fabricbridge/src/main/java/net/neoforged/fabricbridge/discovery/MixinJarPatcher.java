@@ -191,16 +191,14 @@ public final class MixinJarPatcher {
                     "(Lnet/minecraft/core/RegistryAccess;Lnet/neoforged/neoforge/network/connection/ConnectionType;)"),
             // fabric-gametest-api-v1 starts its server-side game tests from a HEAD injection into
             // RegistryDataLoader's four-argument load(...): it records there whether the load carries the test
-            // registries, and its freeze-time hook then registers the tests into them. NeoForge moved the
-            // asynchronous structure into the five-argument overload (the extra list carries the static-layer
-            // tags for condition contexts) and left the four-argument one as a forwarder, so that HEAD never
-            // ran on the live path, the flag stayed false, and the test server ran vanilla's single smoke test
-            // and nothing else - with no warning anywhere. Pointing the injection at the overload that actually
-            // runs fixes it; the handler's missing parameter is appended by extendInjectorHandlerParams.
+            // registries, and its freeze-time hook then registers the tests into them. 26.1.2 keeps that
+            // four-argument method as the live entry point, so the annotation resolves as written and must
+            // not be moved to 26.2's wider overload (which does not exist here) - a move makes the mixin
+            // silently skip, and the test server then runs vanilla's single smoke test and nothing else.
             "net/fabricmc/fabric/mixin/gametest/RegistryDataLoaderMixin",
             Map.of(
-                    "(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;)",
-                    "(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;Ljava/util/List;)"),
+                    "(Ljava/util/List;Ljava/util/Map;Ljava/lang/Void;)",
+                    "(ZLjava/util/List;Ljava/util/Map;Ljava/lang/Void;)"),
             // fabric-transfer-api-v1 keeps a write's side effects off the world until its transaction commits by
             // wrapping the setChanged() call inside setItem(slot, stack) and skipping it while a write is in
             // flight - its VanillaStorageTests asserts an uncommitted insert schedules no comparator update.
@@ -2696,8 +2694,13 @@ public final class MixinJarPatcher {
      *
      * @return the class bytes with the injections retargeted, or the original when nothing needed to change
      */
-    private static byte[] retargetItemStackTooltipInjections(byte[] classBytes, String entryName) {
+    private static byte[] retargetItemStackTooltipInjections(byte[] classBytes, String entryName,
+            java.util.function.Function<String, byte[]> resolver) {
         if (!"net/fabricmc/fabric/mixin/item/ItemStackMixin".equals(entryName.replace(".class", ""))) {
+            return null;
+        }
+        if (!hasSplitItemStackTooltip(resolver)) {
+            // 26.1.2: the vanilla method is still there, so the annotations already name it.
             return null;
         }
         ClassNode node;
@@ -3849,6 +3852,41 @@ public final class MixinJarPatcher {
     }
 
     /**
+     * {@return whether NeoForge's ItemStack split its tooltip body into the components/tail methods}
+     *
+     * <p>26.2 did; 26.1.2 still has the vanilla single method. The two rewrites below exist only for the
+     * split shape, and running them against the unsplit method sends Fabric's scan and injections at a
+     * method that does not exist ("No addDetailsToTooltip method in ItemStack", and injections that find
+     * no target at all).
+     */
+    private static boolean hasSplitItemStackTooltip(java.util.function.Function<String, byte[]> resolver) {
+        var cached = splitItemStackTooltip;
+        if (cached != null) {
+            return cached;
+        }
+        var split = false;
+        try {
+            var bytes = resolver.apply("net/minecraft/world/item/ItemStack");
+            if (bytes != null) {
+                var node = new ClassNode();
+                new ClassReader(bytes).accept(node, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+                for (var method : node.methods) {
+                    if ("addDetailsToTooltipComponents".equals(method.name)) {
+                        split = true;
+                        break;
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not read ItemStack to tell the tooltip shape", t);
+        }
+        splitItemStackTooltip = split;
+        return split;
+    }
+
+    private static volatile Boolean splitItemStackTooltip;
+
+    /**
      * Points Fabric API's tooltip-order scan at the method NeoForge moved the list into.
      *
      * <p>{@code VanillaTooltipProviderOrder} reads the {@code DataComponents} field references out of
@@ -3861,8 +3899,13 @@ public final class MixinJarPatcher {
      * "Found no component types in appendTooltip method". The component method still carries the exact
      * vanilla order - its list is the same one the registry appends - so the scan is pointed at it.
      */
-    private static byte[] retargetVanillaTooltipOrderScan(byte[] classBytes, String entryName) {
+    private static byte[] retargetVanillaTooltipOrderScan(byte[] classBytes, String entryName,
+            java.util.function.Function<String, byte[]> resolver) {
         if (!FABRIC_TOOLTIP_ORDER_SCANNER.equals(entryName.replace(".class", ""))) {
+            return null;
+        }
+        if (!hasSplitItemStackTooltip(resolver)) {
+            // 26.1.2: ItemStack still owns addDetailsToTooltip, so the scan resolves as written.
             return null;
         }
         ClassNode node;
@@ -5766,7 +5809,7 @@ public final class MixinJarPatcher {
                 }
                 // Runs for plain classes too: the tooltip-order scanner is an ordinary implementation class,
                 // not a mixin.
-                var orderScanRetargeted = retargetVanillaTooltipOrderScan(versionMoved, entry.getName());
+                var orderScanRetargeted = retargetVanillaTooltipOrderScan(versionMoved, entry.getName(), resolver);
                 if (orderScanRetargeted != null) {
                     versionMoved = orderScanRetargeted;
                     patched.put(entry.getName(), versionMoved);
@@ -5806,7 +5849,7 @@ public final class MixinJarPatcher {
                     versionMoved = blockStateModelTypesRedirected;
                     patched.put(entry.getName(), versionMoved);
                 }
-                var tooltipInjectionsRetargeted = retargetItemStackTooltipInjections(versionMoved, entry.getName());
+                var tooltipInjectionsRetargeted = retargetItemStackTooltipInjections(versionMoved, entry.getName(), resolver);
                 if (tooltipInjectionsRetargeted != null) {
                     versionMoved = tooltipInjectionsRetargeted;
                     patched.put(entry.getName(), versionMoved);

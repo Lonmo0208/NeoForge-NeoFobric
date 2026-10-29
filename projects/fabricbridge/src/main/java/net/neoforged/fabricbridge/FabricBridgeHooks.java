@@ -853,8 +853,53 @@ public final class FabricBridgeHooks {
             dropUnregisteredIntrusiveHolders();
             fabricWindow.freeze().run();
             LOGGER.info("[NeoFobric] Registries frozen after the second bootstrap");
+            markBuiltInRegistriesSynced();
         } catch (Throwable t) {
             LOGGER.error("[NeoFobric] Failed to freeze the registries after the second bootstrap", t);
+        }
+    }
+
+    /**
+     * NeoFobric: gives every built-in registry Fabric's {@code SYNCED} attribute.
+     *
+     * <p>Fabric's registry sync only remaps and ships registries carrying that attribute, and it applies it
+     * to the registries created through its own builder. A registry NeoForge creates with its
+     * {@code RegistryBuilder} - the codec-type registries such as {@code neoforge:fluid_ingredient_type} -
+     * never gets it, so Fabric's consistency check (the one its registry-sync testmod runs when the server
+     * starts) fails with "Registry ... is not marked as SYNCED", and a Fabric mod asking the sync layer about
+     * such a registry is told it is not synced. Both loaders ship these registries to the client either way,
+     * so the attribute states what is already true.
+     */
+    public static void markBuiltInRegistriesSynced() {
+        try {
+            var loader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
+            var registries = Class.forName("net.minecraft.core.registries.BuiltInRegistries", false, loader)
+                    .getField("REGISTRY")
+                    .get(null);
+            var registryClass = Class.forName("net.minecraft.core.Registry", false, loader);
+            var holder = Class.forName("net.fabricmc.fabric.api.event.registry.RegistryAttributeHolder", false, loader);
+            var attribute = Class.forName("net.fabricmc.fabric.api.event.registry.RegistryAttribute", false, loader);
+            var synced = attribute.getField("SYNCED").get(null);
+            var getHolder = holder.getMethod("get", registryClass);
+            var hasAttribute = holder.getMethod("hasAttribute", attribute);
+            var addAttribute = holder.getMethod("addAttribute", attribute);
+            var marked = 0;
+            for (var registry : (Iterable<?>) registries) {
+                if (!registryClass.isInstance(registry)) {
+                    continue;
+                }
+                var attributes = getHolder.invoke(null, registry);
+                if (!(Boolean) hasAttribute.invoke(attributes, synced)) {
+                    addAttribute.invoke(attributes, synced);
+                    marked++;
+                }
+            }
+            if (marked > 0) {
+                LOGGER.info("[NeoFobric] Marked {} built-in registr{} as synced for Fabric's registry sync",
+                        marked, marked == 1 ? "y" : "ies");
+            }
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not mark the built-in registries as synced", t);
         }
     }
 
