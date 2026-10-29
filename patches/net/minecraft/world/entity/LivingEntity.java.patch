@@ -117,20 +117,30 @@
          return visibilityPercent;
      }
  
-@@ -954,9 +_,14 @@
+@@ -954,9 +_,25 @@
          } else if (this.activeEffects.isEmpty()) {
              return false;
          } else {
 -            Map<Holder<MobEffect>, MobEffectInstance> copy = Maps.newHashMap(this.activeEffects);
--            this.activeEffects.clear();
++            // NeoFobric: the vanilla-shaped Map.clear() stays on the live path. Fabric's ALLOW_EARLY_REMOVE
++            // wrap replaces exactly that call: it clears the map and re-adds the effects its own event
++            // refuses to drop (milk is the case that matters - it must keep the effects a listener vetoes).
++            // Without the call the wrap never applies, every effect is cleared, and Fabric's effect events
++            // stop firing. NeoForge's own veto then runs over what Fabric allowed, and re-adds those.
++            Map<Holder<MobEffect>, MobEffectInstance> before = new java.util.HashMap<>(this.activeEffects);
+             this.activeEffects.clear();
 -            this.onEffectsRemoved(copy.values());
-+            Map<Holder<MobEffect>, MobEffectInstance> map = new java.util.HashMap<>(this.activeEffects.size());
-+            for (Map.Entry<Holder<MobEffect>, MobEffectInstance> entry : this.activeEffects.entrySet()) {
-+                if (!net.neoforged.neoforge.event.EventHooks.onEffectRemoved(this, entry.getValue())) {
-+                    map.put(entry.getKey(), entry.getValue());
++            Map<Holder<MobEffect>, MobEffectInstance> map = new java.util.HashMap<>(before.size());
++            before.forEach((key, instance) -> {
++                if (this.activeEffects.containsKey(key)) {
++                    return; // Fabric's event kept it
 +                }
-+            }
-+            map.keySet().forEach(this.activeEffects::remove);
++                if (net.neoforged.neoforge.event.EventHooks.onEffectRemoved(this, instance)) {
++                    this.activeEffects.put(key, instance); // NeoForge's event kept it
++                } else {
++                    map.put(key, instance);
++                }
++            });
 +            this.onEffectsRemoved(map.values());
              return true;
          }

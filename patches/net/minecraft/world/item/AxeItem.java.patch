@@ -26,7 +26,7 @@
              if (newBlock.isEmpty()) {
                  return InteractionResult.PASS;
              } else {
-@@ -91,19 +_,29 @@
+@@ -91,19 +_,37 @@
              && !player.isSecondaryUseActive();
      }
  
@@ -38,12 +38,19 @@
 +    private static final ThreadLocal<UseOnContext> NEOFOBRIC_USE_CONTEXT = new ThreadLocal<>();
 +
      private Optional<BlockState> evaluateNewBlockState(Level level, BlockPos pos, @Nullable Player player, BlockState oldState) {
--        Optional<BlockState> strippedBlock = this.getStripped(oldState);
 +        return evaluateNewBlockState(level, pos, player, oldState, NEOFOBRIC_USE_CONTEXT.get());
 +    }
 +
 +    private Optional<BlockState> evaluateNewBlockState(Level level, BlockPos pos, @Nullable Player player, BlockState oldState, @Nullable UseOnContext context) {
-+        Optional<BlockState> strippedBlock = Optional.ofNullable(oldState.getToolModifiedState(context, net.neoforged.neoforge.common.ItemAbilities.AXE_STRIP, false));
++        // NeoFobric: the vanilla-shaped getStripped(...) lookup stays on the live path before the platform's
++        // tool-modified one. A Fabric-side mixin wraps the Optional.map inside it to serve its strippable
++        // registry (the block a Fabric mod registered, with no axis to copy), and NeoForge's path alone would
++        // never call it - the strip then fell through to the platform lookup, which copies the pillar axis
++        // onto a target block that has none.
+         Optional<BlockState> strippedBlock = this.getStripped(oldState);
++        if (strippedBlock.isEmpty()) {
++            strippedBlock = Optional.ofNullable(oldState.getToolModifiedState(context, net.neoforged.neoforge.common.ItemAbilities.AXE_STRIP, false));
++        }
          if (strippedBlock.isPresent()) {
              level.playSound(player, pos, SoundEvents.AXE_STRIP, SoundSource.BLOCKS, 1.0F, 1.0F);
              return strippedBlock;

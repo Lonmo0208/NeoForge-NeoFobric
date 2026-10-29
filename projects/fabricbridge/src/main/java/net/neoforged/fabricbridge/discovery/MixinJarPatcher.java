@@ -3852,6 +3852,46 @@ public final class MixinJarPatcher {
     }
 
     /**
+     * Points Fabric's custom-fluid travel wrap at the overload that actually contains the lava call.
+     *
+     * <p>Fabric's {@code @WrapWithCondition} on {@code travelInLava} names its host with the bare selector
+     * {@code travelInFluid}; vanilla 26.1.2 has one such method, but NeoForge split it into a one-argument
+     * delegate and the {@code travelInFluid(Vec3, FluidState)} body. A name-only selector resolves to the
+     * delegate, where the wrapped call does not exist, so the injection silently did nothing and a modded
+     * fluid's own physics (gravity multiplier, slowdown, swim rules) never ran - the entity simply kept
+     * vanilla's non-water branch. Naming the two-argument overload puts the wrap back on the live body.
+     */
+    private static byte[] alignFluidTravelSelector(byte[] classBytes, String entryName) {
+        if (!"net/fabricmc/fabric/mixin/content/registry/fluid/LivingEntityMixin".equals(entryName.replace(".class", ""))) {
+            return null;
+        }
+        ClassNode node;
+        try {
+            node = new ClassNode();
+            new ClassReader(classBytes).accept(node, 0);
+        } catch (Throwable t) {
+            return null;
+        }
+        var changed = false;
+        for (var method : node.methods) {
+            for (var annotation : allAnnotationsOf(method)) {
+                if ("travelInFluid".equals(readStringValue(annotation, "method"))) {
+                    writeStringValue(annotation, "method",
+                            "travelInFluid(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/level/material/FluidState;)V");
+                    changed = true;
+                }
+            }
+        }
+        if (!changed) {
+            return null;
+        }
+        var writer = new ClassWriter(0);
+        node.accept(writer);
+        LOGGER.info("[NeoFobric] Pointed Fabric's custom-fluid travel wrap at the two-argument travelInFluid");
+        return writer.toByteArray();
+    }
+
+    /**
      * Adds the parameter 26.1.2's {@code lambda$load$2} captures in front of Fabric's gametest handler.
      *
      * <p>NeoForge's registry load carries {@code fromResources} into the freeze lambda, so the lambda takes
@@ -4457,7 +4497,13 @@ public final class MixinJarPatcher {
             // {@code fabric:remove} key. Dropping the whole mixin (which is what happens without this entry)
             // leaves the key unparsed: fabric-tag-api-v1's TagEntryRemovalTests then finds the tag exactly as
             // written, with the entries that were supposed to disappear still in it.
-            "net/fabricmc/fabric/mixin/tag/TagFileMixin");
+            "net/fabricmc/fabric/mixin/tag/TagFileMixin",
+            // fabric-recipe-api-v1's IngredientMixin installs Fabric's custom-ingredient CODEC through
+            // injections into Ingredient's static initialiser. Its FabricIngredient interface collides with
+            // the members NeoForge's Ingredient already carries, so without this entry the whole mixin is
+            // dropped - and then a recipe file written in Fabric's format ("fabric:type") never parses:
+            // fabric-recipe-api-v1's shapeless-match test looks its recipe up and finds nothing.
+            "net/fabricmc/fabric/mixin/recipe/ingredient/IngredientMixin");
 
     /**
      * Injector handlers that must never register, named per allowlisted mixin class.
@@ -4611,13 +4657,22 @@ public final class MixinJarPatcher {
      * class. Handlers are registrations Mixin scans for, never code the target calls, so removing one
      * only means that injection does not happen.
      */
-    private static byte[] stripListedInjectorHandlers(byte[] classBytes, String entryName) {
+    private static byte[] stripListedInjectorHandlers(byte[] classBytes, String entryName,
+            java.util.function.Function<String, byte[]> resolver) {
         if (!entryName.endsWith(".class")) {
             return null;
         }
         var internalName = entryName.substring(0, entryName.length() - ".class".length());
         var handlerNames = STRIP_HANDLER_METHODS.get(internalName);
         if (handlerNames == null) {
+            return null;
+        }
+        // 26.1.2's entity physics reads its fluid behaviour from vanilla's tag-keyed interaction, not from
+        // NeoForge fluid types, so Fabric's fluid handlers are the only thing that applies a modded fluid's
+        // behaviour there. On 26.2 the platform builds FluidTypes out of the same registry and these handlers
+        // conflicted with it; only then are they redundant.
+        if ((internalName.endsWith("/fluid/EntityMixin") || internalName.endsWith("/fluid/LivingEntityMixin"))
+                && !platformFluidInteractionUsesFluidTypes(resolver)) {
             return null;
         }
         ClassNode node;
@@ -4639,6 +4694,58 @@ public final class MixinJarPatcher {
                 removed.size(), internalName, removed);
         return writeClass(node);
     }
+
+    /**
+     * {@return whether the platform's entity fluid interaction tracks fluids by NeoForge {@code FluidType}}
+     *
+     * <p>26.2 refactored {@code EntityFluidInteraction} to key its trackers by FluidType (and the entity code
+     * then asks the type for its behaviour), which is what made Fabric's tag-based fluid handlers redundant
+     * and conflicting. 26.1.2 still keys by fluid tag and never consults a FluidType in entity physics, so the
+     * handlers must stay - without them a modded fluid's float/drown/push behaviour is simply absent.
+     */
+    private static boolean platformFluidInteractionUsesFluidTypes(java.util.function.Function<String, byte[]> resolver) {
+        var cached = fluidTypeInteraction;
+        if (cached != null) {
+            return cached;
+        }
+        var uses = false;
+        try {
+            var bytes = resolver.apply("net/minecraft/world/entity/EntityFluidInteraction");
+            if (bytes != null) {
+                var node = new ClassNode();
+                new ClassReader(bytes).accept(node, 0);
+                for (var field : node.fields) {
+                    if (field.desc.contains("FluidType")) {
+                        uses = true;
+                        break;
+                    }
+                }
+                if (!uses) {
+                    for (var method : node.methods) {
+                        if (method.desc.contains("FluidType") || method.signature != null && method.signature.contains("FluidType")) {
+                            uses = true;
+                            break;
+                        }
+                        for (var insn = method.instructions.getFirst(); insn != null; insn = insn.getNext()) {
+                            if (insn instanceof MethodInsnNode call && call.owner.contains("fluids/FluidType")) {
+                                uses = true;
+                                break;
+                            }
+                        }
+                        if (uses) {
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not read EntityFluidInteraction to tell the fluid shape", t);
+        }
+        fluidTypeInteraction = uses;
+        return uses;
+    }
+
+    private static volatile Boolean fluidTypeInteraction;
 
     public static byte[] stripCollidingDuckMembers(byte[] classBytes, String entryName,
             java.util.function.Function<String, byte[]> targetBytecode) {
@@ -4683,8 +4790,8 @@ public final class MixinJarPatcher {
                 }
             }
         }
-        if (colliding.isEmpty() || colliding.size() == candidates.size()) {
-            // Nothing to strip, or nothing would survive - the wholesale drop stays the filter's job.
+        if (colliding.isEmpty()) {
+            // Nothing to strip - the wholesale drop stays the filter's job.
             return null;
         }
         node.methods.removeAll(colliding);
@@ -6021,6 +6128,10 @@ public final class MixinJarPatcher {
                 if (leadingFixed != null) {
                     source = leadingFixed;
                 }
+                var fluidSelectorFixed = alignFluidTravelSelector(source, entry.getName());
+                if (fluidSelectorFixed != null) {
+                    source = fluidSelectorFixed;
+                }
                 var retargeted = retargetStaleReturnOrdinals(source, entry.getName(), resolver);
                 if (retargeted != null) {
                     source = retargeted;
@@ -6034,7 +6145,7 @@ public final class MixinJarPatcher {
                 if (stripped != null) {
                     source = stripped;
                 }
-                var handlerStripped = stripListedInjectorHandlers(source, entry.getName());
+                        var handlerStripped = stripListedInjectorHandlers(source, entry.getName(), resolver);
                 if (handlerStripped != null) {
                     source = handlerStripped;
                 }
