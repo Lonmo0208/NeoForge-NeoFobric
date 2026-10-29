@@ -1,16 +1,21 @@
 --- a/net/minecraft/client/gui/render/GuiRenderer.java
 +++ b/net/minecraft/client/gui/render/GuiRenderer.java
-@@ -104,7 +_,8 @@
+@@ -104,7 +_,13 @@
      private final MultiBufferSource.BufferSource bufferSource;
      private final SubmitNodeCollector submitNodeCollector;
      private final FeatureRenderDispatcher featureRenderDispatcher;
 -    public final Map<Class<? extends PictureInPictureRenderState>, PictureInPictureRenderer<?>> pictureInPictureRenderers;
++    // NeoFobric: the vanilla-shaped picture-in-picture renderer map stays where vanilla had it. Fabric's
++    // rendering mixins register through it (@Shadow for some, the wrapped builder call for others) and
++    // preparePictureInPictureState falls back to it when no NeoForge pool matches the state. It is public
++    // through the access transformer, not through this patch.
++    private final Map<Class<? extends PictureInPictureRenderState>, PictureInPictureRenderer<?>> pictureInPictureRenderers;
 +    private final Map<Class<? extends PictureInPictureRenderState>, net.neoforged.neoforge.client.gui.PictureInPictureRendererPool<?>> pictureInPictureRendererPools;
 +    private final Set<PictureInPictureRenderState> pictureInPictureRenderStatesScratch = new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>();
      private @Nullable GuiItemAtlas itemAtlas;
      private int cachedGuiScale;
      private final CubeMap cubeMap = new CubeMap(Identifier.withDefaultNamespace("textures/gui/title/background/panorama"));
-@@ -118,19 +_,13 @@
+@@ -118,19 +_,19 @@
          MultiBufferSource.BufferSource bufferSource,
          SubmitNodeCollector submitNodeCollector,
          FeatureRenderDispatcher featureRenderDispatcher,
@@ -29,6 +34,12 @@
 -
 -        this.pictureInPictureRenderers = builder.buildOrThrow();
 +        this.pictureInPictureRendererPools = net.neoforged.neoforge.client.gui.PictureInPictureRendererPool.createPools(bufferSource, pipRendererFactories);
++        // NeoFobric: build the legacy map through the vanilla call shape on purpose. Fabric renderer
++        // mixins wrap this exact ImmutableMap.builder() call to register their own picture-in-picture
++        // renderers - Create's ponder scene, for one - and NeoForge's rework replaced the call, which
++        // silently dropped every such registration. NeoForge's own registrations keep using the pools
++        // above; preparePictureInPictureState falls back to this map for state classes no pool knows.
++        this.pictureInPictureRenderers = ImmutableMap.<Class<? extends PictureInPictureRenderState>, PictureInPictureRenderer<?>>builder().buildOrThrow();
      }
  
      public void endFrame() {
@@ -51,7 +62,7 @@
              if (this.bufferBuilder != null) {
                  this.recordMesh(this.bufferBuilder, this.previousPipeline, this.previousTextureSetup, this.previousScissorArea);
              }
-@@ -368,14 +_,31 @@
+@@ -368,14 +_,39 @@
  
      private void preparePictureInPicture() {
          int guiScale = Minecraft.getInstance().gameRenderer.getGameRenderState().windowRenderState.guiScale;
@@ -75,6 +86,14 @@
 +    private <T extends PictureInPictureRenderState> boolean preparePictureInPictureState(T picturesInPictureState, int guiScale, boolean firstPass) {
 +        var pool = (net.neoforged.neoforge.client.gui.PictureInPictureRendererPool<T>)this.pictureInPictureRendererPools.get(picturesInPictureState.getClass());
 +        if (pool == null) {
++            // NeoFobric: a state class no pool knows may still have a renderer from the vanilla-shaped
++            // map - Fabric mods register theirs by wrapping the ImmutableMap.builder() call in the
++            // constructor (see the field's comment). Prepare it exactly like vanilla did.
++            PictureInPictureRenderer<T> legacy = (PictureInPictureRenderer<T>)this.pictureInPictureRenderers.get(picturesInPictureState.getClass());
++            if (legacy != null) {
++                legacy.prepare(picturesInPictureState, this.renderState, guiScale);
++                return true;
++            }
 +            return false;
 +        }
 +        PictureInPictureRenderer<T> renderer = pool.get(picturesInPictureState, guiScale, firstPass);
@@ -101,12 +120,13 @@
          renderPass.setIndexBuffer(indexBuffer, indexType);
          renderPass.drawIndexed(draw.baseVertex, 0, draw.indexCount, 1);
      }
-@@ -587,7 +_,7 @@
+@@ -587,6 +_,9 @@
              this.itemAtlas = null;
          }
  
--        this.pictureInPictureRenderers.values().forEach(PictureInPictureRenderer::close);
 +        this.pictureInPictureRendererPools.values().forEach(net.neoforged.neoforge.client.gui.PictureInPictureRendererPool::close);
++        // NeoFobric: release the renderers Fabric mods registered through the vanilla-shaped map, the
++        // way vanilla's close() did.
+         this.pictureInPictureRenderers.values().forEach(PictureInPictureRenderer::close);
          this.guiProjectionMatrixBuffer.close();
  
-         for (MappableRingBuffer buffer : this.vertexBuffers.values()) {

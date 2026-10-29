@@ -28,6 +28,7 @@ import org.objectweb.asm.tree.MethodInsnNode;
  * If no methodName is passed, any method matching the described signature will be used as callable method.
  */
 public class ReplaceFieldWithGetterAccess extends SimpleClassProcessor {
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(ReplaceFieldWithGetterAccess.class);
     private final Map<String, String> fieldToMethod;
     private final Set<Target> targets;
     private final String className;
@@ -59,8 +60,16 @@ public class ReplaceFieldWithGetterAccess extends SimpleClassProcessor {
     private static void redirectFieldToMethod(ClassNode classNode, String fieldName, @Nullable String methodName) {
         var foundField = CoremodUtils.getFieldByName(classNode, fieldName);
 
-        if (!Modifier.isPrivate(foundField.access) || Modifier.isStatic(foundField.access)) {
-            throw new IllegalStateException("Field " + fieldName + " in " + classNode.name + " is not private and an instance field");
+        if (Modifier.isStatic(foundField.access)) {
+            throw new IllegalStateException("Field " + fieldName + " in " + classNode.name + " is not an instance field");
+        }
+        if (!Modifier.isPrivate(foundField.access)) {
+            // NeoFobric: a Fabric access widener can widen this field before this coremod runs
+            // (fabric-biome-api widens Biome.climateSettings, for example). The redirect below only needs
+            // the field to exist and the getter to return it, so a public field is still redirected - and
+            // refusing to run used to take the whole launch down with it.
+            LOGGER.debug("Field {} in {} was widened before this coremod ran; redirecting it to the getter anyway",
+                    fieldName, classNode.name);
         }
 
         String methodDescriptor = "()" + foundField.desc;

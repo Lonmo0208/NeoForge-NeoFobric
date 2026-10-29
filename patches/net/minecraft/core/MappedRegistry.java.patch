@@ -96,7 +96,7 @@
          return getValueFromNullable(result);
      }
  
-@@ -269,13 +_,23 @@
+@@ -269,13 +_,33 @@
          return Objects.requireNonNull(this.componentLookup, "Registry not frozen yet");
      }
  
@@ -109,6 +109,16 @@
 +            this.allTags = MappedRegistry.TagSet.unbound();
 +        }
 +        this.frozen = false;
++    }
++
++    /**
++     * {@return whether this registry is closed for writes} NeoFobric: needed by the code that runs a freeze
++     * pass over the built-in registries more than once (Fabric's registry sync re-runs
++     * {@code BuiltInRegistries.bootStrap()} after mod initialization) and has to tell "still open" from
++     * "closed already" to stay idempotent.
++     */
++    public boolean isFrozen() {
++        return this.frozen;
 +    }
 +
      @Override

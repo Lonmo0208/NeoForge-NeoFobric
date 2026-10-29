@@ -433,6 +433,19 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
     private static final Map<String, Set<String>> WIDEN_PRIVATE_MEMBERS = buildPinnedWidenMembers();
 
     /**
+     * Private fields NeoForge's own coremods own.
+     *
+     * <p>{@code ReplaceFieldWithGetterAccess} rewrites the field's internal reads into getter calls and
+     * refuses to run unless the field is private; widening one (the access scan does that for any member a
+     * Fabric mixin names) turns every launch into "Field settings ... is not private and an instance field".
+     * A Fabric mixin that touches these classes does not need the field public - the getter is the API.
+     */
+    private static final Map<String, Set<String>> COREMOD_PRIVATE_FIELDS = Map.of(
+            "net/minecraft/world/level/levelgen/structure/Structure", Set.of("settings"),
+            "net/minecraft/world/level/biome/Biome", Set.of("climateSettings", "specialEffects"),
+            "net/minecraft/world/level/block/FlowerPotBlock", Set.of("potted"));
+
+    /**
      * The pinned entries start as plain sorted sets; the first {@code registerWidenedMembers} merge
      * copies each one it touches into a {@link java.util.concurrent.ConcurrentSkipListSet}. Keeping
      * them mutable (never {@code Set.of}) remains the rule for any future pin: an immutable value once
@@ -818,7 +831,13 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
      */
     private static boolean widenMembers(ClassNode node, Set<String> members) {
         var changed = false;
+        var coremodOwned = COREMOD_PRIVATE_FIELDS.get(node.name);
         for (var field : node.fields) {
+            if (coremodOwned != null && coremodOwned.contains(field.name)) {
+                // The coremod needs it private and exposes a getter instead; widening it here is what
+                // makes that coremod refuse to run.
+                continue;
+            }
             if (members.contains(field.name) && (field.access & Opcodes.ACC_PUBLIC) == 0) {
                 field.access = (field.access & ~(Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED)) | Opcodes.ACC_PUBLIC;
                 changed = true;
