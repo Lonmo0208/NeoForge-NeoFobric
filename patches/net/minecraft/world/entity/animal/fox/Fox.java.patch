@@ -47,7 +47,7 @@
                  BlockState state = Fox.this.level().getBlockState(this.blockPos);
                  if (state.is(Blocks.SWEET_BERRY_BUSH)) {
                      this.pickSweetBerries(state);
-@@ -1011,7 +_,7 @@
+@@ -1019,7 +_,7 @@
  
          @Override
          public boolean canUse() {
