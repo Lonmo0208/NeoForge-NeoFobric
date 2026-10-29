@@ -209,7 +209,7 @@
 -                    .map(this.packRepository::getPack)
 -                    .filter(Objects::nonNull)
 +                () -> this.packRepository
-+                    .rebuildSelected(packsToEnable)
++                    .rebuildSelectedForReload(packsToEnable)
 +                    .stream()
                      .map(Pack::open)
                      .collect(ImmutableList.toImmutableList()),

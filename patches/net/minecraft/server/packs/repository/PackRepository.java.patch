@@ -25,7 +25,7 @@
          }
  
          return ImmutableMap.copyOf(discovered);
-@@ -80,11 +_,12 @@
+@@ -80,23 +_,31 @@
      }
  
      public List<Pack> rebuildSelected(Collection<String> selectedNames) {
@@ -40,7 +40,18 @@
              }
          }
  
-@@ -96,7 +_,7 @@
+         return ImmutableList.copyOf(selectedAndPresent);
+     }
+ 
++    // Neo: resource reloads open exactly the packs they are given, like vanilla. Required packs must not be
++    // re-added here: Fabric mods remove always-enabled built-in packs through the pack repository and expect
++    // the next reload to honour the removal. Hidden child packs still need to be expanded from their parents.
++    public List<Pack> rebuildSelectedForReload(Collection<String> selectedNames) {
++        return ImmutableList.copyOf(net.neoforged.neoforge.resource.ResourcePackLoader.expandAndRemoveRootChildren(this.getAvailablePacks(selectedNames), this.available.values()));
++    }
++
+     private Stream<Pack> getAvailablePacks(Collection<String> ids) {
+         return ids.stream().map(this.available::get).filter(Objects::nonNull);
      }
  
      public Collection<String> getAvailableIds() {
