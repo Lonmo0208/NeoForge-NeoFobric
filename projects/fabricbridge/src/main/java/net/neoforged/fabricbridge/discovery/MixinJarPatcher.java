@@ -3852,6 +3852,65 @@ public final class MixinJarPatcher {
     }
 
     /**
+     * Adds the parameter 26.1.2's {@code lambda$load$2} captures in front of Fabric's gametest handler.
+     *
+     * <p>NeoForge's registry load carries {@code fromResources} into the freeze lambda, so the lambda takes
+     * a leading {@code boolean}; Fabric's {@code beforeFreeze} handler was written against a lambda without
+     * it. Mixin compares a handler's leading parameters with the target's and rejects the injection
+     * ("Invalid descriptor ... Expected (ZLjava/util/List;...) but found (Ljava/util/List;...)"), and the
+     * generic widening pass appends trailing parameters only - appending the lambda's last parameter here
+     * produced "(List, Map, Void, Void, CallbackInfoReturnable)", which Mixin rejected as well.
+     *
+     * <p>A leading parameter shifts every local slot by one, so this pass inserts it in the descriptor and
+     * moves every variable reference up by one slot. The boolean is not read by the handler: it only gates
+     * the test-registry detection in the lambda.
+     */
+    private static byte[] alignGametestBeforeFreezeHandler(byte[] classBytes, String entryName) {
+        if (!"net/fabricmc/fabric/mixin/gametest/RegistryDataLoaderMixin".equals(entryName.replace(".class", ""))) {
+            return null;
+        }
+        ClassNode node;
+        try {
+            node = new ClassNode();
+            new ClassReader(classBytes).accept(node, 0);
+        } catch (Throwable t) {
+            return null;
+        }
+        var plainDesc = "(Ljava/util/List;Ljava/util/Map;Ljava/lang/Void;"
+                + "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V";
+        var changed = false;
+        for (var method : node.methods) {
+            if (!"beforeFreeze".equals(method.name) || !plainDesc.equals(method.desc)) {
+                continue;
+            }
+            for (var insn = method.instructions.getFirst(); insn != null; insn = insn.getNext()) {
+                if (insn instanceof VarInsnNode varInsn) {
+                    varInsn.var += 1;
+                } else if (insn instanceof IincInsnNode iinc) {
+                    iinc.var += 1;
+                }
+            }
+            if (method.localVariables != null) {
+                for (var local : method.localVariables) {
+                    local.index += 1;
+                }
+            }
+            method.desc = "(ZLjava/util/List;Ljava/util/Map;Ljava/lang/Void;"
+                    + "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable;)V";
+            method.signature = null;
+            method.maxLocals += 1;
+            changed = true;
+        }
+        if (!changed) {
+            return null;
+        }
+        var writer = new ClassWriter(0);
+        node.accept(writer);
+        LOGGER.info("[NeoFobric] Gave Fabric's gametest beforeFreeze handler the leading boolean its target captures");
+        return writer.toByteArray();
+    }
+
+    /**
      * {@return whether NeoForge's ItemStack split its tooltip body into the components/tail methods}
      *
      * <p>26.2 did; 26.1.2 still has the vanilla single method. The two rewrites below exist only for the
@@ -5958,6 +6017,10 @@ public final class MixinJarPatcher {
                 // them away whenever a later pass also happened to fire on the same class.
                 var realigned = realignMixinTargets(versionMoved, entry.getName());
                 var source = realigned != null ? realigned : versionMoved;
+                var leadingFixed = alignGametestBeforeFreezeHandler(source, entry.getName());
+                if (leadingFixed != null) {
+                    source = leadingFixed;
+                }
                 var retargeted = retargetStaleReturnOrdinals(source, entry.getName(), resolver);
                 if (retargeted != null) {
                     source = retargeted;

@@ -1,5 +1,18 @@
 --- a/net/minecraft/tags/TagLoader.java
 +++ b/net/minecraft/tags/TagLoader.java
+@@ -55,7 +_,11 @@
+ 
+             for (Resource resource : entry.getValue()) {
+                 try (Reader reader = resource.openAsReader()) {
+-                    JsonElement element = StrictJsonParser.parse(reader);
++                    // NeoFobric: Fabric API's tag-removal extension spells its removal list "fabric:remove";
++                    // NeoForge's own tag removal reads the plain "remove" key. Folding the Fabric key into the
++                    // vanilla-shaped one before parsing makes a data file written for either loader remove the
++                    // same entries.
++                    JsonElement element = net.neoforged.neoforge.common.TagFileHooks.mergeFabricRemove(StrictJsonParser.parse(reader));
+                     List<TagLoader.EntryWithSource> tagContents = builders.computeIfAbsent(id, key -> new ArrayList<>());
+                     TagFile parsedContents = TagFile.CODEC.parse(new Dynamic<>(JsonOps.INSTANCE, element)).getOrThrow();
+                     if (parsedContents.replace()) {
 @@ -64,6 +_,8 @@
  
                      String sourceId = resource.sourcePackId();
