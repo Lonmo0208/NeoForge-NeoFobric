@@ -1425,6 +1425,51 @@ public final class FabricBridgeHooks {
     private static final Object[] EMPTY_PARTS = new Object[0];
 
     /**
+     * Supplies Iris with a shader key for a mod pipeline Iris has no mapping for.
+     *
+     * <p>Iris's {@code IrisPipelines} maps vanilla render pipelines to its shader programs. A mod that
+     * builds its own pipeline gets no entry, and Iris logs "Missing program &lt;location&gt; in override
+     * list ... could lead to weird rendering" and draws it through the vanilla program. ShoulderSurfing
+     * builds the two translucent armor pipelines it renders the player's armor with when the camera is
+     * inside the player; the entity translucent programs are the matching pair (the glint variant for
+     * enchanted armor).
+     *
+     * <p>Called from the patched start of {@code IrisPipelines.getPipeline} (see MixinJarPatcher), so the
+     * lookup stays in Iris and only the unknown locations are answered here. Reflection because this
+     * module cannot compile against Iris.
+     */
+    public static Object irisPipelineFallback(Object pipeline) {
+        if (!bridgeActive() || pipeline == null) {
+            return null;
+        }
+        try {
+            var location = pipeline.getClass().getMethod("getLocation").invoke(pipeline);
+            if (location == null) {
+                return null;
+            }
+            var idClass = location.getClass();
+            if (!"shouldersurfing".equals(idClass.getMethod("getNamespace").invoke(location))) {
+                return null;
+            }
+            var path = (String) idClass.getMethod("getPath").invoke(location);
+            var keyName = switch (path) {
+                case "pipeline/armor_translucent_no_cull" -> "ENTITIES_TRANSLUCENT";
+                case "pipeline/armor_translucent_no_cull_glint" -> "ENTITIES_TRANSLUCENT_GLINT";
+                default -> null;
+            };
+            if (keyName == null) {
+                return null;
+            }
+            var loader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
+            var shaderKeys = Class.forName("net.irisshaders.iris.pipeline.programs.ShaderKey", true, loader);
+            return shaderKeys.getField(keyName).get(null);
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not map the Iris pipeline {}", pipeline, t);
+            return null;
+        }
+    }
+
+    /**
      * Keeps a block that a mod maps to two point-of-interest types from failing the class that registers it.
      *
      * <p>Vanilla only runs this check while it builds its own types; NeoForge runs the same registration for

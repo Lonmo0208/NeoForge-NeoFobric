@@ -23,9 +23,12 @@ import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.tree.FrameNode;
 import org.objectweb.asm.tree.IincInsnNode;
+import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
+import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LocalVariableNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
@@ -6063,6 +6066,11 @@ public final class MixinJarPatcher {
                     versionMoved = frozenLibDuckDefaults;
                     patched.put(entry.getName(), versionMoved);
                 }
+                var irisModPipelineFallback = addIrisModPipelineFallback(versionMoved, entry.getName());
+                if (irisModPipelineFallback != null) {
+                    versionMoved = irisModPipelineFallback;
+                    patched.put(entry.getName(), versionMoved);
+                }
                 if (!looksLikeMixinClass(entry.getName())) {
                     // Not a mixin: the only rewrites it may need are a call site of a renamed accessor
                     // member (Fabric's own implementation classes do the casting) or a page API that is
@@ -6779,6 +6787,83 @@ public final class MixinJarPatcher {
         LOGGER.info("[NeoFobric] Turned {} throwing default(s) of FrozenLib's placement duck interface into"
                 + " no-ops - a placement the mixin does not reach (Twilight Forest's landmark grid) now has no"
                 + " generation conditions instead of killing the world load", patched);
+        return writeClass(node);
+    }
+
+    /**
+     * Wraps Iris's {@code IrisPipelines.getPipeline} so a mod-built pipeline can be answered too.
+     *
+     * <p>Iris only maps the vanilla render pipelines; a mod that builds its own (ShoulderSurfing's two
+     * translucent armor pipelines) falls through to "Missing program &lt;location&gt; in override list
+     * ... could lead to weird rendering" and is drawn with the vanilla program. The wrapper asks the
+     * bridge first, then delegates to the original method unchanged. The original body is renamed to
+     * {@code neofobric$getPipeline} and keeps its own stack map frames; the new method is generated with
+     * one explicit frame, so none of the original frame deltas are disturbed.
+     */
+    private static byte[] addIrisModPipelineFallback(byte[] classBytes, String entryName) {
+        if (Boolean.getBoolean("neofobric.noIrisModPipelineFallback")
+                || !"net/irisshaders/iris/pipeline/IrisPipelines.class".equals(entryName)) {
+            return null;
+        }
+        ClassNode node;
+        try {
+            node = new ClassNode();
+            new ClassReader(classBytes).accept(node, 0);
+        } catch (Throwable t) {
+            return null;
+        }
+        MethodNode pipelineMethod = null;
+        for (var method : node.methods) {
+            if (!"getPipeline".equals(method.name) || (method.access & Opcodes.ACC_STATIC) == 0) {
+                continue;
+            }
+            var args = Type.getArgumentTypes(method.desc);
+            if (args.length == 2 && method.desc.endsWith("Lnet/irisshaders/iris/pipeline/programs/ShaderKey;")) {
+                pipelineMethod = method;
+                break;
+            }
+        }
+        if (pipelineMethod == null) {
+            return null;
+        }
+        var delegateName = "neofobric$getPipeline";
+        for (var method : node.methods) {
+            if (delegateName.equals(method.name)) {
+                return null;
+            }
+        }
+
+        var desc = pipelineMethod.desc;
+        var owner = node.name;
+        var shaderKey = "net/irisshaders/iris/pipeline/programs/ShaderKey";
+        pipelineMethod.name = delegateName;
+
+        var wrapper = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "getPipeline", desc,
+                pipelineMethod.signature, pipelineMethod.exceptions == null ? null
+                        : pipelineMethod.exceptions.toArray(new String[0]));
+        var merge = new LabelNode();
+        var code = wrapper.instructions;
+        code.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        code.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "net/neoforged/fabricbridge/FabricBridgeHooks",
+                "irisPipelineFallback", "(Ljava/lang/Object;)Ljava/lang/Object;", false));
+        code.add(new TypeInsnNode(Opcodes.CHECKCAST, shaderKey));
+        code.add(new VarInsnNode(Opcodes.ASTORE, 2));
+        code.add(new VarInsnNode(Opcodes.ALOAD, 2));
+        code.add(new JumpInsnNode(Opcodes.IFNULL, merge));
+        code.add(new VarInsnNode(Opcodes.ALOAD, 2));
+        code.add(new InsnNode(Opcodes.ARETURN));
+        code.add(merge);
+        // Locals at the merge: the two arguments plus the ShaderKey in slot 2, stack empty.
+        code.add(new FrameNode(Opcodes.F_APPEND, 1, new Object[] { shaderKey }, 0, null));
+        code.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        code.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        code.add(new MethodInsnNode(Opcodes.INVOKESTATIC, owner, delegateName, desc, false));
+        code.add(new InsnNode(Opcodes.ARETURN));
+        wrapper.maxStack = 2;
+        wrapper.maxLocals = 3;
+        node.methods.add(wrapper);
+        LOGGER.info("[NeoFobric] Taught Iris's pipeline lookup about the mod pipelines the shader packs do not"
+                + " describe (ShoulderSurfing's translucent armor)");
         return writeClass(node);
     }
 
