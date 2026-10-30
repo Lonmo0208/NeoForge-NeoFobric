@@ -93,6 +93,22 @@
          if (this.level().getDifficulty() == Difficulty.PEACEFUL && !this.getType().isAllowedInPeaceful()) {
              this.discard();
          } else if (!this.isPersistenceRequired() && !this.requiresCustomPersistence()) {
+@@ -875,12 +_,13 @@
+             if (dropChance != 0.0F) {
+                 boolean preserve = this.dropChances.isPreserved(slot);
+                 if (this.level() instanceof ServerLevel serverLevel) {
++                    // Neo: pass in slot context for GetEquipmentDropChanceEvent
+                     if (source.getEntity() instanceof LivingBlock livingBlock && livingBlock.getCommander() != null) {
+-                        dropChance = EnchantmentHelper.processEquipmentDropChance(serverLevel, livingBlock.getCommander(), source, dropChance);
++                        dropChance = EnchantmentHelper.processEquipmentDropChance(serverLevel, livingBlock.getCommander(), source, dropChance, slot);
+                     }
+ 
+                     if (source.getEntity() instanceof LivingEntity livingSource) {
+-                        dropChance = EnchantmentHelper.processEquipmentDropChance(serverLevel, livingSource, source, dropChance);
++                        dropChance = EnchantmentHelper.processEquipmentDropChance(serverLevel, livingSource, source, dropChance, slot);
+                     }
+                 }
+ 
 @@ -1063,6 +_,11 @@
          }
      }

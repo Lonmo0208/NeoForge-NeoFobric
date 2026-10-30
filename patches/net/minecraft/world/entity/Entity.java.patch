@@ -54,12 +54,23 @@
      }
  
      public boolean isColliding(BlockPos pos, BlockState state) {
-@@ -553,7 +_,7 @@
+@@ -533,7 +_,7 @@
+ 
+         this.wasInPowderSnow = this.isInPowderSnow;
+         this.isInPowderSnow = false;
+-        this.wasEyeInWater = this.isEyeInFluid(FluidTags.WATER);
++        this.wasEyeInWater = this.fluidInteraction.isEyeInFluidMatching(this, (_, type, _) -> type.getIsWaterLike());
+         this.updateFluidInteraction();
+         this.updateSwimming();
+         if (this.level() instanceof ServerLevel serverLevel) {
+@@ -553,7 +_,9 @@
          }
  
          if (this.isInLava()) {
 -            this.fallDistance *= 0.5;
 +            this.fallDistance *= this.getFluidFallDistanceModifier(net.neoforged.neoforge.common.NeoForgeMod.LAVA_TYPE.value());
++        } else if (!this.isInWater()) {
++            this.fallDistance *= this.fluidInteraction.getFallDistanceModifier(this);
          }
  
          this.checkBelowWorld();
@@ -337,15 +348,60 @@
              }
  
              this.resetFallDistance();
-@@ -1558,7 +_,7 @@
-             this.setSwimming(this.isSprinting() && this.isInWater() && !this.isPassenger());
+@@ -1536,7 +_,7 @@
+     }
+ 
+     public boolean isInShallowWater() {
+-        return this.isInWater() && !this.isUnderWater();
++        return this.isInWater() && !this.isUnderWater() || this.fluidInteraction.isInFluidMatching(this, (entity, type, _) -> entity.canSwimInFluidType(type) && !entity.canStartSwimming());
+     }
+ 
+     public boolean isInClouds() {
+@@ -1555,18 +_,17 @@
+ 
+     public void updateSwimming() {
+         if (this.isSwimming()) {
+-            this.setSwimming(this.isSprinting() && this.isInWater() && !this.isPassenger());
++            this.setSwimming(this.isSprinting() && (this.isInWater() || this.fluidInteraction.isInFluidMatching(this, (entity, type, _) -> entity.canSwimInFluidType(type))) && !this.isPassenger());
          } else {
              this.setSwimming(
 -                this.isSprinting() && this.isUnderWater() && !this.isPassenger() && this.level().getFluidState(this.blockPosition).is(FluidTags.WATER)
-+                    this.isSprinting() && this.isUnderWater() && !this.isPassenger() && this.level().getFluidState(this.blockPosition).is(FluidTags.WATER)
++                    this.isSprinting() && this.canStartSwimming() && !this.isPassenger()
              );
          }
      }
+ 
+     protected boolean updateFluidInteraction() {
+-        this.fluidInteraction.update(this, !this.isPushedByFluid());
+-        boolean inWater = this.fluidInteraction.isInFluid(FluidTags.WATER);
+-        boolean inLava = this.fluidInteraction.isInFluid(FluidTags.LAVA);
++        this.fluidInteraction.update(this, this::isPushedByFluid);
++        boolean inWater = this.fluidInteraction.isInFluidMatching(this, (_, type, _) -> type.getIsWaterLike());
+         if (inWater) {
+             this.resetFallDistance();
+             if (!this.wasTouchingWater && !this.firstTick) {
+@@ -1575,18 +_,9 @@
+         }
+ 
+         this.wasTouchingWater = inWater;
+-        if (this.isPushedByFluid()) {
+-            if (inWater) {
+-                this.fluidInteraction.applyCurrentTo(FluidTags.WATER, this, 0.014);
+-            }
+-
+-            if (inLava) {
+-                double lavaFlowScale = this.level.environmentAttributes().getDimensionValue(EnvironmentAttributes.FAST_LAVA) ? 0.007 : 0.0023333333333333335;
+-                this.fluidInteraction.applyCurrentTo(FluidTags.LAVA, this, lavaFlowScale);
+-            }
+-        }
+-
+-        return inWater || inLava;
++        this.fluidInteraction.applyCurrentTo(this);
++
++        return this.fluidInteraction.isInAnyFluid();
+     }
+ 
+     protected void doWaterSplashEffect() {
 @@ -1594,7 +_,7 @@
          float volumeModifier = entity == this ? 0.2F : 0.9F;
          Vec3 movement = entity.getDeltaMovement();
@@ -368,7 +424,14 @@
          }
  
          for (int i = 0; i < 1.0F + this.dimensions.width() * 20.0F; i++) {
-@@ -1638,22 +_,23 @@
+@@ -1632,36 +_,43 @@
+     }
+ 
+     public boolean canSpawnSprintParticle() {
+-        return this.isSprinting() && !this.isInWater() && !this.isSpectator() && !this.isCrouching() && !this.isInLava() && this.isAlive();
++        return this.isSprinting() && !this.isInWater() && !this.isSpectator() && !this.isCrouching() && !this.isInLava() && this.isAlive() && !this.fluidInteraction.isInAnyFluid();
+     }
+ 
      protected void spawnSprintParticle() {
          BlockPos pos = this.getOnPosLegacy();
          BlockState blockState = this.level().getBlockState(pos);
@@ -407,7 +470,22 @@
 +            }
      }
  
++    /// @deprecated Neo: use [#isEyeInFluid(net.neoforged.neoforge.fluids.FluidType)] instead
++    @Deprecated
      public boolean isEyeInFluid(TagKey<Fluid> type) {
++        return this.isEyeInFluid(EntityFluidInteraction.getFluidTypeByTag(type));
++    }
++
++    public boolean isEyeInFluid(net.neoforged.neoforge.fluids.FluidType type) {
+         return this.fluidInteraction.isEyeInFluid(type);
+     }
+ 
+     public boolean isInLava() {
+-        return !this.firstTick && this.fluidInteraction.isInFluid(FluidTags.LAVA);
++        return !this.firstTick && this.fluidInteraction.isInFluid(net.neoforged.neoforge.common.NeoForgeMod.LAVA_TYPE.value());
+     }
+ 
+     public void moveRelative(float speed, Vec3 input) {
 @@ -1684,8 +_,8 @@
      @Deprecated
      public float getLightLevelDependentMagicValue() {
@@ -587,6 +665,15 @@
              );
          } else {
              position.ifPresent(this::setPos);
+@@ -2647,7 +_,7 @@
+     }
+ 
+     public boolean isVisuallyCrawling() {
+-        return this.isVisuallySwimming() && !this.isInWater();
++        return this.isVisuallySwimming() && !this.isInWater() && !this.fluidInteraction.isInFluidMatching(this, (entity, type, _) -> entity.canSwimInFluidType(type));
+     }
+ 
+     public void setSwimming(boolean swimming) {
 @@ -2763,7 +_,7 @@
              this.igniteForSeconds(8.0F);
          }
@@ -799,6 +886,20 @@
          );
      }
  
+@@ -3584,7 +_,13 @@
+         return !this.level().hasChunksAt(x0, z0, x1, z1);
+     }
+ 
++    /// @deprecated Neo: use [#getFluidHeight(net.neoforged.neoforge.fluids.FluidType)] instead
++    @Deprecated
+     public double getFluidHeight(TagKey<Fluid> type) {
++        return this.getFluidHeight(EntityFluidInteraction.getFluidTypeByTag(type));
++    }
++
++    public double getFluidHeight(net.neoforged.neoforge.fluids.FluidType type) {
+         return this.fluidInteraction.getFluidHeight(type);
+     }
+ 
 @@ -3739,6 +_,10 @@
                  }
              }
@@ -907,3 +1008,15 @@
          }
      }
  
+@@ -4000,6 +_,11 @@
+ 
+     protected @Nullable AABB modifyPassengerFluidInteractionBox(AABB passengerBox) {
+         return passengerBox;
++    }
++
++    /// Neo: returns the [EntityFluidInteraction] tracking this entity's interactions with fluids
++    public EntityFluidInteraction getFluidInteraction() {
++        return this.fluidInteraction;
+     }
+ 
+     private record EntityPathElement(Entity entity) implements ProblemReporter.PathElement {

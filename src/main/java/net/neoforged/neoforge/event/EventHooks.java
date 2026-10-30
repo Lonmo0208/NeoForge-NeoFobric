@@ -69,7 +69,7 @@ import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.SpawnGroupData;
 import net.minecraft.world.entity.SpawnPlacements;
 import net.minecraft.world.entity.animal.Animal;
-import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.livingblock.LivingBlock;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.Player.BedSleepingProblem;
 import net.minecraft.world.entity.projectile.Projectile;
@@ -541,34 +541,34 @@ public class EventHooks {
         return event;
     }
 
-    public static int onItemExpire(ItemEntity entity) {
+    public static int onItemExpire(LivingBlock entity) {
         ItemExpireEvent event = new ItemExpireEvent(entity);
         NeoForge.EVENT_BUS.post(event);
         return event.getExtraLife();
     }
 
     /**
-     * Called in {@link ItemEntity#playerTouch(Player)} before any other processing occurs.
+     * Called before any other processing occurs when a {@link Player} collides with a {@link LivingBlock}.
      * <p>
      * Fires {@link ItemEntityPickupEvent.Pre} and returns the event.
-     * 
-     * @param itemEntity The item entity that a player collided with
-     * @param player     The player that collided with the item entity
+     *
+     * @param itemEntity The living block that a player collided with
+     * @param player     The player that collided with the living block
      */
-    public static ItemEntityPickupEvent.Pre fireItemPickupPre(ItemEntity itemEntity, Player player) {
+    public static ItemEntityPickupEvent.Pre fireItemPickupPre(LivingBlock itemEntity, Player player) {
         return NeoForge.EVENT_BUS.post(new ItemEntityPickupEvent.Pre(player, itemEntity));
     }
 
     /**
-     * Called in {@link ItemEntity#playerTouch(Player)} after an item was successfully picked up.
+     * Called after a {@link LivingBlock} was successfully picked up by a {@link Player}.
      * <p>
      * Fires {@link ItemEntityPickupEvent.Post}.
-     * 
-     * @param itemEntity The item entity that a player collided with
-     * @param player     The player that collided with the item entity
-     * @param copy       A copy of the item entity's item stack before the pickup
+     *
+     * @param itemEntity The living block that a player collided with
+     * @param player     The player that collided with the living block
+     * @param copy       A copy of the living block's item stack before the pickup
      */
-    public static void fireItemPickupPost(ItemEntity itemEntity, Player player, ItemStack copy) {
+    public static void fireItemPickupPost(LivingBlock itemEntity, Player player, ItemStack copy) {
         NeoForge.EVENT_BUS.post(new ItemEntityPickupEvent.Post(player, itemEntity, copy));
     }
 
@@ -1212,7 +1212,7 @@ public class EventHooks {
         return enchLevel;
     }
 
-    /// Called from [#processEquipmentDropChance(ServerLevel,LivingEntity,DamageSource,float,EquipmentSlot)] to allow changing the slot chance.
+    /// Called from [#processEquipmentDropChance(ServerLevel,Entity,DamageSource,float,EquipmentSlot)] to allow changing the slot chance.
     ///
     /// @param level          Level instance
     /// @param entity         Entity dropping equipment
