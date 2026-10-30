@@ -77,6 +77,15 @@
                  BlockState state = Fox.this.level().getBlockState(this.blockPos);
                  if (state.is(Blocks.SWEET_BERRY_BUSH)) {
                      this.pickSweetBerries(state);
+@@ -1019,7 +_,7 @@
+ 
+         @Override
+         public boolean canUse() {
+-            return Fox.this.isInWater() && Fox.this.getFluidHeight(FluidTags.WATER) > 0.25 || Fox.this.isInLava();
++            return Fox.this.isInWater() && Fox.this.getFluidHeight(FluidTags.WATER) > 0.25 || Fox.this.isInLava() || Fox.this.getFluidInteraction().isInFluidMatching(Fox.this, (entity, fluidType, height) -> entity.canSwimInFluidType(fluidType) && height > 0.25D);
+         }
+     }
+ 
 @@ -1106,6 +_,12 @@
                  this.mob.doHurtTarget(getServerLevel(this.mob), target);
                  Fox.this.playSound(SoundEvents.FOX_BITE, 1.0F, 1.0F);

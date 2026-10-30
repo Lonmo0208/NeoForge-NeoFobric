@@ -14,6 +14,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.livingblock.LivingBlock;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.Enchantments;
@@ -41,6 +42,7 @@ import net.minecraft.world.level.material.Fluids;
 import net.neoforged.fml.util.ObfuscationReflectionHelper;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.event.VanillaGameEvent;
+import net.neoforged.neoforge.event.entity.item.ItemTossEvent;
 import net.neoforged.neoforge.fluids.FluidType;
 import net.neoforged.neoforge.transfer.EmptyResourceHandler;
 import net.neoforged.neoforge.transfer.ResourceHandler;
@@ -369,6 +371,54 @@ public class VanillaHandlersTests {
 
         helper.assertBlockNotPresent(Blocks.COMPOSTER, pos);
         helper.succeed();
+    }
+
+    @GameTest
+    @EmptyTemplate("7x7x7") // Need enough room for the dropped items
+    @TestHolder(description = "Test the onRootCommit for a player's DroppedItems in case an event triggered by the dropping triggers more drops.")
+    public static void playerInventoryDropWhileDropping(DynamicTest test) {
+        // When dropping a carrot, drop a golden carrot in front of all fake players
+        test.eventListeners().forge().addListener((ItemTossEvent event) -> {
+            if (event.getEntity().getItemStack().is(Items.CARROT)) {
+                // In 26w14a, Block.popResource is a NeoForge extension; explicitly create a LivingBlock
+                var level = event.getPlayer().level();
+                var pos = event.getPlayer().blockPosition().above();
+                LivingBlock.createStack(level, pos, null, new ItemStack(Items.GOLDEN_CARROT));
+            }
+        });
+
+        test.onGameTest(helper -> {
+            var player = helper.makeMockPlayer();
+            player.setPos(helper.getBounds().getCenter());
+
+            var inventory = PlayerInventoryWrapper.of(player);
+            try (var tx = Transaction.openRoot()) {
+                inventory.drop(ItemResource.of(Items.CARROT), 1, false, false, tx);
+                inventory.drop(ItemResource.of(Items.CARROT), 1, false, false, tx);
+                tx.commit();
+            }
+
+            helper.startSequence()
+                    .thenIdle(5)
+                    .thenExecute(() -> {
+                        // 2 carrots and 2 golden carrots should have appeared by now
+                        // In 26w14a, LivingBlock entities of the same item auto-merge at the same position,
+                        // so we check total item count across all LivingBlocks instead of entity count
+                        var livingBlocks = helper.getLevel().getEntities(EntityType.LIVING_BLOCK, player.getBoundingBox().inflate(10), e -> true);
+                        int carrotCount = 0;
+                        int goldenCarrotCount = 0;
+                        for (var lb : livingBlocks) {
+                            if (lb.getItemStack().is(Items.CARROT)) {
+                                carrotCount += lb.getItemStack().getCount();
+                            } else if (lb.getItemStack().is(Items.GOLDEN_CARROT)) {
+                                goldenCarrotCount += lb.getItemStack().getCount();
+                            }
+                        }
+                        helper.assertValueEqual(carrotCount, 2, "Should have 2 carrots worth of items");
+                        helper.assertValueEqual(goldenCarrotCount, 2, "Should have 2 golden carrots worth of items");
+                    })
+                    .thenSucceed();
+        });
     }
 
     @GameTest

@@ -1,6 +1,6 @@
 --- a/net/minecraft/client/gui/screens/inventory/AbstractRecipeBookScreen.java
 +++ b/net/minecraft/client/gui/screens/inventory/AbstractRecipeBookScreen.java
-@@ -57,6 +_,8 @@
+@@ -57,10 +_,13 @@
      public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
          if (this.recipeBookComponent.isVisible() && this.widthTooNarrow) {
              this.extractBackground(graphics, mouseX, mouseY, a);
@@ -9,6 +9,11 @@
          }
  
          graphics.nextStratum();
+         this.recipeBookComponent.extractRenderState(graphics, mouseX, mouseY, a);
++        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(new net.neoforged.neoforge.client.event.ScreenEvent.Render.Foreground(this, graphics, mouseX, mouseY, a));
+         graphics.nextStratum();
+         this.extractCarriedItem(graphics, mouseX, mouseY);
+         this.extractSnapbackItem(graphics);
 @@ -85,10 +_,6 @@
      }
  

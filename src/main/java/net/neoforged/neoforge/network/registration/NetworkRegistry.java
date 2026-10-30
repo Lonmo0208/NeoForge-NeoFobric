@@ -43,6 +43,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
 import net.neoforged.fml.ModLoader;
 import net.neoforged.neoforge.common.NeoForgeVersion;
+import net.neoforged.neoforge.common.config.NeoForgeCommonConfig;
 import net.neoforged.neoforge.common.extensions.ICommonPacketListener;
 import net.neoforged.neoforge.network.configuration.CommonRegisterTask;
 import net.neoforged.neoforge.network.configuration.CommonVersionTask;
@@ -240,6 +241,10 @@ public class NetworkRegistry {
     public static StreamCodec<? super FriendlyByteBuf, ? extends CustomPacketPayload> getCodec(Identifier id, ConnectionProtocol protocol, PacketFlow flow) {
         // Custom modded packets which can be sent before a payload setup is negotiated.
         if (BUILTIN_PAYLOADS.containsKey(id)) {
+            if (flow == PacketFlow.SERVERBOUND
+                    && (id.equals(ModdedNetworkPayload.ID) || id.equals(ModdedNetworkSetupFailedPayload.ID))) {
+                return null;
+            }
             return BUILTIN_PAYLOADS.get(id);
         }
 
@@ -429,11 +434,11 @@ public class NetworkRegistry {
                 return;
             }
 
-            if (hasChannel(listener, customPayloadPacket.payload().type().id())) {
+            if (hasChannel(listener, id)) {
                 return;
             }
 
-            throw new UnsupportedOperationException("Payload %s may not be sent to the client!".formatted(customPayloadPacket.payload().type().id()));
+            throw new UnsupportedOperationException("Payload %s may not be sent to the client!".formatted(id));
         }
     }
 
@@ -451,11 +456,11 @@ public class NetworkRegistry {
                 return;
             }
 
-            if (hasChannel(listener, customPayloadPacket.payload().type().id())) {
+            if (hasChannel(listener, id)) {
                 return;
             }
 
-            throw new UnsupportedOperationException("Payload %s may not be sent to the server!".formatted(customPayloadPacket.payload().type().id()));
+            throw new UnsupportedOperationException("Payload %s may not be sent to the server!".formatted(id));
         }
     }
 
@@ -541,10 +546,10 @@ public class NetworkRegistry {
                 return;
             }
 
-            NetworkChannel channel = payloadSetup.getChannel(ConnectionProtocol.PLAY, customPayloadPacket.payload().type().id());
+            NetworkChannel channel = payloadSetup.getChannel(ConnectionProtocol.PLAY, id);
 
             if (channel == null) {
-                LOGGER.trace("Somebody tried to send: {} to a client which cannot accept it. Not sending packet.", customPayloadPacket.payload().type().id());
+                LOGGER.trace("Somebody tried to send: {} to a client which cannot accept it. Not sending packet.", id);
                 return;
             }
 
@@ -584,7 +589,15 @@ public class NetworkRegistry {
      * @param resourceLocations The resource locations to add.
      */
     public static void onMinecraftRegister(Connection connection, Set<Identifier> resourceLocations) {
-        ChannelAttributes.getOrCreateAdHocChannels(connection).addAll(resourceLocations);
+        var channels = ChannelAttributes.getOrCreateAdHocChannels(connection);
+        if ((channels.size() + resourceLocations.size()) > NeoForgeCommonConfig.INSTANCE.maxAdhocChannelLimit.getAsInt()) {
+            if (connection.getPacketListener() instanceof ICommonPacketListener listener) {
+                listener.disconnect(Component.translatable("neoforge.network.adhoc_channels.too_many"));
+                return;
+            }
+            throw new RuntimeException("Too many ad-hoc channels.");
+        }
+        channels.addAll(resourceLocations);
     }
 
     /**
@@ -612,7 +625,7 @@ public class NetworkRegistry {
         nowForgottenChannels.add(MinecraftRegisterPayload.ID);
         nowForgottenChannels.add(MinecraftUnregisterPayload.ID);
         PAYLOAD_REGISTRATIONS.get(ConnectionProtocol.PLAY).entrySet().stream()
-                .filter(registration -> registration.getValue().flow().isEmpty() || registration.getValue().flow().get() == PacketFlow.SERVERBOUND)
+                .filter(registration -> registration.getValue().matchesFlow(PacketFlow.SERVERBOUND))
                 .filter(registration -> registration.getValue().optional())
                 .forEach(registration -> nowForgottenChannels.add(registration.getKey()));
         return nowForgottenChannels.build();

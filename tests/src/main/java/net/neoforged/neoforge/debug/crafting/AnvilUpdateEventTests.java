@@ -169,18 +169,16 @@ public class AnvilUpdateEventTests {
         final String CUSTOM_NAME = "Hoe - 5784351896";
 
         withAnvil(test, ctx -> {
-            ctx.player.getInventory().setItem(INVENTORY_SLOT_FIRST, sampleStack().copy());
-            ctx.menu.clicked(MENU_SLOT_INV_FIRST, InputConstants.MOUSE_BUTTON_LEFT, ContainerInput.PICKUP, ctx.player);
-            ctx.menu.clicked(MENU_SLOT_LEFT, InputConstants.MOUSE_BUTTON_LEFT, ContainerInput.PICKUP, ctx.player);
+            // Directly place the item in the anvil input slot instead of using clicked()
+            ctx.menu.getSlot(MENU_SLOT_LEFT).set(sampleStack().copy());
             ctx.menu.setItemName(CUSTOM_NAME);
 
             ItemStack out = ctx.menu.getSlot(MENU_SLOT_RESULT).getItem();
-            if (!out.isEmpty()) {
-                ctx.helper.assertValueEqual(
-                        CUSTOM_NAME, out.getHoverName().getString(),
-                        "Unexpected output name; output is " + out.getHoverName().getString());
-                clearInputs(ctx.menu, ctx.player);
-            }
+            ctx.helper.assertValueEqual(
+                    CUSTOM_NAME, out.getHoverName().getString(),
+                    "Unexpected output name; output is " + out.getHoverName().getString());
+
+            clearInputs(ctx.menu, ctx.player);
             ctx.helper.succeed();
         });
     }

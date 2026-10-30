@@ -84,10 +84,17 @@
      public static int processProjectileCount(ServerLevel serverLevel, ItemStack weapon, Entity shooter, int count) {
          MutableFloat modifiedCount = new MutableFloat(count);
          runIterationOnItem(weapon, (enchantment, level) -> enchantment.value().modifyProjectileCount(serverLevel, level, weapon, shooter, modifiedCount));
-@@ -328,10 +_,11 @@
+@@ -327,11 +_,18 @@
+         return Math.max(0, modifiedDurability.intValue());
      }
  
++    /// @deprecated Neo: Use [#processEquipmentDropChance(ServerLevel,Entity,DamageSource,float,EquipmentSlot)] for slot context.
++    @Deprecated
      public static float processEquipmentDropChance(ServerLevel serverLevel, Entity entity, DamageSource killingBlow, float chance) {
++        return processEquipmentDropChance(serverLevel, entity, killingBlow, chance, null);
++    }
++
++    public static float processEquipmentDropChance(ServerLevel serverLevel, Entity entity, DamageSource killingBlow, float chance, @Nullable EquipmentSlot slot) {
 +        if (!(entity instanceof LivingEntity livingEntity)) return chance;
          MutableFloat modifiedChance = new MutableFloat(chance);
          RandomSource random = entity.getRandom();
@@ -125,6 +132,16 @@
                                  }
                              }
                          );
+@@ -367,6 +_,9 @@
+             );
+         }
+ 
++        // Neo: allow mods to modify the drop chance for equipment with the relevant context
++        net.neoforged.neoforge.event.EventHooks.onEquipmentDropChance(serverLevel, livingEntity, killingBlow, modifiedChance, chance, slot);
++
+         return modifiedChance.floatValue();
+     }
+ 
 @@ -422,6 +_,12 @@
      public static boolean hasTag(ItemStack item, TagKey<Enchantment> tag) {
          ItemEnchantments enchantments = item.getOrDefault(DataComponents.ENCHANTMENTS, ItemEnchantments.EMPTY);

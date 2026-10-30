@@ -7,6 +7,7 @@ package net.neoforged.neoforge.debug;
 
 import java.util.function.Consumer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.GameType;
 import net.neoforged.neoforge.event.OnDatapackSyncEvent;
@@ -39,9 +40,16 @@ public class EventTests {
 
         test.onGameTest(helper -> helper.startSequence(() -> helper.makeTickingMockServerPlayerInCorner(GameType.SURVIVAL))
                 .thenIdle(5)
-                .thenExecute(player -> helper.assertTrue(
-                        player.getInventory().contains(Items.ACACIA_FENCE.getDefaultInstance()),
-                        "Player inventory should contain acacia fence from datapack sync event"))
+                .thenExecute(player -> {
+                    boolean found = false;
+                    for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+                        if (ItemStack.isSameItem(player.getInventory().getItem(i), Items.ACACIA_FENCE.getDefaultInstance())) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    helper.assertTrue(found, "Player does not have acacia fence in any inventory slot");
+                })
                 .thenSucceed());
     }
 }

@@ -8,6 +8,7 @@ package net.neoforged.neoforge.debug.entity.player;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import java.util.List;
+import java.util.Optional;
 import net.minecraft.advancements.Advancement;
 import net.minecraft.advancements.AdvancementType;
 import net.minecraft.advancements.criterion.DataComponentMatchers;
@@ -40,10 +41,8 @@ public class AdvancementTests {
     static void playerAdvancementEarn(final DynamicTest test) {
         test.eventListeners().forge().addListener((final AdvancementEvent.AdvancementEarnEvent event) -> {
             if (event.getAdvancement().id().equals(Identifier.withDefaultNamespace("story/root")) && event.getEntity() instanceof ServerPlayer player) {
-                final var advancement = player.level().getServer().getAdvancements().get(Identifier.withDefaultNamespace("story/mine_stone"));
-                if (advancement != null) {
-                    player.getAdvancements().award(advancement, "get_stone");
-                }
+                Optional.ofNullable(player.level().getServer().getAdvancements().get(Identifier.withDefaultNamespace("story/mine_stone")))
+                        .ifPresent(adv -> player.getAdvancements().award(adv, "get_stone"));
             }
             test.pass();
         });
@@ -53,9 +52,11 @@ public class AdvancementTests {
             helper.startSequence()
                     .thenExecute(() -> player.getInventory().add(Items.CRAFTING_TABLE.getDefaultInstance()))
                     .thenExecuteAfter(5, () -> {
-                        final var advancement = player.level().getServer().getAdvancements().get(Identifier.withDefaultNamespace("story/mine_stone"));
-                        if (advancement != null) {
-                            helper.assertTrue(player.getAdvancements().getOrStartProgress(advancement).isDone(), "Player did not receive advancement");
+                        var mineStone = player.level().getServer().getAdvancements().get(Identifier.withDefaultNamespace("story/mine_stone"));
+                        if (mineStone != null) {
+                            helper.assertTrue(
+                                    player.getAdvancements().getOrStartProgress(mineStone).isDone(),
+                                    "Player did not receive advancement");
                         }
                     })
                     .thenSucceed();
@@ -79,9 +80,11 @@ public class AdvancementTests {
             helper.startSequence()
                     .thenExecute(() -> player.getInventory().add(Items.IRON_HELMET.getDefaultInstance()))
                     .thenExecuteAfter(5, () -> {
-                        final var advancement = player.level().getServer().getAdvancements().get(Identifier.withDefaultNamespace("story/obtain_armor"));
-                        if (advancement != null) {
-                            helper.assertTrue(player.getAdvancements().getOrStartProgress(advancement).isDone(), "Player did not complete advancement");
+                        var obtainArmor = player.level().getServer().getAdvancements().get(Identifier.withDefaultNamespace("story/obtain_armor"));
+                        if (obtainArmor != null) {
+                            helper.assertTrue(
+                                    player.getAdvancements().getOrStartProgress(obtainArmor).isDone(),
+                                    "Player did not complete advancement");
                         }
                     })
                     .thenSucceed();
@@ -120,12 +123,9 @@ public class AdvancementTests {
                         stack.set(DataComponents.CUSTOM_NAME, Component.literal("abcd"));
                         player.getInventory().add(stack);
                     })
-                    .thenExecuteAfter(5, () -> {
-                        final var advancement = player.level().getServer().getAdvancements().get(Identifier.fromNamespaceAndPath(reg.modId(), "named_item"));
-                        if (advancement != null) {
-                            helper.assertTrue(player.getAdvancements().getOrStartProgress(advancement).isDone(), "Player did not complete advancement");
-                        }
-                    })
+                    .thenExecuteAfter(5, () -> helper.assertTrue(
+                            player.getAdvancements().getOrStartProgress(player.level().getServer().getAdvancements().get(Identifier.fromNamespaceAndPath(reg.modId(), "named_item"))).isDone(),
+                            "Player did not complete advancement"))
                     .thenSucceed();
         });
     }
