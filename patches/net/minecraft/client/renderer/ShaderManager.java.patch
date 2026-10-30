@@ -1,0 +1,18 @@
+--- a/net/minecraft/client/renderer/ShaderManager.java
++++ b/net/minecraft/client/renderer/ShaderManager.java
+@@ -160,6 +_,15 @@
+         for (RenderPipeline pipeline : pipelinesToPreload) {
+             CompiledRenderPipeline compiled = device.precompilePipeline(pipeline, newCompilationCache::getShaderSource);
+             if (!compiled.isValid()) {
++                if (!"minecraft".equals(pipeline.getLocation().getNamespace())) {
++                    // NeoFobric: a mod's pipeline failing to compile must not take the whole reload down.
++                    // Fabric mods add their pipelines to this static set (malilib does, per dimension), and
++                    // a shader this tree cannot compile then threw "Failed to load required shader programs",
++                    // the client stuck on a black loading screen with no error shown. The vanilla pipelines
++                    // keep the hard failure below; a broken mod pipeline is skipped like a missing texture.
++                    LOGGER.warn("Could not compile shader program for mod pipeline {}; skipping it", pipeline.getLocation());
++                    continue;
++                }
+                 failedLoads.add(pipeline.getLocation());
+             }
+         }
