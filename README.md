@@ -17,14 +17,14 @@
 
 ## 现状：请当作「能玩但别当真」的测试版
 
-bug 可能还有很多，兼容性也可能还不够好，**甚至无法和 FFAPI（Forgified Fabric API）一起用**（见下）。**本版本验证过的范围**：Fabric API 自己的两套测试（服务端 100/100 全绿、客户端 `BUILD SUCCESSFUL`）；**432 个 26.1.2 模组**（NeoForge + Fabric 混装）实机进世界，集成服务器加载 3.9 秒，无黑屏、无断线，樱花林世界与 HUD 正常渲染（截图确认）。**生产安装链**（安装器装出来的独立专服 / 客户端）本轮没有单独实测，请自行验证。**其他设备理论都能装**：凡是能装 NeoForge 26.1.2 + Fabric 的环境（Windows / Linux / macOS，各种启动器）理论上都可以 —— **但我们只在开发机上验证过，没有做多设备验证**。**能进游戏 ≠ 每个功能都对；NeoForge 模组也可能被连锁效应波及**（桥改的是两边共用的那一层）。
+bug 可能还有很多，兼容性也可能还不够好，**甚至无法和 FFAPI（Forgified Fabric API）一起用**（见下）。**本版本验证过的范围**：Fabric API 自己的两套测试（服务端 100/100 全绿、客户端 `BUILD SUCCESSFUL`）；**432 个 26.1.2 模组**（NeoForge + Fabric 混装；EarthMobs 已按已知问题移出，现为 431）实机进世界，集成服务器加载 3.9 秒，无黑屏、无断线，樱花林世界与 HUD 正常渲染（截图确认）。**生产安装链**（安装器装出来的独立专服 / 客户端）本轮没有单独实测，请自行验证。**其他设备理论都能装**：凡是能装 NeoForge 26.1.2 + Fabric 的环境（Windows / Linux / macOS，各种启动器）理论上都可以 —— **但我们只在开发机上验证过，没有做多设备验证**。**能进游戏 ≠ 每个功能都对；NeoForge 模组也可能被连锁效应波及**（桥改的是两边共用的那一层）。
 
 ### 26.1.2（`26.1.2.126`，2026-10-30）
 
 - **26.1.2 线的第一个发布版本**：桥从 26.2 回移植（Minecraft / NeoForge 26.1.2、FML 11.0.13、Fabric Loader 0.20.1.1、Fabric API 0.155.3+26.1.2、Mixin 0.17.4 + MixinExtras 0.5.5）。`fabric-loader` 由本仓库子模块现场编译。
 - **模组菜单区分加载器**：Fabric 模组有自己的行，带 Loader 标签（Fabric / NeoForge 两种配色），点开能看到 `fabric.mod.json` 里的元数据。
 - **主菜单左下角的模组计数拆成两部分**：`共 N 个模组：NeoForge X + Fabric Y`。
-- **432 件 26.1.2 模组集实机进世界**：集成服务器加载 3.9 秒，无黑屏、无断线。
+- **432 件 26.1.2 模组集实机进世界**：集成服务器加载 3.9 秒，无黑屏、无断线（EarthMobs 之后按已知问题一节移出，现模组集 431 件）。
 - **回归**：Fabric API 服务端套件 **`All 100 required tests passed`** ✓；客户端套件 **`BUILD SUCCESSFUL`**（截图对比、动态注册表同步、生命周期 / 命令等用例全过）。
 
 ## 反馈
@@ -57,6 +57,7 @@ bug 可能还有很多，兼容性也可能还不够好，**甚至无法和 FFAP
 
 **模组集里已知要避开的模组**（都是模组侧的问题，不是桥的）：
 
+- `earthmobsmod 26.1.2-29.6.0` —— 它的 `PigMixin` 调 `Entity.isInFluidType(FluidType)`，而 **26.1.2 这一版 NeoForge 根本没有这套实体-流体 API**（上游 `IEntityExtension` 里整段是注释掉的 `// TODO: Reimplement with Entity/Fluid interaction patches`），该方法要到上游 `26.1.x` 分支（同样是 MC 26.1.2，但流体子系统重写过）才有。表现是猪一 tick 就 `NoSuchMethodError` 崩服。它的依赖声明只写了 `versionRange=[26.1.2.95,)`，所以我们 126 也被判为满足、能装进来 —— 已移出模组集；
 - `cinderscapes` —— 盔甲纹饰的 item model 生成对缺 `cases` 的 JSON 调 `JsonArray.get`，NPE 让 `itemStackModels` future 失败 → 资源重载失败 → 黑屏；
 - Xaero 小地图 / 世界地图 —— `GuiRenderer` 的 Pre 推送了矩阵、Post 没触发，16 帧后 `max stack size of 16 reached`；
 - `shouldersurfing` —— 配置未加载时读 NeoForge 配置，`Cannot get config value before config is loaded`。
@@ -102,7 +103,7 @@ cd NeoFobric
 
 FML stays the host: it starts, it owns the game, and it keeps loading its own mods. The bridge pulls the real **fabric-loader** (compiled from this repository's `fabric-loader` submodule) into the same process, so Fabric mods are loaded the Fabric way: `fabric.mod.json`, entrypoints, nested jars, access wideners / class tweakers and Fabric mixin configs. There is no Forge anywhere, and with no Fabric mod installed this is plain NeoForge.
 
-**State: a playable-but-don't-trust-it beta.** What was verified on 26.1.2: Fabric API's own suites — server **100/100 required tests passed**, client **BUILD SUCCESSFUL**; a **432-mod** 26.1.2 mod set (NeoForge + Fabric mixed) reached an in-world session with a 3.9 s integrated-server load, no black screen and no disconnect. The bridge's own self-check read `events 11/11 wired`, `fabric payload round trip ok` and a healthy network canary on that mod set. The production installer chain (standalone server / client installed from the installer) was not separately tested in this round. Prefer NeoForge builds of mods when they exist; the bridge is "it runs" level, not a guarantee.
+**State: a playable-but-don't-trust-it beta.** What was verified on 26.1.2: Fabric API's own suites — server **100/100 required tests passed**, client **BUILD SUCCESSFUL**; a **432-mod** 26.1.2 mod set (NeoForge + Fabric mixed; EarthMobs has since been removed, 431 now) reached an in-world session with a 3.9 s integrated-server load, no black screen and no disconnect. The bridge's own self-check read `events 11/11 wired`, `fabric payload round trip ok` and a healthy network canary on that mod set. The production installer chain (standalone server / client installed from the installer) was not separately tested in this round. Prefer NeoForge builds of mods when they exist; the bridge is "it runs" level, not a guarantee.
 
 **What changed on 26.1.2**
 
@@ -113,7 +114,7 @@ FML stays the host: it starts, it owns the game, and it keeps loading its own mo
 - A failed static shader pipeline in a mod namespace is logged and skipped instead of failing the whole reload (one of the black-screen causes).
 - `neoforge:recipe_content` pre-encodes every recipe and drops the ones its serializer cannot encode (with a warning) instead of disconnecting the joining player.
 
-**Known incompatibilities**: FFAPI (Forgified Fabric API) and Sinytra Connector cannot be installed alongside this bridge (same packages / same job). Do not merge `upstream/26.1.x` — its fluid subsystem is incompatible with 26.1.2 and the merge drops the bridge code. Enderite's two special recipes are never sent to the client (the mod builds `StreamCodec.unit` with a different instance), so they are absent from the client recipe book while still craftable server-side. SereneSeasons 26.1.2.0.5+ stack-overflows on the 26.1.2 client; use 0.4. Cinderscapes, Xaero's maps and ShoulderSurfing have mod-side crashes and are not part of the verified mod set.
+**Known incompatibilities**: FFAPI (Forgified Fabric API) and Sinytra Connector cannot be installed alongside this bridge (same packages / same job). Do not merge `upstream/26.1.x` — its fluid subsystem is incompatible with 26.1.2 and the merge drops the bridge code. Enderite's two special recipes are never sent to the client (the mod builds `StreamCodec.unit` with a different instance), so they are absent from the client recipe book while still craftable server-side. SereneSeasons 26.1.2.0.5+ stack-overflows on the 26.1.2 client; use 0.4. Cinderscapes, Xaero's maps and ShoulderSurfing have mod-side crashes and are not part of the verified mod set. EarthMobsMod 26.1.2-29.6.0 calls `Entity.isInFluidType`, which 26.1.2's NeoForge does not have (the fluid-entity API only exists on upstream `26.1.x`), so it crashes the server as soon as a pig ticks; it has been removed from the set.
 
 **Install & build**: build with `./gradlew :neoforge:installerJar`, install NeoForge 26.1.2 first, then the installer, then drop both Fabric and NeoForge mods into `mods/`. The first launch is slow: the bridge rewrites the Fabric jars it needs (mixin anchor realignment) into `.neofobric/` and reuses that cache afterwards; any change to the mod set invalidates the cache. `-Dneofobric.noPatchCache=true` forces a rebuild for debugging.
 
