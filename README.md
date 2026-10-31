@@ -23,6 +23,7 @@ bug 可能还有很多，兼容性也可能还不够好，**甚至无法和 FFAP
 
 - **26.1.2 线的第一个发布版本**：桥从 26.2 回移植（Minecraft / NeoForge 26.1.2、FML 11.0.13、Fabric Loader 0.20.1.1、Fabric API 0.155.3+26.1.2、Mixin 0.17.4 + MixinExtras 0.5.5）。`fabric-loader` 由本仓库子模块现场编译。
 - **模组菜单区分加载器**：Fabric 模组有自己的行，带 Loader 标签（Fabric / NeoForge 两种配色），点开能看到 `fabric.mod.json` 里的元数据。
+- **同包内的子 Fabric 模组会折叠**：Fabric API 的 43 个模块、c2me 的 29 个模块这些"装在别人 jar 里"的 Fabric 模组，默认折在所属模组下面（`▸`/`▾` 展开、子行缩进），搜索时自动展开，搜子模组名字也能直接找到。
 - **主菜单左下角的模组计数拆成两部分**：`共 N 个模组：NeoForge X + Fabric Y`。
 - **432 件 26.1.2 模组集实机进世界**：集成服务器加载 3.9 秒，无黑屏、无断线。
 - **合入官方的 26.1.x 流体线**：`upstream/26.1.x` 就是 MC 26.1.2 的开发线，`Entity.isInFluidType`、`InFluidPredicate`、`EntityFluidInteraction` 那套实体-流体 API 以它为准；Fabric 模组声明的流体行为（water-like 等）由桥翻译成 NeoForge 的 `FluidType`，自定义流体里的浮动、推力、重力走 Fabric 自己的 `travelInFluid`。
@@ -109,6 +110,7 @@ FML stays the host: it starts, it owns the game, and it keeps loading its own mo
 
 - Backported the bridge: the four Fabric API mixin landing points, the content-registry hooks, the game-test boot path, and 26.1.2's own shape differences.
 - The mods menu now shows Fabric mods as their own rows with a Loader chip, and the title screen splits the mod count into NeoForge and Fabric.
+- Fabric mods that ride inside another mod's jar (Fabric API's 43 modules, c2me's 29) are folded under their owner with a `▸`/`▾` arrow and indented child rows; a search opens the bundles and finds children by name.
 - `validate()` is repeatable, so a second in-process server can start.
 - Resource reloads honour explicitly removed required packs, and the reload-listener list stays mutable so Fabric mods can register late.
 - A failed static shader pipeline in a mod namespace is logged and skipped instead of failing the whole reload (one of the black-screen causes).
