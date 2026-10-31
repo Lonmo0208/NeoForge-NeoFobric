@@ -983,12 +983,24 @@ public class CommonHooks {
      *
      * <p>A fluid Fabric registered as water-like gets NeoForge's own water type: the two describe the same
      * physics, and sharing the instance keeps every lookup - by tag, by type - on the same tracker.
+     *
+     * <p>Any other declaration gets one type per declaration, cached here. A tag covers both the still and
+     * the flowing fluid, and each of those asks for its own type; handing out a fresh instance per call put
+     * the block's tracker under one instance while tag lookups asked about another, so the entity was never
+     * "in" the fluid and the content-registries float/push tests sank instead of floating. Everything under
+     * one declaration shares the instance.
      */
+    private static final java.util.Map<net.neoforged.fabricbridge.FabricBridgeHooks.FabricFluidBehavior, FluidType> FABRIC_FLUID_TYPES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     private static FluidType fabricFluidType(net.neoforged.fabricbridge.FabricBridgeHooks.FabricFluidBehavior behavior) {
         if (behavior.waterLike()) {
             return NeoForgeMod.WATER_TYPE.value();
         }
+        return FABRIC_FLUID_TYPES.computeIfAbsent(behavior, CommonHooks::createFabricFluidType);
+    }
 
+    private static FluidType createFabricFluidType(net.neoforged.fabricbridge.FabricBridgeHooks.FabricFluidBehavior behavior) {
         return new FluidType(FluidType.Properties.create()
                 .canSwim(behavior.canSwim())
                 .canDrown(behavior.canDrown())
@@ -997,12 +1009,14 @@ public class CommonHooks {
                 .motionScale(behavior.motionScale())
                 .fallDistanceModifier(behavior.fallDistanceModifier())) {
             @Override
-            public boolean move(FluidState state, LivingEntity entity, Vec3 movementVector, double gravity) {
+            public boolean move(LivingEntity entity, Vec3 movementVector, double gravity) {
                 // NeoFobric: NeoForge hands movement in a modded fluid to its type, and everything Fabric
                 // declared about that movement - its gravity multiplier, its speed and slowdown, whether mobs
-                // float in it - is in the behaviour, so it is run from here. The two values its method takes
-                // that this hook does not pass are recomputed the way LivingEntity#travelInFluid computes
-                // them, which is where the hook is called from.
+                // float in it - is in the behaviour, so it is run from here. This is the three-argument
+                // overload: 26.1.2's travelInFluid reaches the type through moveInFluid(type, ...), and the
+                // deprecated four-argument form just forwards here, so overriding this one covers both. The
+                // two values Fabric's method takes that the hook does not pass are recomputed the way
+                // LivingEntity#travelInFluid computes them, which is where the hook is called from.
                 return net.neoforged.fabricbridge.FabricBridgeHooks.moveInFabricFluid(
                         behavior.behavior(), behavior.tag(), entity, movementVector, gravity,
                         entity.getDeltaMovement().y <= 0.0, entity.getY());
