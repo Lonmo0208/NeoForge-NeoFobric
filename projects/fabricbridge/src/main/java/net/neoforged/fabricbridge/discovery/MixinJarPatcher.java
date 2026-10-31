@@ -288,6 +288,95 @@ public final class MixinJarPatcher {
      *
      * @return the class bytes with the entry points routed to the bridge, or null when this is not that class
      */
+    /**
+     * Routes Fabric's creative-tab page API onto the NeoForge creative screen.
+     *
+     * <p>Fabric implements the page API in a client mixin, and that mixin is not registered on this line
+     * (see {@code FabricBootstrapProcessor.DEFAULT_SKIPPED_MIXIN_CONFIGS}): it brings a second page model
+     * that demands every tab carry a Fabric page, and tabs registered by NeoForge mods never do - opening
+     * the creative inventory threw {@code IllegalStateException: Creative mode tab has no page}. Skipping it
+     * would leave every method of this interface throwing {@code AssertionError("Implemented by mixin")}, so
+     * the default bodies are rewritten to ask the screen instead ({@code CreativeModeInventoryScreen}'s
+     * {@code fabricBridge*} accessors), which read and switch the same pages NeoForge's own UI shows.
+     *
+     * <p>26.2 named those screen methods {@code getCreativeTabPage*}; 26.1.2's paged inventory has its own
+     * {@code pages}/{@code currentPage} model, hence the accessors.
+     */
+    private static final String CREATIVE_TAB_SCREEN_INTERFACE =
+            "net/fabricmc/fabric/api/client/creativetab/v1/FabricCreativeModeInventoryScreen.class";
+
+    private static final String CREATIVE_TAB_SCREEN_OWNER =
+            "net/minecraft/client/gui/screens/inventory/CreativeModeInventoryScreen";
+
+    /** Fabric interface method -> the screen accessor that answers it. */
+    private static final Map<String, String> CREATIVE_TAB_DELEGATES = Map.of(
+            "switchToPage(I)Z", "fabricBridgeSwitchToPage(I)Z",
+            "getCurrentPage()I", "fabricBridgePageIndex()I",
+            "getPageCount()I", "fabricBridgePageCount()I",
+            "getTabsOnPage(I)Ljava/util/List;", "fabricBridgeTabsOnPage(I)Ljava/util/List;",
+            "getPage(Lnet/minecraft/world/item/CreativeModeTab;)I", "fabricBridgePageOf(Lnet/minecraft/world/item/CreativeModeTab;)I",
+            "hasAdditionalPages()Z", "fabricBridgeHasAdditionalPages()Z",
+            "getSelectedTab()Lnet/minecraft/world/item/CreativeModeTab;", "fabricBridgeSelectedTab()Lnet/minecraft/world/item/CreativeModeTab;",
+            "setSelectedTab(Lnet/minecraft/world/item/CreativeModeTab;)Z", "fabricBridgeSelectTab(Lnet/minecraft/world/item/CreativeModeTab;)Z");
+
+    /**
+     * @param classBytes the class bytes
+     * @param entryName the jar entry path
+     * @return the class bytes with the interface's default bodies delegating to the screen, or null when
+     *         this is not the interface or nothing matched
+     */
+    private static byte[] bridgeCreativeTabApi(byte[] classBytes, String entryName) {
+        if (!CREATIVE_TAB_SCREEN_INTERFACE.equals(entryName)) {
+            return null;
+        }
+        try {
+            var node = new ClassNode();
+            new ClassReader(classBytes).accept(node, 0);
+            var changed = false;
+            for (var method : node.methods) {
+                var target = CREATIVE_TAB_DELEGATES.get(method.name + method.desc);
+                if (target == null) {
+                    continue;
+                }
+                var targetName = target.substring(0, target.indexOf('('));
+                var targetDesc = target.substring(target.indexOf('('));
+                var argumentTypes = Type.getArgumentTypes(method.desc);
+
+                method.instructions.clear();
+                method.tryCatchBlocks.clear();
+                method.localVariables = null;
+                method.visibleLocalVariableAnnotations = null;
+                method.invisibleLocalVariableAnnotations = null;
+
+                var stack = 1;
+                method.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                // The default body lives in the interface, so `this` is typed as the interface - the
+                // call to the screen needs the cast spelled out or the verifier rejects it.
+                method.instructions.add(new org.objectweb.asm.tree.TypeInsnNode(Opcodes.CHECKCAST, CREATIVE_TAB_SCREEN_OWNER));
+                for (var i = 0; i < argumentTypes.length; i++) {
+                    method.instructions.add(new VarInsnNode(argumentTypes[i].getOpcode(Opcodes.ILOAD), 1 + i));
+                    stack += argumentTypes[i].getSize();
+                }
+                method.instructions.add(new MethodInsnNode(
+                        Opcodes.INVOKEVIRTUAL, CREATIVE_TAB_SCREEN_OWNER, targetName, targetDesc, false));
+                method.instructions.add(new InsnNode(Type.getReturnType(method.desc).getOpcode(Opcodes.IRETURN)));
+                method.maxStack = Math.max(stack, 1 + Type.getReturnType(method.desc).getSize());
+                method.maxLocals = 1 + java.util.Arrays.stream(argumentTypes).mapToInt(Type::getSize).sum();
+                changed = true;
+            }
+            if (!changed) {
+                return null;
+            }
+            var writer = new ClassWriter(0);
+            node.accept(writer);
+            LOGGER.info("[NeoFobric] Routed Fabric's creative-tab page API onto the NeoForge creative screen");
+            return writer.toByteArray();
+        } catch (Exception e) {
+            LOGGER.warn("[NeoFobric] Failed to bridge the Fabric creative tab page API in {}", entryName, e);
+            return null;
+        }
+    }
+
     private static byte[] bridgeFabricTransferTransactions(byte[] classBytes, String entryName) {
         if (!FABRIC_TRANSFER_TRANSACTION_CLASS.equals(entryName)) {
             return null;
@@ -6020,8 +6109,14 @@ public final class MixinJarPatcher {
                 collectFrameTypes(versionMoved, frameStubCandidates);
                 if (!looksLikeMixinClass(entry.getName())) {
                     // Not a mixin: the only rewrite it may need is a call site of a renamed accessor
-                    // member (Fabric's own implementation classes do the casting).
+                    // member (Fabric's own implementation classes do the casting), or Fabric's creative-tab
+                    // page API, whose client mixin is not registered here.
                     var plain = versionMoved;
+                    var bridgedPages = bridgeCreativeTabApi(plain, entry.getName());
+                    if (bridgedPages != null) {
+                        plain = bridgedPages;
+                        patched.put(entry.getName(), plain);
+                    }
                     // A/B diagnostic: -Dneofobric.noTransferBridge=true leaves Fabric's transfer transactions
                     // on Fabric's own stack, so a failure can be attributed to this step or ruled out.
                     if (!Boolean.getBoolean("neofobric.noTransferBridge")) {

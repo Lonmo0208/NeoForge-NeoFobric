@@ -250,7 +250,7 @@
          graphics.blitSprite(RenderPipelines.GUI_TEXTURED, sprites[Mth.clamp(pos, 0, sprites.length)], x, y, 26, 32);
          int iconX = x + 13 - 8;
          int iconY = y + 16 - 8 + (isTop ? 1 : -1);
-@@ -870,6 +_,14 @@
+@@ -870,6 +_,75 @@
          }
      }
  
@@ -260,6 +260,67 @@
 +
 +    public void setCurrentPage(net.neoforged.neoforge.client.gui.CreativeTabsScreenPage currentPage) {
 +        this.currentPage = currentPage;
++    }
++
++    // NeoFobric: the screen side of Fabric's creative-tab page API. Fabric's own client mixin is not
++    // registered on this line (its second page model demands a page from every tab, and NeoForge mods never
++    // give one), so FabricCreativeModeInventoryScreen's default bodies are routed here and both APIs read
++    // the same pages - whatever a Fabric mod reports or switches is what the screen shows.
++    @org.jetbrains.annotations.ApiStatus.Internal
++    public int fabricBridgePageIndex() {
++        return Math.max(0, this.pages.indexOf(this.currentPage));
++    }
++
++    @org.jetbrains.annotations.ApiStatus.Internal
++    public int fabricBridgePageCount() {
++        return Math.max(1, this.pages.size());
++    }
++
++    @org.jetbrains.annotations.ApiStatus.Internal
++    public boolean fabricBridgeHasAdditionalPages() {
++        return this.pages.size() > 1;
++    }
++
++    @org.jetbrains.annotations.ApiStatus.Internal
++    public boolean fabricBridgeSwitchToPage(int page) {
++        if (page < 0 || page >= this.pages.size()) {
++            return false;
++        }
++        this.currentPage = this.pages.get(page);
++        var defaultTab = this.currentPage.getDefaultTab();
++        if (defaultTab != null) {
++            this.selectTab(defaultTab);
++        }
++        return true;
++    }
++
++    @org.jetbrains.annotations.ApiStatus.Internal
++    public java.util.List<CreativeModeTab> fabricBridgeTabsOnPage(int page) {
++        return page >= 0 && page < this.pages.size() ? this.pages.get(page).getVisibleTabs() : java.util.List.of();
++    }
++
++    @org.jetbrains.annotations.ApiStatus.Internal
++    public int fabricBridgePageOf(CreativeModeTab tab) {
++        for (int i = 0; i < this.pages.size(); i++) {
++            if (this.pages.get(i).getVisibleTabs().contains(tab)) {
++                return i;
++            }
++        }
++        return -1;
++    }
++
++    @org.jetbrains.annotations.ApiStatus.Internal
++    public CreativeModeTab fabricBridgeSelectedTab() {
++        return selectedTab;
++    }
++
++    @org.jetbrains.annotations.ApiStatus.Internal
++    public boolean fabricBridgeSelectTab(CreativeModeTab tab) {
++        if (tab == null || !tab.shouldDisplay()) {
++            return false;
++        }
++        this.selectTab(tab);
++        return true;
 +    }
 +
      @OnlyIn(Dist.CLIENT)

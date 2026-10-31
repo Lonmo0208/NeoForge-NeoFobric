@@ -337,13 +337,14 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
             // is what puts Fabric mods' extra models into the bakery - without it Create's
             // dynamically rendered parts (partial models, create:block/flywheel/block) silently fall
             // back to the missing model and draw black-and-magenta.
-            // fabric-creative-tab-api-v1's client config is NOT skipped here, unlike on 26.2: the screen
-            // methods it would be routed onto (getCreativeTabPage*/switchToCreativeTabPage) only exist once
-            // NeoForge grows its paged creative inventory, and 26.1.2 has no such paging. Skipping the
-            // config would leave FabricCreativeModeInventoryScreen's default bodies throwing
-            // AssertionError("Implemented by mixin"), so the Fabric mixin stays registered and owns the
-            // page state; the common config carries the tab registration API Fabric mods actually use.
-            );
+            // fabric-creative-tab-api-v1's client config is skipped again, as on 26.2: NeoForge 26.1.2 does
+            // have paged creative tabs (pages/currentPage/CreativeTabsScreenPage), and Fabric's client mixin
+            // brings a second page model that also demands every tab carry a Fabric page - tabs registered by
+            // NeoForge mods never do, so its init handler threw "Creative mode tab has no page" as soon as the
+            // creative inventory opened. The interface's default bodies are routed onto the NeoForge screen by
+            // MixinJarPatcher#bridgeCreativeTabApi instead, so Fabric mods still read and switch pages; the
+            // common config carries the tab registration API they actually use.
+            "fabric-creative-tab-api-v1.client.mixins.json");
 
     private static void registerFabricMixinConfigs() {
         if (!FabricBridge.hasFabricMods()) {
