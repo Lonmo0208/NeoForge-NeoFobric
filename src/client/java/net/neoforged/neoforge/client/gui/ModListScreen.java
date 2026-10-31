@@ -455,20 +455,15 @@ public class ModListScreen extends Screen {
         return this.expandedBundles.contains(id);
     }
 
-    /** Folds or unfolds the child rows of {@code id}, keeping the selection when it is still on screen. */
+    /** Folds or unfolds the child rows of {@code id}, keeping the view and the selection where they were. */
     public void toggleBundle(String id) {
         if (!this.expandedBundles.remove(id)) {
             this.expandedBundles.add(id);
         }
-        this.modList.refreshList();
-        if (this.selected != null) {
-            var selectedId = this.selected.getId();
-            this.selected = this.modList.children().stream()
-                    .filter(entry -> entry.getId().equals(selectedId))
-                    .findFirst().orElse(null);
-            this.modList.setSelected(this.selected);
-            updateCache();
-        }
+        this.modList.refreshListKeepingView();
+        // The widget re-found the selection by id, so the info panel keeps showing the same mod.
+        this.selected = this.modList.getSelected();
+        updateCache();
     }
 
     private void reloadMods() {

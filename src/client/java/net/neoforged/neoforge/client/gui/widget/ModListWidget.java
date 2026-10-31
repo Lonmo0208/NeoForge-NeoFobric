@@ -56,6 +56,27 @@ public class ModListWidget extends ObjectSelectionList<ModListWidget.ModEntry> {
         parent.buildModList(this::addEntry, mod -> new ModEntry(mod, this.parent));
     }
 
+    /**
+     * NeoFobric: rebuilds the rows without moving the view.
+     *
+     * <p>Folding a bundle changes the content height, and the selection is rebuilt as a new entry. Both
+     * {@code clearEntries} (it drops the selection) and {@code setSelected} (it scrolls a clipped entry into
+     * view) move the list on their own, so a fold used to jump the page around. The scroll is captured first
+     * and restored last; the selection is re-found by id so the info panel keeps showing the same mod.
+     */
+    public void refreshListKeepingView() {
+        var selectedId = this.getSelected() == null ? null : this.getSelected().getId();
+        double scroll = this.scrollAmount();
+        this.refreshList();
+        if (selectedId != null) {
+            this.children().stream()
+                    .filter(entry -> entry.getId().equals(selectedId))
+                    .findFirst()
+                    .ifPresent(this::setSelected);
+        }
+        this.setScrollAmount(Math.min(scroll, this.maxScrollAmount()));
+    }
+
     public class ModEntry extends ObjectSelectionList.Entry<ModEntry> {
         private final ModListScreen.ModRow row;
         private final ModListScreen parent;
