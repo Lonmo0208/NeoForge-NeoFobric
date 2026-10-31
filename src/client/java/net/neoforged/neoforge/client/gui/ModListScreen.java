@@ -144,7 +144,7 @@ public class ModListScreen extends Screen {
     private EditBox search;
 
     private boolean sorted = false;
-    private SortType sortType = SortType.NORMAL;
+    private SortType sortType = SortType.A_TO_Z;
 
     public ModListScreen(Screen parentScreen) {
         super(Component.translatable("fml.menu.mods.title"));
@@ -361,7 +361,10 @@ public class ModListScreen extends Screen {
         addRenderableWidget(SortType.A_TO_Z.button = Button.builder(SortType.A_TO_Z.getButtonText(), b -> resortMods(SortType.A_TO_Z)).bounds(x, PADDING, width - buttonMargin, 20).build());
         x += width + buttonMargin;
         addRenderableWidget(SortType.Z_TO_A.button = Button.builder(SortType.Z_TO_A.getButtonText(), b -> resortMods(SortType.Z_TO_A)).bounds(x, PADDING, width - buttonMargin, 20).build());
-        resortMods(SortType.NORMAL);
+        // NeoFobric: open with A-Z over both loaders, like 26.2's mod list. The loader's own default
+        // ("Off") keeps FML's list order and therefore groups NeoForge rows before the contributed Fabric
+        // ones; A-Z interleaves them by name, which is what a player expects of a sorted list.
+        resortMods(this.sortType);
         updateCache();
     }
 

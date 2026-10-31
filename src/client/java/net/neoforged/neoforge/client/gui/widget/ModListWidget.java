@@ -97,10 +97,11 @@ public class ModListWidget extends ObjectSelectionList<ModListWidget.ModEntry> {
                     guiGraphics.blit(RenderPipelines.GUI_TEXTURED, VERSION_CHECK_ICONS, getX() + width - 12, top + entryHeight / 4, vercheck.status().getSheetOffset() * 8, (vercheck.status().isAnimated() && ((System.currentTimeMillis() / 800 & 1)) == 1) ? 8 : 0, 8, 8, 64, 16);
                 }
             }
-            if (this.parent.hasBundledChildren(row.id()) && (hovered || this.parent.isBundleOpen(row.id()))) {
+            if (this.parent.hasBundledChildren(row.id())) {
                 // Same vanilla HUD sprites 26.2's mod list uses for the fold control. blitSprite, not blit:
                 // these are atlas sprites, and sampling the atlas at (0, 0) paints the missing-texture
-                // checkerboard instead of the arrow.
+                // checkerboard instead of the arrow. Unlike 26.2 the arrow is always drawn, not only while
+                // hovered: a player should see which rows carry bundled mods without sweeping the mouse.
                 var icon = this.parent.isBundleOpen(row.id()) ? COLLAPSE_ICON : EXPAND_ICON;
                 guiGraphics.blitSprite(RenderPipelines.GUI_TEXTURED, icon, expandIconX(), expandIconY(), EXPAND_ICON_WIDTH, EXPAND_ICON_HEIGHT);
             }
