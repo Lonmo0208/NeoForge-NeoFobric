@@ -5847,6 +5847,12 @@ public final class MixinJarPatcher {
                     versionMoved = c2mePrologue;
                     patched.put(entry.getName(), versionMoved);
                 }
+                var c2meShutdownWait = net.neoforged.fabricbridge.compbridlnk.C2meCompat
+                        .boundShutdownWait(versionMoved, entry.getName());
+                if (c2meShutdownWait != null) {
+                    versionMoved = c2meShutdownWait;
+                    patched.put(entry.getName(), versionMoved);
+                }
                 // Temporary diagnostic for the connected-textures pipeline, off unless asked for with
                 // -Dneofobric.debugContinuity=true: it logs whether the CTM scan runs, how many definitions
                 // it finds, and whether any block model gets wrapped. Counters do not tell apart a listener

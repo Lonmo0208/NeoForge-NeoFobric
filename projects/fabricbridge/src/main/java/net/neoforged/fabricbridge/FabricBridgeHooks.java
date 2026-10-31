@@ -1194,6 +1194,49 @@ public final class FabricBridgeHooks {
      * <p>The base smelt time is passed in because Fabric's callbacks scale their values by it and the data
      * map path has no equivalent parameter of its own.
      */
+    /**
+     * Answers c2me's shutdown wait with a bound.
+     *
+     * <p>c2me spins on {@code TheChunkSystem.itemCount()} while a level closes and only stops once the
+     * count is zero. Any mod with a background chunk loader defeats that: MCA's structure locator keeps
+     * generating chunks during the shutdown ({@code Sync load chunk ... create=true} on its
+     * {@code MCA-Structure-Locator} worker), the count hovers around twenty, and "save and quit" hangs for
+     * good. The count is reported as-is until {@code neofobric.chunkUnloadWaitMs} (default 30 s) has passed,
+     * then reported as zero so the server can close; a stop that starts over a minute later arms itself
+     * again.
+     */
+    private static final long CHUNK_UNLOAD_WAIT_MS = Long.getLong("neofobric.chunkUnloadWaitMs", 30_000L);
+    private static volatile long chunkUnloadDeadline;
+
+    public static int boundedChunkCount(Object chunkSystem) {
+        int pending;
+        try {
+            pending = (int) chunkSystem.getClass().getMethod("itemCount").invoke(chunkSystem);
+        } catch (ReflectiveOperationException e) {
+            return 0;
+        }
+        if (pending <= 0) {
+            chunkUnloadDeadline = 0L;
+            return pending;
+        }
+        long now = System.currentTimeMillis();
+        long deadline = chunkUnloadDeadline;
+        if (deadline != 0L && now > deadline + 60_000L) {
+            deadline = 0L; // A stop that runs a minute later is a new one; give it its own window.
+        }
+        if (deadline == 0L) {
+            deadline = now + CHUNK_UNLOAD_WAIT_MS;
+            chunkUnloadDeadline = deadline;
+        }
+        if (now > deadline) {
+            LOGGER.warn("[NeoFobric] Stopped waiting for {} chunk(s) to unload after {} ms: something is still"
+                    + " loading chunks while the server stops (MCA's structure locator does this)",
+                    pending, CHUNK_UNLOAD_WAIT_MS);
+            return 0;
+        }
+        return pending;
+    }
+
     public static void applyFabricFuelEvents(Object builder, Object registries, Object features, int baseSmeltTime) {
         try {
             var modsLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
