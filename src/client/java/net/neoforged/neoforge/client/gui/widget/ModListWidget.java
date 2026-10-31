@@ -77,13 +77,10 @@ public class ModListWidget extends ObjectSelectionList<ModListWidget.ModEntry> {
             int left = getContentX();
             int top = getContentY();
             Font font = this.parent.getFontRenderer();
-            // NeoFobric: a Fabric mod that jars other Fabric mods gets a fold arrow, and the jarred rows are
-            // indented under it. Everything else starts at the content edge.
+            // NeoFobric: a mod comes indented under the mod whose jar carries it (26.2 does the same), and a
+            // mod that carries others gets the vanilla locator-bar arrow on its right edge as the fold
+            // control.
             if (this.parent.isRowNested(row)) {
-                left += BUNDLE_INDENT;
-            } else if (this.parent.hasBundledChildren(row.id())) {
-                String arrow = this.parent.isBundleOpen(row.id()) ? "▾" : "▸";
-                guiGraphics.text(font, arrow, getContentX() + 1, top + 2, 0xFFBBBBBB, false);
                 left += BUNDLE_INDENT;
             }
             guiGraphics.text(font, Language.getInstance().getVisualOrder(FormattedText.composite(font.substrByWidth(name, listWidth))), left + 3, top + 2, 0xFFFFFFFF, false);
@@ -100,6 +97,25 @@ public class ModListWidget extends ObjectSelectionList<ModListWidget.ModEntry> {
                     guiGraphics.blit(RenderPipelines.GUI_TEXTURED, VERSION_CHECK_ICONS, getX() + width - 12, top + entryHeight / 4, vercheck.status().getSheetOffset() * 8, (vercheck.status().isAnimated() && ((System.currentTimeMillis() / 800 & 1)) == 1) ? 8 : 0, 8, 8, 64, 16);
                 }
             }
+            if (this.parent.hasBundledChildren(row.id())) {
+                // Same vanilla HUD sprites 26.2's mod list uses for the fold control.
+                var icon = this.parent.isBundleOpen(row.id()) ? COLLAPSE_ICON : EXPAND_ICON;
+                guiGraphics.blit(RenderPipelines.GUI_TEXTURED, icon, expandIconX(), expandIconY(), 0.0F, 0.0F, EXPAND_ICON_WIDTH, EXPAND_ICON_HEIGHT, EXPAND_ICON_WIDTH, EXPAND_ICON_HEIGHT);
+            }
+        }
+
+        private static final Identifier EXPAND_ICON = Identifier.withDefaultNamespace("hud/locator_bar_arrow_down");
+        private static final Identifier COLLAPSE_ICON = Identifier.withDefaultNamespace("hud/locator_bar_arrow_up");
+        private static final int EXPAND_ICON_WIDTH = 7;
+        private static final int EXPAND_ICON_HEIGHT = 10;
+
+        /** {@return the x of the fold arrow, or -1 when this row carries nothing} */
+        private int expandIconX() {
+            return this.parent.hasBundledChildren(row.id()) ? getContentRight() - EXPAND_ICON_WIDTH - 3 : -1;
+        }
+
+        private int expandIconY() {
+            return getContentY() + (getContentHeight() - EXPAND_ICON_HEIGHT) / 2;
         }
 
         /** A dark chip with a 1px brand-coloured border and brand-coloured text, drawn from primitives. */
@@ -125,15 +141,12 @@ public class ModListWidget extends ObjectSelectionList<ModListWidget.ModEntry> {
         @Override
         public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
             // NeoFobric: the fold arrow is its own hit target - folding must not also select the row.
-            if (!ModListScreen.isBundled(row) && this.parent.hasBundledChildren(row.id())) {
-                int arrowLeft = getContentX();
-                int arrowRight = arrowLeft + BUNDLE_INDENT;
-                int arrowTop = getContentY();
-                int arrowBottom = arrowTop + getContentHeight();
-                if (event.x() >= arrowLeft && event.x() < arrowRight && event.y() >= arrowTop && event.y() < arrowBottom) {
-                    this.parent.toggleBundle(row.id());
-                    return true;
-                }
+            int iconX = expandIconX();
+            if (iconX >= 0
+                    && event.x() >= iconX - 2 && event.x() < iconX + EXPAND_ICON_WIDTH + 2
+                    && event.y() >= expandIconY() - 1 && event.y() < expandIconY() + EXPAND_ICON_HEIGHT + 1) {
+                this.parent.toggleBundle(row.id());
+                return true;
             }
             // clicking on a selected item a second time unselects it
             parent.setSelected(isFocused() ? null : this);
