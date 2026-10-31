@@ -22,6 +22,9 @@ import net.neoforged.neoforge.common.NeoForgeMod;
 import net.neoforged.neoforgespi.language.IModInfo;
 
 public class ModListWidget extends ObjectSelectionList<ModListWidget.ModEntry> {
+    /** How far a jarred row, or the text next to a fold arrow, is pushed in from the content edge. */
+    private static final int BUNDLE_INDENT = 10;
+
     private static String stripControlCodes(String value) {
         return net.minecraft.util.StringUtil.stripColor(value);
     }
@@ -74,6 +77,15 @@ public class ModListWidget extends ObjectSelectionList<ModListWidget.ModEntry> {
             int left = getContentX();
             int top = getContentY();
             Font font = this.parent.getFontRenderer();
+            // NeoFobric: a Fabric mod that jars other Fabric mods gets a fold arrow, and the jarred rows are
+            // indented under it. Everything else starts at the content edge.
+            if (this.parent.isRowNested(row)) {
+                left += BUNDLE_INDENT;
+            } else if (this.parent.hasBundledChildren(row.id())) {
+                String arrow = this.parent.isBundleOpen(row.id()) ? "▾" : "▸";
+                guiGraphics.text(font, arrow, getContentX() + 1, top + 2, 0xFFBBBBBB, false);
+                left += BUNDLE_INDENT;
+            }
             guiGraphics.text(font, Language.getInstance().getVisualOrder(FormattedText.composite(font.substrByWidth(name, listWidth))), left + 3, top + 2, 0xFFFFFFFF, false);
             var versionLine = Language.getInstance().getVisualOrder(FormattedText.composite(font.substrByWidth(version, listWidth)));
             guiGraphics.text(font, versionLine, left + 3, top + 2 + font.lineHeight, 0xFFCCCCCC, false);
@@ -112,6 +124,17 @@ public class ModListWidget extends ObjectSelectionList<ModListWidget.ModEntry> {
 
         @Override
         public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+            // NeoFobric: the fold arrow is its own hit target - folding must not also select the row.
+            if (!ModListScreen.isBundled(row) && this.parent.hasBundledChildren(row.id())) {
+                int arrowLeft = getContentX();
+                int arrowRight = arrowLeft + BUNDLE_INDENT;
+                int arrowTop = getContentY();
+                int arrowBottom = arrowTop + getContentHeight();
+                if (event.x() >= arrowLeft && event.x() < arrowRight && event.y() >= arrowTop && event.y() < arrowBottom) {
+                    this.parent.toggleBundle(row.id());
+                    return true;
+                }
+            }
             // clicking on a selected item a second time unselects it
             parent.setSelected(isFocused() ? null : this);
             ModListWidget.this.setSelected(isFocused() ? null : this);

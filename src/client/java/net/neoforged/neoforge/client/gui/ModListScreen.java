@@ -14,10 +14,14 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -126,6 +130,14 @@ public class ModListScreen extends Screen {
     private int listWidth;
     private List<ModRow> mods;
     private final List<ModRow> unsortedMods;
+    /** The ids of the rows currently listed, so a jarred row can tell whether its owner is on screen. */
+    private Set<String> visibleIds = Set.of();
+    /**
+     * NeoFobric: the Fabric mods whose child rows are open. A Fabric mod can travel inside another mod's
+     * jar (Fabric API's modules ride inside fabric-api, c2me's modules inside c2me), and the bridge reports
+     * the owner in the manifest - those rows start folded under their owner so the list stays readable.
+     */
+    private final Set<String> expandedBundles = new LinkedHashSet<>();
     private Button configButton, openModsFolderButton, doneButton;
 
     private int buttonMargin = 1;
@@ -142,11 +154,13 @@ public class ModListScreen extends Screen {
         this.parentScreen = parentScreen;
         this.unsortedMods = buildRows();
         this.mods = this.unsortedMods;
+        this.visibleIds = this.unsortedMods.stream().map(ModRow::id).collect(Collectors.toUnmodifiableSet());
     }
 
     private static List<ModRow> buildRows() {
         var rows = new ArrayList<ModRow>();
         var fmlIds = new java.util.HashSet<String>();
+        var contributedRows = ModListContributions.contributions();
         for (var mod : ModList.get().getSortedMods()) {
             var info = mod.getModInfo();
             fmlIds.add(info.getModId());
@@ -154,7 +168,7 @@ public class ModListScreen extends Screen {
                     MavenVersionTranslator.artifactVersionToString(info.getVersion()), null, null, null, null, null));
         }
         // Fabric mods are not part of FML's list - the bridge carries their metadata in a manifest.
-        for (var contributed : ModListContributions.contributions()) {
+        for (var contributed : contributedRows) {
             if (!fmlIds.add(contributed.id())) {
                 continue;
             }
@@ -368,11 +382,72 @@ public class ModListScreen extends Screen {
     }
 
     public <T extends ObjectSelectionList.Entry<T>> void buildModList(Consumer<T> modListViewConsumer, Function<ModRow, T> newEntry) {
-        mods.forEach(mod -> modListViewConsumer.accept(newEntry.apply(mod)));
+        // NeoFobric: child Fabric mods are folded under the mod that jars them. A child whose owner is not
+        // part of this (filtered) list stays visible at the top level, so searching for it by name finds it
+        // even when its owner does not match.
+        var childrenByParent = new LinkedHashMap<String, List<ModRow>>();
+        for (var mod : mods) {
+            if (isRowNested(mod)) {
+                childrenByParent.computeIfAbsent(mod.bundledBy(), _ -> new ArrayList<>()).add(mod);
+            }
+        }
+        for (var mod : mods) {
+            if (isRowNested(mod)) {
+                continue; // Emitted under its owner below.
+            }
+            modListViewConsumer.accept(newEntry.apply(mod));
+            var children = childrenByParent.get(mod.id());
+            if (children != null && isBundleOpen(mod.id())) {
+                children.forEach(child -> modListViewConsumer.accept(newEntry.apply(child)));
+            }
+        }
+    }
+
+    /** {@return whether this jarred row is folded under an owner that is part of the current list} */
+    public boolean isRowNested(ModRow row) {
+        return isBundled(row) && this.visibleIds.contains(row.bundledBy());
+    }
+
+    public static boolean isBundled(ModRow row) {
+        return row.bundledBy() != null && !row.bundledBy().isBlank();
+    }
+
+    /** {@return the mods jarred inside {@code id}, by display name} */
+    static List<ModRow> bundledChildrenOf(String id, List<ModRow> rows) {
+        return rows.stream()
+                .filter(row -> id.equals(row.bundledBy()))
+                .sorted(Comparator.comparing(row -> stripControlCodes(row.displayName()).toLowerCase(Locale.ROOT)))
+                .toList();
+    }
+
+    public boolean hasBundledChildren(String id) {
+        return !bundledChildrenOf(id, this.unsortedMods).isEmpty();
+    }
+
+    /** {@return whether the child rows of {@code id} are shown} While searching, bundles are always open. */
+    public boolean isBundleOpen(String id) {
+        return !search.getValue().isBlank() || this.expandedBundles.contains(id);
+    }
+
+    /** Folds or unfolds the child rows of {@code id}, keeping the selection when it is still on screen. */
+    public void toggleBundle(String id) {
+        if (!this.expandedBundles.remove(id)) {
+            this.expandedBundles.add(id);
+        }
+        this.modList.refreshList();
+        if (this.selected != null) {
+            var selectedId = this.selected.getId();
+            this.selected = this.modList.children().stream()
+                    .filter(entry -> entry.getId().equals(selectedId))
+                    .findFirst().orElse(null);
+            this.modList.setSelected(this.selected);
+            updateCache();
+        }
     }
 
     private void reloadMods() {
         this.mods = this.unsortedMods.stream().filter(mi -> stripControlCodes(mi.displayName()).toLowerCase(Locale.ROOT).contains(search.getValue().toLowerCase(Locale.ROOT))).collect(Collectors.toCollection(ArrayList::new));
+        this.visibleIds = this.mods.stream().map(ModRow::id).collect(Collectors.toUnmodifiableSet());
         lastFilterText = search.getValue();
     }
 
@@ -435,6 +510,11 @@ public class ModListScreen extends Screen {
             }
             if (row.bundledBy() != null && !row.bundledBy().isBlank()) {
                 lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.bundledby", row.bundledBy()).replace("\r\n", "\n"));
+            }
+            var bundledChildren = bundledChildrenOf(row.id(), this.unsortedMods);
+            if (!bundledChildren.isEmpty()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.childmods",
+                        bundledChildren.stream().map(ModRow::displayName).collect(Collectors.joining(", "))).replace("\r\n", "\n"));
             }
             lines.add(null);
             if (row.description() != null && !row.description().getString().isBlank()) {
