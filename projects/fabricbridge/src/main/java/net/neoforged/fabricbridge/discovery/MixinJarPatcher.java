@@ -196,15 +196,18 @@ public final class MixinJarPatcher {
                     "(Lnet/minecraft/core/RegistryAccess;)",
                     "(Lnet/minecraft/core/RegistryAccess;Lnet/neoforged/neoforge/network/connection/ConnectionType;)"),
             // fabric-gametest-api-v1 starts its server-side game tests from a HEAD injection into
-            // RegistryDataLoader's four-argument load(...): it records there whether the load carries the test
-            // registries, and its freeze-time hook then registers the tests into them. 26.1.2 keeps that
-            // four-argument method as the live entry point, so the annotation resolves as written and must
-            // not be moved to 26.2's wider overload (which does not exist here) - a move makes the mixin
-            // silently skip, and the test server then runs vanilla's single smoke test and nothing else.
+            // RegistryDataLoader's resource-manager load(...): it records there whether the load carries the
+            // test registries, and its freeze-time hook then registers the tests into them. The fluid line
+            // hands that call a trailing list of pending tags, so WorldLoader no longer reaches the
+            // four-argument shape the injection names - it silently skipped, and the test server then ran
+            // vanilla's single smoke test instead of the Fabric testmods' hundred. The freeze-time lambda
+            // also gained the leading boolean its target captures.
             "net/fabricmc/fabric/mixin/gametest/RegistryDataLoaderMixin",
             Map.of(
                     "(Ljava/util/List;Ljava/util/Map;Ljava/lang/Void;)",
-                    "(ZLjava/util/List;Ljava/util/Map;Ljava/lang/Void;)"),
+                    "(ZLjava/util/List;Ljava/util/Map;Ljava/lang/Void;)",
+                    "(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;)",
+                    "(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/List;Ljava/util/List;Ljava/util/concurrent/Executor;Ljava/util/List;)"),
             // fabric-transfer-api-v1 keeps a write's side effects off the world until its transaction commits by
             // wrapping the setChanged() call inside setItem(slot, stack) and skipping it while a write is in
             // flight - its VanillaStorageTests asserts an uncommitted insert schedules no comparator update.

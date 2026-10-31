@@ -55,7 +55,7 @@
                                          if (x == eyeBlockX && z == eyeBlockZ && eyeY >= fluidBottom && eyeY <= fluidTop) {
                                              tracker.eyesInside = true;
                                          }
-@@ -118,43 +_,168 @@
+@@ -118,43 +_,177 @@
          return hasFluid;
      }
  
@@ -214,7 +214,16 @@
 +        } else if (fluidTag == net.minecraft.tags.FluidTags.LAVA) {
 +            return net.neoforged.neoforge.common.NeoForgeMod.LAVA_TYPE.value();
 +        } else {
-+            throw new IllegalArgumentException("Cannot look up tracker by tag for non-vanilla fluid: " + fluidTag);
++            // NeoFobric: a modded fluid tag (Fabric's content registries hand these to isInFluid) has no
++            // dedicated type of its own, so resolve it through the fluids the tag contains instead of
++            // refusing the lookup. The first entry's type is what the tracker is keyed by, which is what
++            // the caller is asking for; an empty or unknown tag answers with the empty type, like the
++            // lookup above does when no tracker matched.
++            var taggedFluids = net.minecraft.core.registries.BuiltInRegistries.FLUID.getTagOrEmpty(fluidTag);
++            for (var fluid : taggedFluids) {
++                return fluid.value().getFluidType();
++            }
++            return net.neoforged.neoforge.common.NeoForgeMod.EMPTY_TYPE.value();
 +        }
 +    }
 +
