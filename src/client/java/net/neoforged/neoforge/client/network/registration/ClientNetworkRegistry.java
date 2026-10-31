@@ -254,6 +254,16 @@ public final class ClientNetworkRegistry extends NetworkRegistry {
 
         NetworkFilters.injectIfNecessary(listener.getConnection());
 
+        sendInitialListeningChannels(listener);
+    }
+
+    /// Invoked by the client when it receives a [MinecraftRegisterPayload] during negotiation in the configuration phase.
+    /// This will respond to the server with the client's set of builtin and optional channels to indicate it supports the common protocol.
+    ///
+    /// Invoked on the network thread.
+    ///
+    /// @param listener The listener which received the brand payload.
+    public static void sendInitialListeningChannels(ClientConfigurationPacketListener listener) {
         ImmutableSet.Builder<Identifier> nowListeningOn = ImmutableSet.builder();
         nowListeningOn.addAll(getInitialListeningChannels(listener.flow()));
         PAYLOAD_REGISTRATIONS.get(ConnectionProtocol.CONFIGURATION).entrySet().stream()

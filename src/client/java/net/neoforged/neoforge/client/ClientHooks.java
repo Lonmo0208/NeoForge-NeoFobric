@@ -67,6 +67,7 @@ import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.input.MouseButtonInfo;
+import net.minecraft.client.input.PreeditEvent;
 import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.geom.EntityModelSet;
 import net.minecraft.client.model.geom.ModelLayerLocation;
@@ -209,6 +210,8 @@ import org.apache.logging.log4j.Marker;
 import org.apache.logging.log4j.MarkerManager;
 import org.jetbrains.annotations.ApiStatus;
 import org.joml.Matrix4fc;
+import org.joml.Vector2i;
+import org.joml.Vector2ic;
 import org.joml.Vector4f;
 import org.jspecify.annotations.Nullable;
 
@@ -581,6 +584,16 @@ public class ClientHooks {
         NeoForge.EVENT_BUS.post(event);
     }
 
+    public static boolean onScreenPreeditPre(Screen guiScreen, @Nullable PreeditEvent preeditEvent) {
+        var event = new ScreenEvent.Preedit.Pre(guiScreen, preeditEvent);
+        return NeoForge.EVENT_BUS.post(event).isCanceled();
+    }
+
+    public static void onScreenPreeditPost(Screen guiScreen, @Nullable PreeditEvent preeditEvent) {
+        Event event = new ScreenEvent.Preedit.Post(guiScreen, preeditEvent);
+        NeoForge.EVENT_BUS.post(event);
+    }
+
     public static boolean onMouseButtonPre(MouseButtonInfo mouseButtonInfo, int action) {
         return NeoForge.EVENT_BUS.post(new InputEvent.MouseButton.Pre(mouseButtonInfo, action)).isCanceled();
     }
@@ -589,8 +602,14 @@ public class ClientHooks {
         NeoForge.EVENT_BUS.post(new InputEvent.MouseButton.Post(mouseButtonInfo, action));
     }
 
+    /// @deprecated Use [#onMouseScroll(MouseHandler, double, double, Vector2ic)] instead
+    @Deprecated(forRemoval = true, since = "26.1")
     public static boolean onMouseScroll(MouseHandler mouseHelper, double scrollDeltaX, double scrollDeltaY) {
-        var event = new InputEvent.MouseScrollingEvent(scrollDeltaX, scrollDeltaY, mouseHelper.isLeftPressed(), mouseHelper.isMiddlePressed(), mouseHelper.isRightPressed(), mouseHelper.xpos(), mouseHelper.ypos());
+        return onMouseScroll(mouseHelper, scrollDeltaX, scrollDeltaY, new Vector2i(0, 0));
+    }
+
+    public static boolean onMouseScroll(MouseHandler mouseHelper, double scrollDeltaX, double scrollDeltaY, Vector2ic acummulatedScroll) {
+        var event = new InputEvent.MouseScrollingEvent(scrollDeltaX, scrollDeltaY, acummulatedScroll, mouseHelper.isLeftPressed(), mouseHelper.isMiddlePressed(), mouseHelper.isRightPressed(), mouseHelper.xpos(), mouseHelper.ypos());
         return NeoForge.EVENT_BUS.post(event).isCanceled();
     }
 

@@ -9,23 +9,42 @@
          new RegistryDataLoader.RegistryData<>(Registries.BIOME, Biome.NETWORK_CODEC),
          new RegistryDataLoader.RegistryData<>(Registries.CHAT_TYPE, ChatType.DIRECT_CODEC),
          new RegistryDataLoader.RegistryData<>(Registries.TRIM_PATTERN, TrimPattern.DIRECT_CODEC),
-@@ -159,7 +_,7 @@
+@@ -159,21 +_,51 @@
          new RegistryDataLoader.RegistryData<>(Registries.DIALOG, Dialog.DIRECT_CODEC),
          new RegistryDataLoader.RegistryData<>(Registries.WORLD_CLOCK, WorldClock.DIRECT_CODEC),
          new RegistryDataLoader.RegistryData<>(Registries.TIMELINE, Timeline.NETWORK_CODEC)
 -    );
 +    )); // Neo: Keep the list so custom registries can be added later
  
++    /// @deprecated Neo: use [#load(ResourceManager, List, List, Executor, List)] instead
++    @Deprecated
      public static CompletableFuture<RegistryAccess.Frozen> load(
          ResourceManager resourceManager,
-@@ -173,7 +_,25 @@
-                 return new ResourceManagerRegistryLoadTask<>(data, Lifecycle.stable(), loadingErrors, resourceManager);
+         List<HolderLookup.RegistryLookup<?>> contextRegistries,
+         List<RegistryDataLoader.RegistryData<?>> registriesToLoad,
+         Executor executor
++    ) {
++        return load(resourceManager, contextRegistries, registriesToLoad, executor, List.of());
++    }
++
++    public static CompletableFuture<RegistryAccess.Frozen> load(
++        ResourceManager resourceManager,
++        List<HolderLookup.RegistryLookup<?>> contextRegistries,
++        List<RegistryDataLoader.RegistryData<?>> registriesToLoad,
++        Executor executor,
++        List<Registry.PendingTags<?>> pendingTags
+     ) {
+         RegistryDataLoader.LoaderFactory loaderFactory = new RegistryDataLoader.LoaderFactory() {
+             @Override
+             public <T> RegistryLoadTask<T> create(RegistryDataLoader.RegistryData<T> data, Map<ResourceKey<?>, Exception> loadingErrors) {
+-                return new ResourceManagerRegistryLoadTask<>(data, Lifecycle.stable(), loadingErrors, resourceManager);
++                return new ResourceManagerRegistryLoadTask<>(data, Lifecycle.stable(), loadingErrors, resourceManager, pendingTags);
              }
          };
 +        // NeoFobric: go through the four-argument shim on purpose. Fabric's registry sync wraps the call
 +        // with the vanilla four-argument shape to bind its IS_SERVER ScopedValue around the load (its
 +        // handler's Operation.call sits inside a lambda, which the bridge's handler widening cannot grow
-+        // with the extra boolean). The shim forwards to the wider method with fromResources=true.
++        // with the extra parameter). The shim forwards to the wider method with fromResources=true.
          return load(loaderFactory, contextRegistries, registriesToLoad, executor);
 +    }
 +

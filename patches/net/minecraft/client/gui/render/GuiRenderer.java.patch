@@ -4,12 +4,11 @@
      private final MultiBufferSource.BufferSource bufferSource;
      private final SubmitNodeCollector submitNodeCollector;
      private final FeatureRenderDispatcher featureRenderDispatcher;
--    public final Map<Class<? extends PictureInPictureRenderState>, PictureInPictureRenderer<?>> pictureInPictureRenderers;
 +    // NeoFobric: the vanilla-shaped picture-in-picture renderer map stays where vanilla had it. Fabric's
 +    // rendering mixins register through it (@Shadow for some, the wrapped builder call for others) and
 +    // preparePictureInPictureState falls back to it when no NeoForge pool matches the state. It is public
 +    // through the access transformer, not through this patch.
-+    private final Map<Class<? extends PictureInPictureRenderState>, PictureInPictureRenderer<?>> pictureInPictureRenderers;
+     public final Map<Class<? extends PictureInPictureRenderState>, PictureInPictureRenderer<?>> pictureInPictureRenderers;
 +    private final Map<Class<? extends PictureInPictureRenderState>, net.neoforged.neoforge.client.gui.PictureInPictureRendererPool<?>> pictureInPictureRendererPools;
 +    private final Set<PictureInPictureRenderState> pictureInPictureRenderStatesScratch = new it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet<>();
      private @Nullable GuiItemAtlas itemAtlas;

@@ -43,6 +43,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
 import net.neoforged.fml.ModLoader;
 import net.neoforged.neoforge.common.NeoForgeVersion;
+import net.neoforged.neoforge.common.config.NeoForgeCommonConfig;
 import net.neoforged.neoforge.common.extensions.ICommonPacketListener;
 import net.neoforged.neoforge.network.configuration.CommonRegisterTask;
 import net.neoforged.neoforge.network.configuration.CommonVersionTask;
@@ -99,11 +100,7 @@ public class NetworkRegistry {
             ModdedNetworkPayload.ID, ModdedNetworkPayload.STREAM_CODEC,
             ModdedNetworkSetupFailedPayload.ID, ModdedNetworkSetupFailedPayload.STREAM_CODEC,
             CommonVersionPayload.ID, CommonVersionPayload.STREAM_CODEC,
-            CommonRegisterPayload.ID, CommonRegisterPayload.STREAM_CODEC,
-            // Neo: Register legacy Dinnerbone protocol payloads to prevent decode failures
-            // when the server sends old-format register/unregister packets.
-            Identifier.fromNamespaceAndPath("legacy", "register"), MinecraftRegisterPayload.STREAM_CODEC,
-            Identifier.fromNamespaceAndPath("legacy", "unregister"), MinecraftUnregisterPayload.STREAM_CODEC);
+            CommonRegisterPayload.ID, CommonRegisterPayload.STREAM_CODEC);
 
     /**
      * Registry of all custom payload handlers. The initial state of this map should reflect the protocols which support custom payloads.
@@ -744,7 +741,15 @@ public class NetworkRegistry {
      * @param resourceLocations The resource locations to add.
      */
     public static void onMinecraftRegister(Connection connection, Set<Identifier> resourceLocations) {
-        ChannelAttributes.getOrCreateAdHocChannels(connection).addAll(resourceLocations);
+        var channels = ChannelAttributes.getOrCreateAdHocChannels(connection);
+        if ((channels.size() + resourceLocations.size()) > NeoForgeCommonConfig.INSTANCE.maxAdhocChannelLimit.getAsInt()) {
+            if (connection.getPacketListener() instanceof ICommonPacketListener listener) {
+                listener.disconnect(Component.translatable("neoforge.network.adhoc_channels.too_many"));
+                return;
+            }
+            throw new RuntimeException("Too many ad-hoc channels.");
+        }
+        channels.addAll(resourceLocations);
     }
 
     /**
@@ -772,7 +777,7 @@ public class NetworkRegistry {
         nowForgottenChannels.add(MinecraftRegisterPayload.ID);
         nowForgottenChannels.add(MinecraftUnregisterPayload.ID);
         PAYLOAD_REGISTRATIONS.get(ConnectionProtocol.PLAY).entrySet().stream()
-                .filter(registration -> registration.getValue().flow().isEmpty() || registration.getValue().flow().get() == PacketFlow.SERVERBOUND)
+                .filter(registration -> registration.getValue().matchesFlow(PacketFlow.SERVERBOUND))
                 .filter(registration -> registration.getValue().optional())
                 .forEach(registration -> nowForgottenChannels.add(registration.getKey()));
         return nowForgottenChannels.build();
