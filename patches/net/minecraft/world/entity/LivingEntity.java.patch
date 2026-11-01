@@ -237,7 +237,7 @@
          return visibilityPercent;
      }
  
-@@ -973,9 +_,14 @@
+@@ -973,9 +_,20 @@
          } else if (this.activeEffects.isEmpty()) {
              return false;
          } else {
@@ -246,7 +246,13 @@
 -            this.onEffectsRemoved(copy.values());
 +            Map<Holder<MobEffect>, MobEffectInstance> map = new java.util.HashMap<>(this.activeEffects.size());
 +            for (Map.Entry<Holder<MobEffect>, MobEffectInstance> entry : this.activeEffects.entrySet()) {
-+                if (!net.neoforged.neoforge.event.EventHooks.onEffectRemoved(this, entry.getValue())) {
++                // NeoFobric: NeoForge rewrote this method around its own per-effect veto and dropped the
++                // vanilla Map.clear() call, which is what Fabric's ALLOW_EARLY_REMOVE wrapper anchors on -
++                // with the wrapper unapplied a Fabric mod could not keep an effect through milk (measured
++                // as the fabric testmods' "must still have blindness after drinking milk" failing). Ask
++                // the Fabric event here instead, next to the platform veto.
++                if (!net.neoforged.neoforge.event.EventHooks.onEffectRemoved(this, entry.getValue())
++                        && net.neoforged.fabricbridge.FabricBridgeHooks.allowEarlyEffectRemove(this, entry.getValue())) {
 +                    map.put(entry.getKey(), entry.getValue());
 +                }
 +            }

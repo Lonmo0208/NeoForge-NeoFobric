@@ -558,6 +558,50 @@ public final class FabricBridgeHooks {
     }
 
     /**
+     * {@return whether Fabric's {@code ALLOW_EARLY_REMOVE} event lets this effect go} Called from
+     * {@code LivingEntity#removeAllEffects} next to the platform's own veto.
+     *
+     * <p>NeoForge rewrote that method around a per-effect veto and dropped the vanilla
+     * {@code Map.clear()} call Fabric's wrapper anchors on, so the wrapper never applies and the event
+     * never fires - a Fabric mod asking to keep an effect through milk had it removed anyway (measured
+     * as the fabric testmods' "must still have blindness after drinking milk" failing). The dispatch is
+     * reflective because the bridge never compiles against Fabric API; a set of mods with no listener
+     * answers true, which is the event's own default.
+     */
+    public static boolean allowEarlyEffectRemove(Object entity, Object effectInstance) {
+        if (earlyRemoveUnavailable) {
+            return true;
+        }
+        try {
+            var loader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
+            var events = Class.forName("net.fabricmc.fabric.api.entity.event.v1.effect.ServerMobEffectEvents", true, loader);
+            var event = events.getField("ALLOW_EARLY_REMOVE").get(null);
+            var invokerGetter = event.getClass().getMethod("invoker");
+            var invoker = invokerGetter.invoke(event);
+            var invokerType = invokerGetter.getReturnType();
+            var util = Class.forName("net.fabricmc.fabric.impl.entity.event.effect.MobEffectUtil", true, loader);
+            var commandContext = util.getMethod("getCommandContext").invoke(null);
+            for (var method : invokerType.getMethods()) {
+                var parameters = method.getParameterTypes();
+                if (parameters.length == 3
+                        && parameters[0].isInstance(effectInstance)
+                        && parameters[1].isInstance(entity)) {
+                    return (Boolean) method.invoke(invoker, effectInstance, entity, commandContext);
+                }
+            }
+            return true;
+        } catch (Throwable t) {
+            if (!earlyRemoveUnavailable) {
+                earlyRemoveUnavailable = true;
+                LOGGER.warn("[NeoFobric] Could not run Fabric's ALLOW_EARLY_REMOVE event; effects are removed as the platform asks", t);
+            }
+            return true;
+        }
+    }
+
+    private static volatile boolean earlyRemoveUnavailable;
+
+    /**
      * Names of Fabric's payload type registries, one per protocol and side, inside
      * {@code PayloadTypeRegistryImpl}. A payload type only exists in the registry of the side that
      * registered it, so an absent one (the client registries on a server, say) is simply skipped.
