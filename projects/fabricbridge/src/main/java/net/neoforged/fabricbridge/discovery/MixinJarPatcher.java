@@ -5991,14 +5991,6 @@ public final class MixinJarPatcher {
                     versionMoved = guardedCast;
                     patched.put(entry.getName(), versionMoved);
                 }
-                // FuelValues: the 26w14a shape moved the real body behind a forwarding overload, where
-                // Fabric's fuel-value wrapper no longer reaches it (see FuelValuesCompat).
-                var fuelValues = net.neoforged.fabricbridge.compbridlnk.FuelValuesCompat
-                        .inject(versionMoved, entry.getName());
-                if (fuelValues != null) {
-                    versionMoved = fuelValues;
-                    patched.put(entry.getName(), versionMoved);
-                }
                 // Temporary diagnostic for the connected-textures pipeline, off unless asked for with
                 // -Dneofobric.debugContinuity=true: it logs whether the CTM scan runs, how many definitions
                 // it finds, and whether any block model gets wrapped. Counters do not tell apart a listener

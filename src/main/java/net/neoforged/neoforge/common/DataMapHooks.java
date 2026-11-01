@@ -73,18 +73,13 @@ public class DataMapHooks {
         FuelValues.Builder builder = new FuelValues.Builder(lookupProvider, features);
         Registry<Item> registry = lookupProvider.lookupOrThrow(Registries.ITEM);
         registry.getDataMap(NeoForgeDataMaps.FURNACE_FUELS).forEach((key, fuel) -> builder.add(registry.getValue(key), fuel.burnTime()));
-        // NeoFobric: Fabric's fuel-value API is served by a wrapper on FuelValues.vanillaBurnTimes, and
-        // NeoForge builds the server's FuelValues here instead - the vanilla method never runs on a
-        // server, so a fuel a Fabric mod registered through FuelValueEvents never reached this builder
-        // (measured as the fabric testmods' fuel tests failing). Run both events around the data-map
-        // values, in Fabric's own order: build, vanilla removals, exclusions.
-        net.neoforged.fabricbridge.FuelValuesBridge.begin(lookupProvider, features, 200);
-        try {
-            net.neoforged.fabricbridge.FuelValuesBridge.buildEvents(builder);
-            net.neoforged.fabricbridge.FuelValuesBridge.exclusionEvents(builder);
-        } finally {
-            net.neoforged.fabricbridge.FuelValuesBridge.end();
-        }
+        // NeoFobric: replay Fabric API's fuel events on the table that actually gets built. Fabric fires them
+        // from inside FuelValues#vanillaBurnTimes, and this tree assembles the table from the furnace-fuel data
+        // map instead - the exclusion of non-flammable wood included - so a Fabric mod's fuels would never be
+        // registered and its exclusions never applied. The order is Fabric's own: build callbacks first, then
+        // the vanilla exclusion, then the exclusion callbacks.
+        net.neoforged.fabricbridge.FabricBridgeHooks.applyFabricFuelEvents(builder, lookupProvider, features,
+                net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity.BURN_TIME_STANDARD);
         return builder.build();
     }
 
