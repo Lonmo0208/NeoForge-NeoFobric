@@ -11,13 +11,17 @@
 
 ## 这是什么
 
-**在 NeoForge 加载器里搭了一座桥，让 Fabric 能一起跑。** 底座是 NeoForge（本仓库是 **NeoForge 26.1.2** 的 fork，当前版本 **`26.1.2.126-26.1.2-NeoFobric`**）：FML 依旧是宿主 —— 它启动、它拥有游戏本体、它管模块层和它自己的模组。桥负责把 **fabric-loader 本体**（由本仓库的 `fabric-loader` 子模块现场编译）拉进同一个进程，Fabric 模组按 Fabric 自己那套规矩加载：`fabric.mod.json`、入口点、嵌套 jar、access widener / class tweaker、Fabric mixin 配置，一样不少。这里**没有 Forge** —— 已经"似"掉的那个旧 Forge 不参与任何环节。**不装任何 Fabric 模组时，它就是完完全全的 NeoForge。** 装模组时**优先选 NeoForge 版**，只有 NeoForge 版不存在时再用 Fabric 版：桥接的兼容性是"能跑"级别的，不是"保证"级别的。
+**在 NeoForge 加载器里搭了一座桥，让 Fabric 能一起跑。** 底座是 NeoForge（本仓库是 **NeoForge 26.1.2** 的 fork，当前版本 **`26.1.2.127-26.1.2-NeoFobric`**）：FML 依旧是宿主 —— 它启动、它拥有游戏本体、它管模块层和它自己的模组。桥负责把 **fabric-loader 本体**（由本仓库的 `fabric-loader` 子模块现场编译）拉进同一个进程，Fabric 模组按 Fabric 自己那套规矩加载：`fabric.mod.json`、入口点、嵌套 jar、access widener / class tweaker、Fabric mixin 配置，一样不少。这里**没有 Forge** —— 已经"似"掉的那个旧 Forge 不参与任何环节。**不装任何 Fabric 模组时，它就是完完全全的 NeoForge。** 装模组时**优先选 NeoForge 版**，只有 NeoForge 版不存在时再用 Fabric 版：桥接的兼容性是"能跑"级别的，不是"保证"级别的。
 
 `26.1.2-NeoFobric` 分支是把 26.2 的桥**回移植**到 26.1.2 上的一条线：Fabric API 在 26.1.2 上的四个 mixin 落点、内容注册表钩子、game test 启动路径、以及 26.1.2 自己的形状差异（`validate()` 一次性、资源重载的 required 包处理等）都单独对过。
 
 ## 现状：请当作「能玩但别当真」的测试版
 
 bug 可能还有很多，兼容性也可能还不够好，**甚至无法和 FFAPI（Forgified Fabric API）一起用**（见下）。**本版本验证过的范围**：Fabric API 自己的两套测试（服务端 100/100 全绿、客户端 `BUILD SUCCESSFUL`）；**432 个 26.1.2 模组**（NeoForge + Fabric 混装）实机进世界，集成服务器加载 3.9 秒，无黑屏、无断线，樱花林世界与 HUD 正常渲染（截图确认）。**生产安装链**（安装器装出来的独立专服 / 客户端）本轮没有单独实测，请自行验证。**其他设备理论都能装**：凡是能装 NeoForge 26.1.2 + Fabric 的环境（Windows / Linux / macOS，各种启动器）理论上都可以 —— **但我们只在开发机上验证过，没有做多设备验证**。**能进游戏 ≠ 每个功能都对；NeoForge 模组也可能被连锁效应波及**（桥改的是两边共用的那一层）。
+
+### 26.1.2（`26.1.2.127`，2026-11-01）
+
+- **修掉 NeoForge 版 Sodium 下 Continuity 的纯黑植被**：桥把 Fabric 模组暴露给 FML 之后，Sodium 的 NeoForge 构建会误判"FRAPI 可用"而选择它的 FRAPI emitter —— 那条路径上 Continuity 经 indigo 发射的 quad 和 Neo 钠的包装类型对不上，**生物群系染色整体丢失**（草、树叶、一切 CTM 包裹的植物纯黑，Iris / c2me / Continuity 都不是凶手）。桥现在会在这种组合下写一份扁平化的 Sodium 副本（内嵌 jar 的类合并到根、`FRAPIEmitterProvider.isEnabled()` 改答 false），逼它回到默认 emitter —— 和上游 NeoForge、和 26.2 线完全一致的行为，染色由 Sodium 自己逐 quad 重算。**NeoForge 版 Sodium（0.9.2）+ Continuity + c2me 实机验证：正午草色正常**；Fabric 版 Sodium 不受影响。这顺带意味着 26.1.2 上 **NeoForge 版 Sodium 和 Fabric 版 Sodium 都能用了**。
 
 ### 26.1.2（`26.1.2.126`，2026-10-30）
 
@@ -35,7 +39,7 @@ bug 可能还有很多，兼容性也可能还不够好，**甚至无法和 FFAP
 
 ### 我们跑了什么测试
 
-**26.1.2（`26.1.2.126`）**：Fabric API 服务端套件 **`All 100 required tests passed`** ✓；客户端套件跑到收尾 **`BUILD SUCCESSFUL`**（截图对比、动态注册表同步、生命周期/命令等用例全过）；432 件 26.1.2 模组集实机进世界（`Dev logged in with entity id` 之后持续运行，无崩溃）。桥内置自检在 432 模组集里的读数：**`events 11/11 wired`**、**`fabric payload round trip ok`**、**网络 canary ok**（发出探针 180 tick 后仍在线）。
+**26.1.2（`26.1.2.127`）**：Fabric API 服务端套件 **`All 100 required tests passed`** ✓；客户端套件跑到收尾 **`BUILD SUCCESSFUL`**（截图对比、动态注册表同步、生命周期/命令等用例全过）；432 件 26.1.2 模组集实机进世界（`Dev logged in with entity id` 之后持续运行，无崩溃）。桥内置自检在 432 模组集里的读数：**`events 11/11 wired`**、**`fabric payload round trip ok`**、**网络 canary ok**（发出探针 180 tick 后仍在线）。`26.1.2.127` 增补：NeoForge 版 Sodium + Continuity 正午草色实机验证通过。
 
 ## 26.1.2 这一轮修掉的典型问题
 
@@ -100,7 +104,7 @@ cd NeoFobric
 
 ## English
 
-**NeoFobric** is a bridge that lets fabric-loader run inside a NeoForge instance. This repository is a **NeoForge 26.1.2** fork, version **`26.1.2.126-26.1.2-NeoFobric`**; the `26.1.2-NeoFobric` branch backports the 26.2 bridge onto 26.1.2.
+**NeoFobric** is a bridge that lets fabric-loader run inside a NeoForge instance. This repository is a **NeoForge 26.1.2** fork, version **`26.1.2.127-26.1.2-NeoFobric`**; the `26.1.2-NeoFobric` branch backports the 26.2 bridge onto 26.1.2.
 
 FML stays the host: it starts, it owns the game, and it keeps loading its own mods. The bridge pulls the real **fabric-loader** (compiled from this repository's `fabric-loader` submodule) into the same process, so Fabric mods are loaded the Fabric way: `fabric.mod.json`, entrypoints, nested jars, access wideners / class tweakers and Fabric mixin configs. There is no Forge anywhere, and with no Fabric mod installed this is plain NeoForge.
 
