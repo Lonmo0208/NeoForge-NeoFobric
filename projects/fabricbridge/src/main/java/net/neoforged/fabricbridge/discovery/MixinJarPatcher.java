@@ -1981,11 +1981,28 @@ public final class MixinJarPatcher {
             if (!"modifyLoadedEntries".equals(method.name) || !"(Ljava/util/List;)Ljava/util/List;".equals(method.desc)) {
                 continue;
             }
+            // The Fabric-side API the list is read from moved between the two lines this branch serves:
+            // 0.155.x (26.1.2) names it getBootstrappingRegistries, 0.145.x (26w14a) names it
+            // getDynamicRegistries. Reuse whatever static DynamicRegistries call the shipped body makes -
+            // the name is exactly what this fabric-api build answers to.
+            String listSource = null;
+            for (var insn : method.instructions) {
+                if (insn instanceof MethodInsnNode call
+                        && call.getOpcode() == Opcodes.INVOKESTATIC
+                        && "net/fabricmc/fabric/api/event/registry/DynamicRegistries".equals(call.owner)
+                        && "()Ljava/util/List;".equals(call.desc)) {
+                    listSource = call.name;
+                    break;
+                }
+            }
+            if (listSource == null) {
+                return null;
+            }
             method.instructions.clear();
             method.tryCatchBlocks.clear();
             method.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
             method.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
-                    "net/fabricmc/fabric/api/event/registry/DynamicRegistries", "getBootstrappingRegistries",
+                    "net/fabricmc/fabric/api/event/registry/DynamicRegistries", listSource,
                     "()Ljava/util/List;", false));
             method.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
                     "net/neoforged/fabricbridge/RegistryListBridge", "merge",
@@ -1993,8 +2010,8 @@ public final class MixinJarPatcher {
             method.instructions.add(new InsnNode(Opcodes.ARETURN));
             method.maxStack = 2;
             method.maxLocals = 1;
-            LOGGER.info("[NeoFobric] Turned the datapack registry list swap in {} into a merge, so NeoForge's own datapack registries survive",
-                    internalName.replace('/', '.'));
+            LOGGER.info("[NeoFobric] Turned the datapack registry list swap in {} into a merge via {}(), so NeoForge's own datapack registries survive",
+                    internalName.replace('/', '.'), listSource);
             return writeClass(node);
         }
         return null;
@@ -4588,8 +4605,12 @@ public final class MixinJarPatcher {
             // handler shares with it.
             java.util.Map.entry("net/fabricmc/fabric/mixin/item/CraftingRecipeMixin",
                     java.util.Set.of("captureStack", "getStackRemainder")),
-            java.util.Map.entry("net/fabricmc/fabric/mixin/content/registry/FuelValuesMixin",
-                    java.util.Set.of("build")),
+            // NeoFobric: FuelValuesMixin.build is NOT dropped on this branch. The 26.1.2 line drops it
+            // because its fabric-content-registries build routes fuel values through a different path,
+            // but the 26w14a line's Fabric API (0.145.x) still serves its whole fuel-value event API from
+            // this one wrapper - without it a Fabric-registered fuel never lands in FuelValues, and the
+            // fabric testmods' fuel tests fail with "fuel hopper should have been emptied". The target
+            // (FuelValues$Builder#remove(TagKey)) exists unchanged on 26w14a, so the wrapper applies.
             java.util.Map.entry("net/fabricmc/fabric/mixin/content/registry/fluid/AbstractBoatMixin",
                     java.util.Set.of("customFluidSupport")),
             java.util.Map.entry("net/fabricmc/fabric/mixin/event/interaction/ServerGamePacketListenerImplMixin",
@@ -5968,6 +5989,14 @@ public final class MixinJarPatcher {
                         .guardGuiRendererCast(versionMoved, entry.getName());
                 if (guardedCast != null) {
                     versionMoved = guardedCast;
+                    patched.put(entry.getName(), versionMoved);
+                }
+                // FuelValues: the 26w14a shape moved the real body behind a forwarding overload, where
+                // Fabric's fuel-value wrapper no longer reaches it (see FuelValuesCompat).
+                var fuelValues = net.neoforged.fabricbridge.compbridlnk.FuelValuesCompat
+                        .inject(versionMoved, entry.getName());
+                if (fuelValues != null) {
+                    versionMoved = fuelValues;
                     patched.put(entry.getName(), versionMoved);
                 }
                 // Temporary diagnostic for the connected-textures pipeline, off unless asked for with

@@ -73,6 +73,18 @@ public class DataMapHooks {
         FuelValues.Builder builder = new FuelValues.Builder(lookupProvider, features);
         Registry<Item> registry = lookupProvider.lookupOrThrow(Registries.ITEM);
         registry.getDataMap(NeoForgeDataMaps.FURNACE_FUELS).forEach((key, fuel) -> builder.add(registry.getValue(key), fuel.burnTime()));
+        // NeoFobric: Fabric's fuel-value API is served by a wrapper on FuelValues.vanillaBurnTimes, and
+        // NeoForge builds the server's FuelValues here instead - the vanilla method never runs on a
+        // server, so a fuel a Fabric mod registered through FuelValueEvents never reached this builder
+        // (measured as the fabric testmods' fuel tests failing). Run both events around the data-map
+        // values, in Fabric's own order: build, vanilla removals, exclusions.
+        net.neoforged.fabricbridge.FuelValuesBridge.begin(lookupProvider, features, 200);
+        try {
+            net.neoforged.fabricbridge.FuelValuesBridge.buildEvents(builder);
+            net.neoforged.fabricbridge.FuelValuesBridge.exclusionEvents(builder);
+        } finally {
+            net.neoforged.fabricbridge.FuelValuesBridge.end();
+        }
         return builder.build();
     }
 

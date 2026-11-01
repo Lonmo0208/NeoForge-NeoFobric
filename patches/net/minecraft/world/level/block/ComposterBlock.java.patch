@@ -61,7 +61,7 @@
          }
  
          @Override
-@@ -470,5 +_,11 @@
+@@ -470,5 +_,16 @@
              ComposterBlock.empty(null, this.state, this.level, this.pos);
              this.changed = true;
          }
@@ -70,6 +70,11 @@
 +    public static float getValue(ItemStack item) {
 +        var value = item.getData(net.neoforged.neoforge.registries.datamaps.builtin.NeoForgeDataMaps.COMPOSTABLES);
 +        if (value != null) return value.chance();
-+        return -1f;
++        // NeoFobric: Fabric's CompostableRegistry writes the legacy COMPOSTABLES table, which NeoForge's
++        // data-map rewrite left behind on this read path - a compostable a Fabric mod registered then
++        // never composts (measured as the fabric testmods' composting test failing with the level still
++        // at 0). The data map wins when both carry a value, which is what a mod migrating to the data map
++        // expects.
++        return COMPOSTABLES.getOrDefault(item.getItem(), -1f);
      }
  }

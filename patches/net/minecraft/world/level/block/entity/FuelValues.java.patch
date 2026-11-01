@@ -11,16 +11,40 @@
      public int burnDuration(ItemStack itemStack) {
          return itemStack.isEmpty() ? 0 : this.values.getInt(itemStack.getItem());
      }
-@@ -40,7 +_,11 @@
+@@ -40,7 +_,21 @@
      }
  
      public static FuelValues vanillaBurnTimes(HolderLookup.Provider registries, FeatureFlagSet enabledFeatures, int baseUnit) {
 -        return new FuelValues.Builder(registries, enabledFeatures)
-+        return vanillaBurnTimes(new FuelValues.Builder(registries, enabledFeatures), baseUnit);
++        // NeoFobric: Fabric's fuel-value wrapper anchors on this overload, but the 26w14a shape only
++        // forwards from here - the real body (and the remove(TagKey) call it wraps) lives in the
++        // builder overload below. Record the arguments for the body here and let it run the events
++        // itself; without this a fuel a Fabric mod registered never reaches FuelValues.
++        net.neoforged.fabricbridge.FuelValuesBridge.begin(registries, enabledFeatures, baseUnit);
++        try {
++            return vanillaBurnTimes(new FuelValues.Builder(registries, enabledFeatures), baseUnit);
++        } finally {
++            net.neoforged.fabricbridge.FuelValuesBridge.end();
++        }
 +    }
 +
 +    public static FuelValues vanillaBurnTimes(FuelValues.Builder builder, int baseUnit) {
-+        return builder
++        net.neoforged.fabricbridge.FuelValuesBridge.buildEvents(builder);
++        builder
              .add(Items.LAVA_BUCKET, baseUnit * 100)
              .add(Blocks.COAL_BLOCK, baseUnit * 8 * 10)
              .add(Items.BLAZE_ROD, baseUnit * 12)
+@@ -105,8 +_,11 @@
+             .add(Blocks.FLOWERING_AZALEA, baseUnit / 2)
+             .add(Blocks.MANGROVE_ROOTS, baseUnit * 3 / 2)
+             .add(Blocks.LEAF_LITTER, baseUnit / 2)
+-            .remove(ItemTags.NON_FLAMMABLE_WOOD)
+-            .build();
++            .remove(ItemTags.NON_FLAMMABLE_WOOD);
++        // NeoFobric: exclusions run last, the way Fabric's wrapper orders them (build, vanilla remove,
++        // exclusions), so a Fabric mod can take a vanilla fuel back out.
++        net.neoforged.fabricbridge.FuelValuesBridge.exclusionEvents(builder);
++        return builder.build();
+     }
+ 
+     public static class Builder {
