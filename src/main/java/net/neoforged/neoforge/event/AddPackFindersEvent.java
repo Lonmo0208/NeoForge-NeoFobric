@@ -73,6 +73,8 @@ public class AddPackFindersEvent extends Event implements IModBusEvent {
 
             var version = modInfo.getVersion();
 
+            //var version_true = modInfo.getVersion();
+
             String prefix = packLocation.getPath();
 
             var pack = Pack.readMetaAndCreate(

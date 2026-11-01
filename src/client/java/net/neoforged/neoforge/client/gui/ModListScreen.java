@@ -17,7 +17,6 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.Set;
@@ -81,8 +80,7 @@ public class ModListScreen extends Screen {
      */
     public record ModRow(ModContainer container, boolean fabric, String id, String displayName, String version,
             @Nullable Component authors, @Nullable Component description, @Nullable Component license,
-            @Nullable String website, @Nullable String bundledBy) {
-    }
+            @Nullable String website, @Nullable String bundledBy) {}
 
     private static final Logger LOGGER = LogManager.getLogger();
 

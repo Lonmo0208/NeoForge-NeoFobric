@@ -16,7 +16,6 @@ import net.minecraft.network.chat.FormattedText;
 import net.minecraft.resources.Identifier;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.VersionChecker;
-import net.neoforged.fml.i18n.MavenVersionTranslator;
 import net.neoforged.neoforge.client.gui.ModListScreen;
 import net.neoforged.neoforge.common.NeoForgeMod;
 import net.neoforged.neoforgespi.language.IModInfo;
