@@ -14,10 +14,13 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -70,9 +73,20 @@ public class ModListScreen extends Screen {
         return StringUtil.stripColor(value);
     }
 
+    /**
+     * One row of the mod list: either an FML mod, or a mod another loader's bridge contributed (the
+     * bridge publishes them in {@code .neofobric/mods-menu.json}, read by {@link ModListContributions}).
+     * Fabric rows have no FML container - the synthetic one keeps the selection and configuration paths
+     * working - so everything the screen shows about them comes from the manifest.
+     */
+    public record ModRow(ModContainer container, boolean fabric, String id, String displayName, String version,
+            @Nullable Component authors, @Nullable Component description, @Nullable Component license,
+            @Nullable String website, @Nullable String bundledBy) {
+    }
+
     private static final Logger LOGGER = LogManager.getLogger();
 
-    private enum SortType implements Comparator<ModContainer> {
+    private enum SortType implements Comparator<ModRow> {
         NORMAL,
         A_TO_Z {
             @Override
@@ -94,9 +108,9 @@ public class ModListScreen extends Screen {
         }
 
         @Override
-        public int compare(ModContainer o1, ModContainer o2) {
-            String name1 = stripControlCodes(o1.getModInfo().getDisplayName()).toLowerCase(Locale.ROOT);
-            String name2 = stripControlCodes(o2.getModInfo().getDisplayName()).toLowerCase(Locale.ROOT);
+        public int compare(ModRow o1, ModRow o2) {
+            String name1 = stripControlCodes(o1.displayName()).toLowerCase(Locale.ROOT);
+            String name2 = stripControlCodes(o2.displayName()).toLowerCase(Locale.ROOT);
             return compare(name1, name2);
         }
 
@@ -113,8 +127,14 @@ public class ModListScreen extends Screen {
     private InfoPanel modInfo;
     private ModListWidget.ModEntry selected = null;
     private int listWidth;
-    private List<ModContainer> mods;
-    private final List<ModContainer> unsortedMods;
+    private List<ModRow> mods;
+    private final List<ModRow> unsortedMods;
+    /**
+     * NeoFobric: the mods whose child rows are open. A mod can travel inside another mod's jar (Fabric API's
+     * modules ride inside fabric-api, c2me's inside c2me, and FML's own JarJar mods likewise), and those rows
+     * start folded under their owner so the list stays readable.
+     */
+    private final Set<String> expandedBundles = new LinkedHashSet<>();
     private Button configButton, openModsFolderButton, doneButton;
 
     private int buttonMargin = 1;
@@ -124,13 +144,57 @@ public class ModListScreen extends Screen {
     private EditBox search;
 
     private boolean sorted = false;
-    private SortType sortType = SortType.NORMAL;
+    private SortType sortType = SortType.A_TO_Z;
 
     public ModListScreen(Screen parentScreen) {
         super(Component.translatable("fml.menu.mods.title"));
         this.parentScreen = parentScreen;
-        this.unsortedMods = Collections.unmodifiableList(ModList.get().getSortedMods());
+        this.unsortedMods = buildRows();
         this.mods = this.unsortedMods;
+    }
+
+    private static List<ModRow> buildRows() {
+        var rows = new ArrayList<ModRow>();
+        var fmlIds = new java.util.HashSet<String>();
+        var contributedRows = ModListContributions.contributions();
+        for (var mod : ModList.get().getSortedMods()) {
+            var info = mod.getModInfo();
+            fmlIds.add(info.getModId());
+            rows.add(new ModRow(mod, false, info.getModId(), info.getDisplayName(),
+                    MavenVersionTranslator.artifactVersionToString(info.getVersion()), null, null, null, null,
+                    parentModIdOf(info)));
+        }
+        // Fabric mods are not part of FML's list - the bridge carries their metadata in a manifest.
+        for (var contributed : contributedRows) {
+            if (!fmlIds.add(contributed.id())) {
+                continue;
+            }
+            rows.add(new ModRow(net.neoforged.neoforge.common.FabricConfigHooks.containerForModId(contributed.id()), true,
+                    contributed.id(), contributed.displayName().getString(), contributed.version(),
+                    contributed.authors(), contributed.description(), contributed.license(), contributed.website(),
+                    contributed.bundledBy()));
+        }
+        return Collections.unmodifiableList(rows);
+    }
+
+    /**
+     * {@return the mod whose jar carries this mod's jar (jar-in-jar), or {@code null}}
+     *
+     * <p>NeoFobric: 26.2 resolves this for FML mods from the discovery attributes and folds the child under
+     * that parent, so a bundled mod reads as part of what the player installed instead of a second row.
+     * The Fabric side of the list gets the same information from the bridge's manifest.
+     */
+    private static @Nullable String parentModIdOf(IModInfo info) {
+        try {
+            var parent = info.getOwningFile().getFile().getDiscoveryAttributes().parent();
+            if (parent == null) {
+                return null;
+            }
+            var parentMods = parent.getModInfos();
+            return parentMods.isEmpty() ? null : parentMods.getFirst().getModId();
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     class InfoPanel extends ScrollPanel {
@@ -257,8 +321,8 @@ public class ModListScreen extends Screen {
     @Override
     public void init() {
         for (var mod : mods) {
-            listWidth = Math.max(listWidth, getFontRenderer().width(mod.getModInfo().getDisplayName()) + 10);
-            listWidth = Math.max(listWidth, getFontRenderer().width(MavenVersionTranslator.artifactVersionToString(mod.getModInfo().getVersion())) + 5);
+            listWidth = Math.max(listWidth, getFontRenderer().width(stripControlCodes(mod.displayName())) + 10);
+            listWidth = Math.max(listWidth, getFontRenderer().width(mod.version()) + 5);
         }
         listWidth = Math.max(Math.min(listWidth, width / 3), 100);
         listWidth += listWidth % numButtons != 0 ? (numButtons - listWidth % numButtons) : 0;
@@ -297,7 +361,10 @@ public class ModListScreen extends Screen {
         addRenderableWidget(SortType.A_TO_Z.button = Button.builder(SortType.A_TO_Z.getButtonText(), b -> resortMods(SortType.A_TO_Z)).bounds(x, PADDING, width - buttonMargin, 20).build());
         x += width + buttonMargin;
         addRenderableWidget(SortType.Z_TO_A.button = Button.builder(SortType.Z_TO_A.getButtonText(), b -> resortMods(SortType.Z_TO_A)).bounds(x, PADDING, width - buttonMargin, 20).build());
-        resortMods(SortType.NORMAL);
+        // NeoFobric: open with A-Z over both loaders, like 26.2's mod list. The loader's own default
+        // ("Off") keeps FML's list order and therefore groups NeoForge rows before the contributed Fabric
+        // ones; A-Z interleaves them by name, which is what a player expects of a sorted list.
+        resortMods(this.sortType);
         updateCache();
     }
 
@@ -326,19 +393,81 @@ public class ModListScreen extends Screen {
             mods.sort(sortType);
             modList.refreshList();
             if (selected != null) {
-                selected = modList.children().stream().filter(e -> e.getInfo() == selected.getInfo()).findFirst().orElse(null);
+                String selectedId = selected.getId();
+                selected = modList.children().stream().filter(e -> e.getId().equals(selectedId)).findFirst().orElse(null);
                 updateCache();
             }
             sorted = true;
         }
     }
 
-    public <T extends ObjectSelectionList.Entry<T>> void buildModList(Consumer<T> modListViewConsumer, Function<ModContainer, T> newEntry) {
-        mods.forEach(mod -> modListViewConsumer.accept(newEntry.apply(mod)));
+    public <T extends ObjectSelectionList.Entry<T>> void buildModList(Consumer<T> modListViewConsumer, Function<ModRow, T> newEntry) {
+        // NeoFobric, following 26.2's mod list: a mod carried inside another mod's jar is listed under that
+        // parent once its row is expanded, and hidden while it is not.
+        var entries = new ArrayList<ModRow>();
+        if (search.getValue().isBlank()) {
+            var roots = new ArrayList<ModRow>();
+            for (var mod : mods) {
+                if (!isRowNested(mod)) {
+                    roots.add(mod);
+                }
+            }
+            roots.sort(sortType);
+            for (var root : roots) {
+                entries.add(root);
+                if (isBundleOpen(root.id())) {
+                    var children = new ArrayList<>(bundledChildrenOf(root.id(), mods));
+                    children.sort(sortType);
+                    entries.addAll(children);
+                }
+            }
+        } else {
+            // A search looks through every row, bundled mods included: a player searching for a module
+            // should find it whether or not its parent happens to be expanded. Rows stay indented by depth,
+            // so a hit still reads as a module of something.
+            entries.addAll(mods);
+            entries.sort(sortType);
+        }
+        entries.forEach(mod -> modListViewConsumer.accept(newEntry.apply(mod)));
+    }
+
+    /** {@return whether this row is carried inside another mod's jar} */
+    public static boolean isBundled(ModRow row) {
+        return row.bundledBy() != null && !row.bundledBy().isBlank();
+    }
+
+    /** {@return whether this row is folded under an owner that is part of the current list} */
+    public boolean isRowNested(ModRow row) {
+        return isBundled(row) && mods.stream().anyMatch(other -> other.id().equals(row.bundledBy()));
+    }
+
+    /** {@return the mods jarred inside {@code id}, unsorted} */
+    static List<ModRow> bundledChildrenOf(String id, List<ModRow> rows) {
+        return rows.stream().filter(row -> id.equals(row.bundledBy())).toList();
+    }
+
+    public boolean hasBundledChildren(String id) {
+        return mods.stream().anyMatch(row -> id.equals(row.bundledBy()));
+    }
+
+    /** {@return whether the child rows of {@code id} are shown} */
+    public boolean isBundleOpen(String id) {
+        return this.expandedBundles.contains(id);
+    }
+
+    /** Folds or unfolds the child rows of {@code id}, keeping the view and the selection where they were. */
+    public void toggleBundle(String id) {
+        if (!this.expandedBundles.remove(id)) {
+            this.expandedBundles.add(id);
+        }
+        this.modList.refreshListKeepingView();
+        // The widget re-found the selection by id, so the info panel keeps showing the same mod.
+        this.selected = this.modList.getSelected();
+        updateCache();
     }
 
     private void reloadMods() {
-        this.mods = this.unsortedMods.stream().filter(mi -> stripControlCodes(mi.getModInfo().getDisplayName()).toLowerCase(Locale.ROOT).contains(search.getValue().toLowerCase(Locale.ROOT))).collect(Collectors.toCollection(ArrayList::new));
+        this.mods = this.unsortedMods.stream().filter(mi -> stripControlCodes(mi.displayName()).toLowerCase(Locale.ROOT).contains(search.getValue().toLowerCase(Locale.ROOT))).collect(Collectors.toCollection(ArrayList::new));
         lastFilterText = search.getValue();
     }
 
@@ -379,7 +508,42 @@ public class ModListScreen extends Screen {
             this.modInfo.clearInfo();
             return;
         }
-        IModInfo selectedMod = selected.getInfo();
+        final ModRow row = selected.getRow();
+        if (row.fabric()) {
+            // A contributed row has no FML mod info to read: everything known about it is in the
+            // manifest, and its configuration screen is not reachable through FML's extension point.
+            this.configButton.active = false;
+            List<String> lines = new ArrayList<>();
+            lines.add(row.displayName());
+            if (!row.version().isBlank()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.version", row.version()));
+            }
+            lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.loader", "Fabric"));
+            if (row.authors() != null && !row.authors().getString().isBlank()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.authors", row.authors().getString()).replace("\r\n", "\n"));
+            }
+            if (row.license() != null && !row.license().getString().isBlank()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.license", row.license().getString()).replace("\r\n", "\n"));
+            }
+            if (row.website() != null && !row.website().isBlank()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.displayurl", row.website()).replace("\r\n", "\n"));
+            }
+            if (row.bundledBy() != null && !row.bundledBy().isBlank()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.bundledby", row.bundledBy()).replace("\r\n", "\n"));
+            }
+            var bundledChildren = bundledChildrenOf(row.id(), this.unsortedMods);
+            if (!bundledChildren.isEmpty()) {
+                lines.add(FMLTranslations.parseMessage("fml.menu.mods.info.childmods",
+                        bundledChildren.stream().map(ModRow::displayName).collect(Collectors.joining(", "))).replace("\r\n", "\n"));
+            }
+            lines.add(null);
+            if (row.description() != null && !row.description().getString().isBlank()) {
+                lines.add(row.description().getString());
+            }
+            this.modInfo.setInfo(lines, null, new Size2i(0, 0));
+            return;
+        }
+        IModInfo selectedMod = row.container().getModInfo();
         this.configButton.active = IConfigScreenFactory.getForMod(selectedMod).isPresent();
         List<String> lines = new ArrayList<>();
         VersionChecker.CheckResult vercheck = VersionChecker.getResult(selectedMod);
@@ -388,7 +552,7 @@ public class ModListScreen extends Screen {
         Pair<Identifier, Size2i> logoData;
 
         if (selectedMod.getModId().equals(Identifier.DEFAULT_NAMESPACE)) {
-            logoData = Pair.of(LogoRenderer.HERDCRAFT_LOGO, new Size2i(LogoRenderer.LOGO_WIDTH, LogoRenderer.LOGO_HEIGHT));
+            logoData = Pair.of(LogoRenderer.MINECRAFT_LOGO, new Size2i(LogoRenderer.MINECRAFT_LOGO_WIDTH, LogoRenderer.MINECRAFT_LOGO_HEIGHT));
         } else {
             logoData = selectedMod.getLogoFile().map(logoFile -> {
                 TextureManager tm = this.minecraft.getTextureManager();

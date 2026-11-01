@@ -963,7 +963,53 @@ public class CommonHooks {
             return NeoForgeMod.LAVA_TYPE.value();
         if (NeoForgeMod.MILK.asOptional().filter(milk -> milk == fluid).isPresent() || NeoForgeMod.FLOWING_MILK.asOptional().filter(milk -> milk == fluid).isPresent())
             return NeoForgeMod.MILK_TYPE.value();
+        // NeoFobric: a fluid from a mod that only knows Fabric cannot override getFluidType - Fabric has no
+        // such concept - so this guard can never be satisfied for it, and the throw turned every one of its
+        // tick-time lookups into a crash (reached from EntityFluidInteraction's tag lookup, where a Fabric
+        // mod's custom fluid is being queried while a player ticks). What Fabric mods do declare is a fluid
+        // behaviour against a fluid tag, and NeoForge reads the same physics off a fluid type - so the bridge
+        // translates that declaration here, and a fluid it says nothing about falls back to the empty type,
+        // the one NeoForge uses for "no fluid", so its tag-based queries land on a tracker instead of killing
+        // the server. Fluids from NeoForge mods keep the loud failure.
+        if (net.neoforged.fabricbridge.FabricBridgeHooks.isFabricModClass(fluid.getClass())) {
+            var behavior = net.neoforged.fabricbridge.FabricBridgeHooks.fabricFluidBehavior(fluid);
+            return behavior != null ? fabricFluidType(behavior) : NeoForgeMod.EMPTY_TYPE.value();
+        }
         throw new RuntimeException("Mod fluids must override getFluidType.");
+    }
+
+    /** NeoFobric: caches one translated {@link FluidType} per declared Fabric fluid behaviour. */
+    private static final java.util.concurrent.ConcurrentHashMap<net.neoforged.fabricbridge.FabricBridgeHooks.FabricFluidBehavior, FluidType> FABRIC_FLUID_TYPES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static FluidType fabricFluidType(net.neoforged.fabricbridge.FabricBridgeHooks.FabricFluidBehavior behavior) {
+        if (behavior.waterLike()) {
+            return NeoForgeMod.WATER_TYPE.value();
+        }
+        return FABRIC_FLUID_TYPES.computeIfAbsent(behavior, CommonHooks::createFabricFluidType);
+    }
+
+    private static FluidType createFabricFluidType(net.neoforged.fabricbridge.FabricBridgeHooks.FabricFluidBehavior behavior) {
+        return new FluidType(FluidType.Properties.create()
+                .canSwim(behavior.canSwim())
+                .canDrown(behavior.canDrown())
+                .canPushEntity(behavior.canPushEntity())
+                .supportsBoating(behavior.supportsBoating())
+                .motionScale(behavior.motionScale())
+                .fallDistanceModifier(behavior.fallDistanceModifier())) {
+            @Override
+            public boolean move(LivingEntity entity, Vec3 movementVector, double gravity) {
+                // NeoFobric: NeoForge hands movement in a modded fluid to its type, and everything Fabric
+                // declared about that movement - its gravity multiplier, its speed and slowdown, whether mobs
+                // float in it - is in the behaviour, so it is run from here. This is the three-argument
+                // overload: the travelInFluid path reaches the type through moveInFluid(type, ...), and the
+                // deprecated four-argument form just forwards here, so overriding this one covers both. The
+                // two values Fabric's method takes that the hook does not pass are recomputed the way
+                // LivingEntity#travelInFluid computes them, which is where the hook is called from.
+                return net.neoforged.fabricbridge.FabricBridgeHooks.moveInFabricFluid(
+                        behavior.behavior(), behavior.tag(), entity, movementVector, gravity,
+                        entity.getDeltaMovement().y <= 0.0, entity.getY());
+            }
+        };
     }
 
     // FIXME: is this still needed
@@ -1216,6 +1262,20 @@ public class CommonHooks {
 
     public static void onEntityEnterSection(Entity entity, long packedOldPos, long packedNewPos) {
         NeoForge.EVENT_BUS.post(new EntityEvent.EnteringSection(entity, packedOldPos, packedNewPos));
+    }
+
+    /**
+     * NeoFobric: Fabric's default attribute registry does not use NeoForge's
+     * {@code EntityAttributeCreationEvent}; it replaces the (immutable) vanilla default attribute map
+     * with a mutable copy at the tail of {@code DefaultAttributes}' static initialiser. The attributes a
+     * Fabric mod registered therefore stay invisible after the entrypoints run
+     * ("Pig does not have test attribute"). Rebase copies them over from the vanilla map, and
+     * re-applying the modification event re-layers what NeoForge mods asked for on top. The creation
+     * event is deliberately not repeated - it refuses a second entry for the same entity.
+     */
+    public static void rebaseAttributesAfterFabricEntrypoints() {
+        FORGE_ATTRIBUTES.putAll(DefaultAttributes.vanillaSuppliers());
+        modifyAttributes();
     }
 
     /**

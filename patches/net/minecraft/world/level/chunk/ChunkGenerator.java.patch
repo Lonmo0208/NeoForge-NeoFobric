@@ -8,7 +8,7 @@
  import it.unimi.dsi.fastutil.ints.IntArraySet;
  import it.unimi.dsi.fastutil.ints.IntSet;
  import it.unimi.dsi.fastutil.longs.LongSet;
-@@ -80,6 +_,7 @@
+@@ -80,11 +_,12 @@
  import org.jspecify.annotations.Nullable;
  
  public abstract class ChunkGenerator {
@@ -16,19 +16,34 @@
      public static final Codec<ChunkGenerator> CODEC = BuiltInRegistries.CHUNK_GENERATOR
          .byNameCodec()
          .dispatchStable(ChunkGenerator::codec, Function.identity());
-@@ -94,11 +_,16 @@
+     protected final BiomeSource biomeSource;
+-    private final Supplier<List<FeatureSorter.StepFeatureData>> featuresPerStep;
++    private Supplier<List<FeatureSorter.StepFeatureData>> featuresPerStep;
+     private final Function<Holder<Biome>, BiomeGenerationSettings> generationSettingsGetter;
+ 
+     public ChunkGenerator(BiomeSource biomeSource) {
+@@ -94,11 +_,25 @@
      public ChunkGenerator(BiomeSource biomeSource, Function<Holder<Biome>, BiomeGenerationSettings> generationSettingsGetter) {
          this.biomeSource = biomeSource;
          this.generationSettingsGetter = generationSettingsGetter;
 -        this.featuresPerStep = Suppliers.memoize(
-+        this.featuresPerStep = net.neoforged.neoforge.common.util.Lazy.of(
++        this.featuresPerStep = this.buildFeaturesPerStep();
++    }
++
++    private net.neoforged.neoforge.common.util.Lazy<List<FeatureSorter.StepFeatureData>> buildFeaturesPerStep() {
++        var biomeSource = this.biomeSource;
++        var generationSettingsGetter = this.generationSettingsGetter;
++        return net.neoforged.neoforge.common.util.Lazy.of(
              () -> FeatureSorter.buildFeaturesPerStep(List.copyOf(biomeSource.possibleBiomes()), b -> generationSettingsGetter.apply(b).features(), true)
          );
      }
  
 +    @org.jetbrains.annotations.ApiStatus.Internal
 +    public void refreshFeaturesPerStep() {
-+        ((net.neoforged.neoforge.common.util.Lazy<?>) this.featuresPerStep).invalidate();
++        // NeoFobric: rebuild instead of invalidating. 26w14a's flat-world flow can leave a plain Guava
++        // memoizing supplier in this field (assigned outside the Lazy constructor), which the old
++        // invalidate-cast cannot drive; a fresh Lazy is correct in every case.
++        this.featuresPerStep = this.buildFeaturesPerStep();
 +    }
 +
      public void validate() {

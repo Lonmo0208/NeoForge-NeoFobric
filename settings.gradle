@@ -38,6 +38,10 @@ project(':neoforge').projectDir = file('projects/neoforge')
 include ':tests'
 project(":tests").projectDir = file("tests")
 
+// NeoFobric: bridge subproject that integrates the fabric-loader runtime into NeoForge.
+include ':fabricbridge'
+project(':fabricbridge').projectDir = file('projects/fabricbridge')
+
 include ':testframework'
 include ':coremods'
 // Ensure a unique artifact id within JIJ that does not conflict with net.neoforged:coremods, which is

@@ -9,7 +9,7 @@
          new RegistryDataLoader.RegistryData<>(Registries.BIOME, Biome.NETWORK_CODEC),
          new RegistryDataLoader.RegistryData<>(Registries.CHAT_TYPE, ChatType.DIRECT_CODEC),
          new RegistryDataLoader.RegistryData<>(Registries.TRIM_PATTERN, TrimPattern.DIRECT_CODEC),
-@@ -159,21 +_,33 @@
+@@ -159,20 +_,36 @@
          new RegistryDataLoader.RegistryData<>(Registries.DIALOG, Dialog.DIRECT_CODEC),
          new RegistryDataLoader.RegistryData<>(Registries.WORLD_CLOCK, WorldClock.DIRECT_CODEC),
          new RegistryDataLoader.RegistryData<>(Registries.TIMELINE, Timeline.NETWORK_CODEC)
@@ -41,19 +41,37 @@
 +                return new ResourceManagerRegistryLoadTask<>(data, Lifecycle.stable(), loadingErrors, resourceManager, pendingTags);
              }
          };
--        return load(loaderFactory, contextRegistries, registriesToLoad, executor);
-+        return load(loaderFactory, contextRegistries, registriesToLoad, executor, true);
++        // NeoFobric: go through the four-argument shim on purpose. Fabric's registry sync wraps the
++        // vanilla four-argument loader-factory call (its handlers carry the resource-manager and the
++        // pending tags in through the factory closure above), so this path must pass through the same
++        // method the wrapper wraps.
+         return load(loaderFactory, contextRegistries, registriesToLoad, executor);
      }
  
-     public static CompletableFuture<RegistryAccess.Frozen> load(
-@@ -189,14 +_,16 @@
+@@ -189,14 +_,30 @@
                  return new NetworkRegistryLoadTask<>(data, Lifecycle.stable(), loadingErrors, entries, knownDataSource);
              }
          };
 -        return load(loaderFactory, contextRegistries, registriesToLoad, executor);
+-    }
+-
 +        return load(loaderFactory, contextRegistries, registriesToLoad, executor, false);
-     }
- 
++    }
++
++    /**
++     * NeoFobric: the vanilla-shaped loader-factory entry point, kept because Fabric's registry sync wraps
++     * exactly this call. The body lives in the wider overload; this forwards with {@code fromResources=true},
++     * which is what the resource-manager path needs.
++     */
++    static CompletableFuture<RegistryAccess.Frozen> load(
++        RegistryDataLoader.LoaderFactory loaderFactory,
++        List<HolderLookup.RegistryLookup<?>> contextRegistries,
++        List<RegistryDataLoader.RegistryData<?>> registriesToLoad,
++        Executor executor
++    ) {
++        return load(loaderFactory, contextRegistries, registriesToLoad, executor, true);
++    }
++
 +    // Neo: Added parameter to know we are loading server-side from resources
      private static CompletableFuture<RegistryAccess.Frozen> load(
          RegistryDataLoader.LoaderFactory loaderFactory,
