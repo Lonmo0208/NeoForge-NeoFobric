@@ -141,6 +141,11 @@ dependencies {
     }
 
     compileOnly "org.jetbrains:annotations:${project.jetbrains_annotations_version}"
+    // NeoFobric: RenderSystem.initBackendSystem keeps an inert SDL_Init call site for 26.1.2 mods
+    // whose mixins gate on the protocol version (see the comment there). Only the class reference
+    // is needed to compile the call; the branch never runs, so the module is not on any runtime
+    // classpath.
+    clientCompileOnly("org.lwjgl:lwjgl-sdl:3.4.2") { transitive = false }
 
     userdevCompileOnly jarJar("io.github.llamalad7:mixinextras-neoforge:${project.mixin_extras_version}")
     // NeoFobric: in development, NeoForge loads from class folders, so the JiJ expansion that

@@ -5863,21 +5863,6 @@ public final class MixinJarPatcher {
                                 + " is unavailable for this jar");
                     }
                 }
-                // Controlify's virtual-mouse snapping reaches the recipe book's filter button
-                // through @Accessor; 26w14a removed that widget, and a required accessor with no
-                // candidate fails the whole config.
-                if (jarPath.getFileName().toString().startsWith("controlify-")
-                        && net.neoforged.fabricbridge.compbridlnk.ControlifyCompat
-                                .isControlifyConfig(entry.getName())) {
-                    var configText = new String(zip.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                    var filtered = net.neoforged.fabricbridge.compbridlnk.ControlifyCompat
-                            .withoutRecipeBookFilterAccessor(configText);
-                    if (filtered != null) {
-                        patched.put(entry.getName(), filtered.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                        LOGGER.info("[NeoFobric] Dropped Controlify's RecipeBookComponentAccessor -"
-                                + " 26w14a removed the recipe book filter button it reads");
-                    }
-                }
                 // TEMPORARY DIAGNOSTIC (not for release): -Dneofobric.debugDropNoxesiumMixins=entry,entry
                 // strips listed mixin entries from the noxesium and adventure mixin configs so the
                 // chunk-load stall can be bisected to a single mixin. Runs before the client/server

@@ -16,6 +16,21 @@
      }
  
      public static void setShaderFog(GpuBufferSlice fog) {
+@@ -160,6 +_,14 @@
+     }
+ 
+     public static TimeSource.NanoTimeSource initBackendSystem(BackendOptions options) {
++        // NeoFobric: 26.1.2-built mods that treat "protocol >= 777" as "this game uses the SDL
++        // backend" (IMBlocker's SDLIMEHintTweaker) wrap the SDL_Init call below. The snapshot's
++        // protocol number passes that threshold even though this branch still starts GLFW, so
++        // without the call site their mixin finds no target and fails the launch. The branch is
++        // never taken; it only keeps the 26.1.2 call site available for the wrapper to attach to.
++        if (Boolean.getBoolean("neofobric.compat.inertSdlInit")) {
++            org.lwjgl.sdl.SDLInit.SDL_Init(0);
++        }
+         return GLX._initGlfw(options)::getAsLong;
+     }
+ 
 @@ -379,4 +_,38 @@
      @OnlyIn(Dist.CLIENT)
      record GpuAsyncTask(Runnable callback, GpuFence fence) {
