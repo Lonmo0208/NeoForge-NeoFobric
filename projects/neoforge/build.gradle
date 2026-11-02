@@ -237,15 +237,34 @@ neoDev {
 // NeoFobric: FML derives the "minecraft" mod's version from version.json's id, and in dev the
 // game jar is this resources jar. The snapshot id "26w14a" is not a Maven version range any
 // 26.1.2-built NeoForge mod accepts, so every one of them is rejected before the game starts.
-// The id is rewritten to the version the branch's mod ecosystem targets; data/protocol/pack
-// formats and everything else in version.json stay the snapshot's own.
+// The id is rewritten to the version the branch's mod ecosystem targets; pack formats and the rest
+// of version.json stay the snapshot's own.
+//
+// The protocol number is rewritten too, for mods that read it as a feature flag: 26w14a's snapshot
+// protocol (1073742129) makes IMBlocker think this is the SDL input backend (>= 777) and take a
+// runtime path whose LWJGL SDL classes do not exist here, killing the launch. The number is only
+// advertised to resource readers - the network handshake uses SharedConstants.getProtocolVersion(),
+// which is a constant, so the wire protocol and vanilla 26w14a connectivity are untouched.
 def minecraftCompatVersion = providers.gradleProperty('neofobric.minecraftCompatVersion').orElse('').get()
+def minecraftCompatProtocol = providers.gradleProperty('neofobric.minecraftCompatProtocol').orElse('').get()
 tasks.named('vanillaResources', Zip).configure { task ->
-    if (minecraftCompatVersion != '') {
+    // The filter's replacements are build inputs: without these, a changed compatibility number
+    // leaves the task UP-TO-DATE and the old version.json inside the jar.
+    task.inputs.property('neofobric.minecraftCompatVersion', minecraftCompatVersion)
+    task.inputs.property('neofobric.minecraftCompatProtocol', minecraftCompatProtocol)
+    if (minecraftCompatVersion != '' || minecraftCompatProtocol != '') {
         task.filesMatching('version.json') { details ->
             details.filter { line ->
-                line.replaceFirst('("id"\\s*:\\s*")[0-9]+w[0-9]+[a-z](")',
-                        '$1' + java.util.regex.Matcher.quoteReplacement(minecraftCompatVersion) + '$2')
+                def rewritten = line
+                if (minecraftCompatVersion != '') {
+                    rewritten = rewritten.replaceFirst('("id"\\s*:\\s*")[0-9]+w[0-9]+[a-z](")',
+                            '$1' + java.util.regex.Matcher.quoteReplacement(minecraftCompatVersion) + '$2')
+                }
+                if (minecraftCompatProtocol != '') {
+                    rewritten = rewritten.replaceFirst('("protocol_version"\\s*:\\s*)[0-9]+',
+                            '$1' + java.util.regex.Matcher.quoteReplacement(minecraftCompatProtocol))
+                }
+                rewritten
             }
         }
     }
