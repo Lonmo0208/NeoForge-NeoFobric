@@ -1,10 +1,7 @@
 --- a/net/minecraft/tags/TagFile.java
 +++ b/net/minecraft/tags/TagFile.java
-@@ -2,13 +_,44 @@
- 
- import com.mojang.serialization.Codec;
+@@ -4,11 +_,18 @@
  import com.mojang.serialization.codecs.RecordCodecBuilder;
-+import java.util.ArrayList;
  import java.util.List;
  
 -public record TagFile(List<TagEntry> entries, boolean replace) {
@@ -14,12 +11,7 @@
 -                TagEntry.CODEC.listOf().fieldOf("values").forGetter(TagFile::entries), Codec.BOOL.optionalFieldOf("replace", false).forGetter(TagFile::replace)
 +                TagEntry.CODEC.listOf().fieldOf("values").forGetter(TagFile::entries),
 +                Codec.BOOL.optionalFieldOf("replace", false).forGetter(TagFile::replace),
-+                TagEntry.CODEC.listOf().optionalFieldOf("remove", List.of()).forGetter(TagFile::remove),
-+                // NeoFobric: Fabric's tag removals arrive under the "fabric:remove" key (fabric-tag-api-v1
-+                // writes that key and its own codec normally reads it back). Accept both keys here and fold
-+                // them together, so the native remove path drives both spellings - the entries carry their
-+                // source either way, and removing the same entry twice is harmless.
-+                TagEntry.CODEC.listOf().optionalFieldOf("fabric:remove", List.of()).forGetter(TagFile::fabricRemoveEncoder)
++                TagEntry.CODEC.listOf().optionalFieldOf("remove", List.of()).forGetter(TagFile::remove)
              )
              .apply(i, TagFile::new)
      );
@@ -27,23 +19,5 @@
 +    // Neo: Preserve vanilla constructor
 +    public TagFile(List<TagEntry> entries, boolean replace) {
 +        this(entries, replace, List.of());
-+    }
-+
-+    /** NeoFobric: encoder side of the alias key - the fabric spelling is never written back out. */
-+    private static List<TagEntry> fabricRemoveEncoder(TagFile file) {
-+        return List.of();
-+    }
-+
-+    public TagFile(List<TagEntry> entries, boolean replace, List<TagEntry> remove, List<TagEntry> fabricRemove) {
-+        this(entries, replace, mergeRemovals(remove, fabricRemove));
-+    }
-+
-+    private static List<TagEntry> mergeRemovals(List<TagEntry> remove, List<TagEntry> fabricRemove) {
-+        if (fabricRemove.isEmpty()) {
-+            return remove;
-+        }
-+        var merged = new ArrayList<TagEntry>(remove);
-+        merged.addAll(fabricRemove);
-+        return List.copyOf(merged);
 +    }
  }

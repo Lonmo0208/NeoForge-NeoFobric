@@ -1,20 +1,13 @@
 --- a/net/minecraft/network/protocol/common/ClientboundCustomPayloadPacket.java
 +++ b/net/minecraft/network/protocol/common/ClientboundCustomPayloadPacket.java
-@@ -16,11 +_,15 @@
+@@ -14,6 +_,10 @@
+ 
+ public record ClientboundCustomPayloadPacket(CustomPacketPayload payload) implements Packet<ClientCommonPacketListener> {
      private static final int MAX_PAYLOAD_SIZE = 1048576;
++    // NeoFobric: build these with the vanilla two-argument codec call. Fabric's networking module wraps
++    // exactly that call to install its own payload lookup (its handshake channel, minecraft:fabric_register,
++    // lives there); with the three-argument overload the wrapper never runs and the handshake payload is
++    // decoded as a DiscardedPayload, which fails the client's first connection.
      public static final StreamCodec<RegistryFriendlyByteBuf, ClientboundCustomPayloadPacket> GAMEPLAY_STREAM_CODEC = CustomPacketPayload.<RegistryFriendlyByteBuf>codec(
              id -> DiscardedPayload.codec(id, 1048576),
--            Util.make(Lists.newArrayList(new CustomPacketPayload.TypeAndCodec<>(BrandPayload.TYPE, BrandPayload.STREAM_CODEC)), types -> {})
-+            Util.make(Lists.newArrayList(new CustomPacketPayload.TypeAndCodec<>(BrandPayload.TYPE, BrandPayload.STREAM_CODEC)), types -> {}),
-+            net.minecraft.network.ConnectionProtocol.PLAY,
-+            net.minecraft.network.protocol.PacketFlow.CLIENTBOUND
-         )
-         .map(ClientboundCustomPayloadPacket::new, ClientboundCustomPayloadPacket::payload);
-     public static final StreamCodec<FriendlyByteBuf, ClientboundCustomPayloadPacket> CONFIG_STREAM_CODEC = CustomPacketPayload.<FriendlyByteBuf>codec(
--            id -> DiscardedPayload.codec(id, 1048576), List.of(new CustomPacketPayload.TypeAndCodec<>(BrandPayload.TYPE, BrandPayload.STREAM_CODEC))
-+            id -> DiscardedPayload.codec(id, 1048576), List.of(new CustomPacketPayload.TypeAndCodec<>(BrandPayload.TYPE, BrandPayload.STREAM_CODEC)),
-+            net.minecraft.network.ConnectionProtocol.CONFIGURATION,
-+            net.minecraft.network.protocol.PacketFlow.CLIENTBOUND
-         )
-         .map(ClientboundCustomPayloadPacket::new, ClientboundCustomPayloadPacket::payload);
- 
+             Util.make(Lists.newArrayList(new CustomPacketPayload.TypeAndCodec<>(BrandPayload.TYPE, BrandPayload.STREAM_CODEC)), types -> {})

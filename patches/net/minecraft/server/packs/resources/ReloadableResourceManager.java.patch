@@ -35,6 +35,6 @@
 +     */
 +    @org.jetbrains.annotations.ApiStatus.Internal
 +    public void updateListenersFrom(net.neoforged.neoforge.event.SortedReloadListenerEvent event) {
-+        this.listeners = net.neoforged.neoforge.resource.ReloadListenerSort.sort(event);
++        this.listeners = new java.util.ArrayList<>(net.neoforged.neoforge.resource.ReloadListenerSort.sort(event));
      }
  }
