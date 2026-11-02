@@ -24,7 +24,7 @@
      public static WorldVersion createBuiltIn(String id, String name) {
          return createBuiltIn(id, name, false);
      }
-@@ -31,9 +_,11 @@
+@@ -31,9 +_,13 @@
  
      private static WorldVersion createFromJson(JsonObject root) {
          JsonObject packVersion = GsonHelper.getAsJsonObject(root, "pack_version");
@@ -34,7 +34,9 @@
 -            GsonHelper.getAsString(root, "id"),
 -            GsonHelper.getAsString(root, "name"),
 +            snapshotToNumeric(rawId),
-+            rawName,
++            // NeoFobric: the name is what mods read as the game version; it keeps the emulated
++            // 26.1.2 prefix the Cp26.1 base gives it, while the snapshot's own name follows it.
++            "26.1.2 Comp " + rawName,
              new DataVersion(GsonHelper.getAsInt(root, "world_version"), GsonHelper.getAsString(root, "series_id", "main")),
              GsonHelper.getAsInt(root, "protocol_version"),
              PackFormat.of(GsonHelper.getAsInt(packVersion, "resource_major"), GsonHelper.getAsInt(packVersion, "resource_minor")),
