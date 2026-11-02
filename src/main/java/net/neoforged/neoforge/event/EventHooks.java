@@ -204,6 +204,8 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jspecify.annotations.Nullable;
 
 public class EventHooks {
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(EventHooks.class);
+
     public static boolean onMultiBlockPlace(@Nullable Entity entity, List<BlockSnapshot> blockSnapshots, Direction direction) {
         BlockSnapshot snap = blockSnapshots.get(0);
         BlockState placedAgainst = snap.getLevel().getBlockState(snap.getPos().relative(direction.getOpposite()));
@@ -1111,7 +1113,20 @@ public class EventHooks {
      */
     @ApiStatus.Internal
     public static void onCreativeModeTabBuildContents(CreativeModeTab tab, CreativeModeTab.DisplayItemsGenerator originalGenerator, CreativeModeTab.ItemDisplayParameters params, CreativeModeTab.Output output) {
-        var tabKey = BuiltInRegistries.CREATIVE_MODE_TAB.getResourceKey(tab).orElseThrow();
+        // NeoFobric: a tab that is not in the creative tab registry has no resource key, and the vanilla
+        // implementation threw "No value present" while the client login task built every tab - which
+        // stopped the whole integrated server. The 26w14a snapshot can surface such a value (a tab that
+        // reached the registry's stream without the byValue mapping); build its contents as vanilla does
+        // instead of taking the login down, and say which tab it is.
+        var tabKey = tab == null ? null : BuiltInRegistries.CREATIVE_MODE_TAB.getResourceKey(tab).orElse(null);
+        if (tabKey == null) {
+            LOGGER.warn("[NeoFobric] Creative tab {} ({}) is not registered; building its contents without the"
+                            + " NeoForge build event",
+                    tab == null ? "<null>" : tab.getDisplayName().getString(),
+                    tab == null ? "<null>" : tab.getClass().getName());
+            originalGenerator.accept(params, output);
+            return;
+        }
 
         final var parentEntries = new InsertableLinkedOpenCustomHashSet<ItemStack>(ItemStackLinkedSet.TYPE_AND_TAG);
         final var searchEntries = new InsertableLinkedOpenCustomHashSet<ItemStack>(ItemStackLinkedSet.TYPE_AND_TAG);
@@ -1122,9 +1137,14 @@ public class EventHooks {
                 throw new IllegalArgumentException("The stack count must be 1");
 
             if (BuildCreativeModeTabContentsEvent.isParentTab(vis)) {
-                // TODO 26.3: Remove the dev-only check, so this runs in production as well
-                if (!parentEntries.add(stack) && !FMLEnvironment.isProduction())
-                    throw new IllegalArgumentException("Stack " + stack.getDisplayName().getString() + "has already been added to the tab " + tab.getDisplayName().getString() + " previously");
+                // NeoFobric: warn instead of throwing in development. 26.1.2-built mods routinely add the
+                // same display stack twice - Theurgy's generator does, and 26.1.2's own tab builder softly
+                // deduplicated it - while this dev-only assertion (production already skips it) turned the
+                // duplicate into an exception on the client login task, which stopped the integrated server.
+                if (!parentEntries.add(stack) && !FMLEnvironment.isProduction()) {
+                    LOGGER.warn("Stack {} has already been added to the tab {} previously; ignoring the duplicate",
+                            stack.getDisplayName().getString(), tab.getDisplayName().getString());
+                }
             }
 
             if (BuildCreativeModeTabContentsEvent.isSearchTab(vis)) {

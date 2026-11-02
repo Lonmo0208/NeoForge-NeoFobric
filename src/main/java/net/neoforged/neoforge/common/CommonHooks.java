@@ -1270,12 +1270,29 @@ public class CommonHooks {
      * with a mutable copy at the tail of {@code DefaultAttributes}' static initialiser. The attributes a
      * Fabric mod registered therefore stay invisible after the entrypoints run
      * ("Pig does not have test attribute"). Rebase copies them over from the vanilla map, and
-     * re-applying the modification event re-layers what NeoForge mods asked for on top. The creation
-     * event is deliberately not repeated - it refuses a second entry for the same entity.
+     * re-applying the modification event re-layers what NeoForge mods asked for on top.
+     *
+     * <p>Only the modification event is repeated. The creation event refuses a second entry for the same
+     * entity ("Duplicate DefaultAttributes entry", which is how bagus_lib's mob died on the second pass),
+     * and the entries a NeoForge mod made through it are still in the map - the rebase only adds vanilla
+     * keys. Calling the full {@link #modifyAttributes()} here would re-fire creation as well and drop
+     * what a creation-only mod registered on the player (Paraglider's {@code max_stamina} attribute).
      */
     public static void rebaseAttributesAfterFabricEntrypoints() {
         FORGE_ATTRIBUTES.putAll(DefaultAttributes.vanillaSuppliers());
-        modifyAttributes();
+        applyAttributeModifications();
+    }
+
+    private static void applyAttributeModifications() {
+        Map<EntityType<? extends LivingEntity>, AttributeSupplier.Builder> finalMap = new HashMap<>();
+        ModLoader.postEvent(new EntityAttributeModificationEvent(finalMap));
+
+        finalMap.forEach((k, v) -> {
+            AttributeSupplier supplier = DefaultAttributes.getSupplier(k);
+            AttributeSupplier.Builder newBuilder = supplier != null ? new AttributeSupplier.Builder(supplier) : new AttributeSupplier.Builder();
+            newBuilder.combine(v);
+            FORGE_ATTRIBUTES.put(k, newBuilder.build());
+        });
     }
 
     /**
@@ -1842,7 +1859,10 @@ public class CommonHooks {
      */
     public static void sendRecipes(ServerPlayer player, Set<RecipeType<?>> recipeTypesToSend, RecipeMap recipeMap) {
         if (player.connection.getConnectionType().isNeoForge()) {
-            var payload = RecipeContentPayload.create(recipeTypesToSend, recipeMap);
+            // The registry access lets the payload pre-encode every recipe and leave out the ones whose
+            // serializer cannot carry this exact instance (Enderite builds StreamCodec.unit per instance);
+            // encoding happens on the netty thread, where a throw disconnects the player right after join.
+            var payload = RecipeContentPayload.create(recipeTypesToSend, recipeMap, player.level().registryAccess());
             LOGGER.debug("Sending {} recipes of the following types: {}", payload.recipes().size(), payload.recipeTypes());
             PacketDistributor.sendToPlayer(player, payload);
         }

@@ -103,9 +103,12 @@ public final class C2meCompat {
                         || !"()I".equals(call.desc)) {
                     continue;
                 }
+                // The hook is declared with an Object parameter (the bridge does not compile against
+                // c2me); the call site descriptor has to say so too, or resolution fails with
+                // NoSuchMethodError: boundedChunkCount(TheChunkSystem) when the server stops.
                 var hook = new org.objectweb.asm.tree.MethodInsnNode(Opcodes.INVOKESTATIC,
                         "net/neoforged/fabricbridge/FabricBridgeHooks", "boundedChunkCount",
-                        "(Lcom/ishland/c2me/rewrites/chunksystem/common/TheChunkSystem;)I", false);
+                        "(Ljava/lang/Object;)I", false);
                 method.instructions.set(call, hook);
                 changed = true;
             }

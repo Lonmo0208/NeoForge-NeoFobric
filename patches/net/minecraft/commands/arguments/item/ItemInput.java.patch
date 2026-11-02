@@ -1,16 +1,23 @@
 --- a/net/minecraft/commands/arguments/item/ItemInput.java
 +++ b/net/minecraft/commands/arguments/item/ItemInput.java
-@@ -18,13 +_,15 @@
+@@ -18,13 +_,23 @@
          error -> Component.translatableEscape("arguments.item.malformed", error)
      );
  
--    public ItemStack createItemStack(int count) throws CommandSyntaxException {
++    // NeoFobric: 26.1.2's single-argument shape. 26w14a added the allowOversizedStacks flag, and mods
++    // built for 26.1.2 (Modonomicon's item links among them) call the one-argument overload at runtime -
++    // without it the client dies with NoSuchMethodError while a book page renders. The one-argument call
++    // is the checked path, exactly 26.1.2's behaviour.
+     public ItemStack createItemStack(int count) throws CommandSyntaxException {
 -        ItemStack result = new ItemStack(this.item, count, this.components);
 -        if (count > result.getMaxStackSize()) {
 -            throw ERROR_STACK_TOO_BIG.create(this.item.getRegisteredName(), result.getMaxStackSize());
 -        } else {
 -            DataResult<ItemStack> validationResult = ItemStack.validateStrict(result);
 -            return validationResult.getOrThrow(ERROR_MALFORMED_ITEM::create);
++        return this.createItemStack(count, false);
++    }
++
 +    public ItemStack createItemStack(int count, boolean allowOversizedStacks) throws CommandSyntaxException {
 +        if (!allowOversizedStacks) {
 +            ItemStack result = new ItemStack(this.item, count, this.components);

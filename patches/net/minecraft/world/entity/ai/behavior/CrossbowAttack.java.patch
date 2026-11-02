@@ -9,7 +9,16 @@
      }
  
      protected boolean canStillUse(ServerLevel level, E body, long timestamp) {
-@@ -44,7 +_,7 @@
+@@ -34,7 +_,7 @@
+     }
+ 
+     protected void tick(ServerLevel level, E body, long timestamp) {
+-        Entity target = getAttackTarget(body);
++        LivingEntity target = getAttackTarget(body);
+         this.lookAtTarget(body, target);
+         this.crossbowAttack(body, target);
+     }
+@@ -44,15 +_,15 @@
              body.stopUsingItem();
          }
  
@@ -18,26 +27,16 @@
              body.setChargingCrossbow(false);
              body.getUseItem().set(DataComponents.CHARGED_PROJECTILES, ChargedProjectiles.EMPTY);
          }
-@@ -52,7 +_,7 @@
+     }
  
-     private void crossbowAttack(E body, Entity target) {
+-    private void crossbowAttack(E body, Entity target) {
++    private void crossbowAttack(E body, LivingEntity target) {
          if (this.crossbowState == CrossbowAttack.CrossbowState.UNCHARGED) {
 -            body.startUsingItem(ProjectileUtil.getWeaponHoldingHand(body, Items.CROSSBOW));
 +            body.startUsingItem(ProjectileUtil.getWeaponHoldingHand(body, item -> item instanceof CrossbowItem));
              this.crossbowState = CrossbowAttack.CrossbowState.CHARGING;
              body.setChargingCrossbow(true);
          } else if (this.crossbowState == CrossbowAttack.CrossbowState.CHARGING) {
-@@ -74,7 +_,9 @@
-                 this.crossbowState = CrossbowAttack.CrossbowState.READY_TO_ATTACK;
-             }
-         } else if (this.crossbowState == CrossbowAttack.CrossbowState.READY_TO_ATTACK) {
--            body.performRangedAttack(target, 1.0F);
-+            if (target instanceof LivingEntity livingTarget) {
-+                body.performRangedAttack(livingTarget, 1.0F);
-+            }
-             this.crossbowState = CrossbowAttack.CrossbowState.UNCHARGED;
-         }
-     }
 @@ -83,7 +_,7 @@
          body.getBrain().setMemory(MemoryModuleType.LOOK_TARGET, new EntityTracker(target, true));
      }
