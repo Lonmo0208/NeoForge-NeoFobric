@@ -31,7 +31,7 @@ bug 可能还有很多，兼容性也可能还不够好，**甚至无法和 FFAP
 
 - **客户端**：标题界面 / 模组菜单实机确认 —— 双端计数（实测读数 `共 46 个模组：NeoForge 2 + Fabric 44`）与 Fabric 模组的折叠行、Loader 标签都正常；主菜单的版本行显示 `Minecraft 26.1.2 Comp 26w14a` / `NeoForge 26.1.26w14a-cp26.1-herdcraft.5`；
 - **Fabric API 服务端套件**：**`All 100 required tests passed`** ✓（0.155.3+26.1.2，2026-11-02）；
-- **Fabric API 客户端套件**：客户端 tag、tag 移除、命令、动态注册表同步、单机客户端 tag、"remove 条目默认 optional" 等用例都过；**唯一没过的是 `clientTagDedicatedServerTests`** —— 专服移除内置资源包并重载后，客户端仍看到旧的 tag 内容（`minecraft:dirt` 还在 `minecraft:sword_efficient` 里）。26.1.2 线上这一套是绿的（那边的包移除 / 重载处理修过），26w14a 上还剩这一处差异。
+- **Fabric API 客户端套件**：**`BUILD SUCCESSFUL`** ✓ —— 客户端 tag、tag 移除、专服 client tag、动态注册表同步、命令、HUD 图层截图对比（`HudTests`）等用例全过。
 
 **没做**（别当成已验证）：26.1.2 那套 **432 件模组集**没有在本分支复跑；生产安装器装出来的独立专服 / 客户端没有单独实测；多设备没有验证。**能进游戏 ≠ 每个功能都对；NeoForge 模组也可能被连锁效应波及**（桥改的是两边共用的那一层）。本轮按**存档**推送：分支可构建、可玩，暂时没有单独的 release 资产。
 
@@ -40,8 +40,9 @@ bug 可能还有很多，兼容性也可能还不够好，**甚至无法和 FFAP
 - **桥的移植**：fabric-loader 子模块、Fabric jar 的 mixin 锚点 realign、class tweaker / access widener、嵌套 jar 与 entrypoint 分发、Fabric API 的四个 mixin 落点、内容注册表钩子、game test 启动路径；
 - **双端 UI**：标题界面的 NeoForge / Fabric 双计数；模组菜单里 Fabric 模组有自己的行和 Loader 标签，同包内的子模组折叠在所属模组下（`▸`/`▾`、搜索时自动展开）；
 - **26.1.2 形状差异的移植**：`validate()` 一次性、注册表冻结幂等、`RegistryDataLoader` 的 4 参 shim、`SimpleJsonResourceReloadListener` 的 `Optional` 标记、`ReloadableServerRegistries` 的 `ConditionalOps`、`AttributeSupplier.Builder` 回退、`CustomPacketPayload` 的 2 参 codec、`handleCustomPayloadCommon` 拆分、`ServerModLoader` 的"模组已加载"守卫、`GuiRenderer` 的原版 picture-in-picture map（NeoForge 的 PIP 重构换掉了原版调用点，Fabric 的注册会丢）；
-- **资源 / 着色器 / 配方**：重载监听器列表保持可变、显式移除的 required 包处理、模组命名空间的静态管线失败只记 WARN、`neoforge:recipe_content` 预编码并剔除无法编码的配方；
-- **Fabric 侧数据语义**：tag 的 `fabric:remove` 合并、燃料事件、堆肥 / 斧头 / 流体等 Fabric 模组行为翻译成平台语义。
+- **资源 / 着色器 / 配方**：重载监听器列表保持可变、显式移除的 required 包在重载时不再被加回（`rebuildSelectedForReload`）、模组命名空间的静态管线失败只记 WARN、`neoforge:recipe_content` 预编码并剔除无法编码的配方；
+- **渲染侧**：`FabricHudLayers` 把 Fabric 的 HUD 元素挂到 NeoForge 的 `GuiLayerManager` 上（Fabric 的 `GuiMixin` 包的是原版调用点，平台化之后那些调用点已经不存在）；`RenderPipelineBuilderMixin` 按 26w14a 的十二参 `RenderPipeline.Snippet` 形状重写，`FabricRenderPipeline` 的 GUI draw-mode 标记重新可用；
+- **Fabric 侧数据语义**：tag 的 `fabric:remove` 合并、blockstate 的 `fabric:type` 分派（`registerFabricModelType`）、燃料事件、堆肥 / 斧头 / 流体等 Fabric 模组行为翻译成平台语义。
 
 ## 怎么装 / 怎么构建
 
@@ -68,10 +69,6 @@ git checkout 26w14aCp26-Neofobric
 ## 已知不兼容 / 已知缺口
 
 **FFAPI（Forgified Fabric API）不能同装** —— 它是 NeoForge 模组，和桥自带的那份真 Fabric API 携带**同一批包**（`net.fabricmc.fabric.*`）⇒ 同一个模块层里两个模块导出同名包 ⇒ JDK 直接拒绝启动，只能二选一。**Sinytra Connector 不能同装** —— 它和桥抢同一件差事（把 Fabric 模组带进 NeoForge）。另外：**"一起跑" ≠ "互相看得见"** —— 两边模组并排运行没问题，但"Fabric 模组直接依赖某个 NeoForge 模组的 API"（反之亦然）**不保证**。
-
-**自定义 `FabricRenderPipeline` 不可用**：26w14a 的 `RenderPipeline.Builder` 签名与 26.1.2 不同，`fabric-rendering-v1` 的 `RenderPipelineBuilderMixin` 注入器对不上，桥把它从配置里剔除了；常规渲染和 GUI 的 picture-in-picture 注册不受影响。
-
-**Fabric 侧的自定义 blockstate 模型类型还没接上**：26.1.2 线在 `BlockStateModelHooks` 里加了 `fabric:type` 分派和 `registerFabricModelType`，26w14a 上还是平台原版形状 —— Fabric API 的 `fabric-model-loading-api-v1` / `fabric-renderer-api-v1-testmod` 客户端入口点会 `NoSuchMethodError` 被跳过（游戏照常启动，用到该功能的模组模型会缺失）。
 
 **模组版本要按 26.1.2 系来**：不要把 26.2 / 26.3 构建的模组丢进来 —— 这个分支的底座是 26w14a + 26.1.2 兼容层，不是 26.2。26w14a 本身没有模组生态。
 
@@ -101,9 +98,9 @@ Three shapes therefore coexist here: 26w14a's own vanilla call sites and April-F
 
 **Fabric API**: 26w14a ships 0.145.2, which is too old and too thin for 26.1.2-era mods. The bridge therefore reports the game version as **26.1.2** (`neofobric.fabricGameVersion`) to Fabric's dependency checks, and the test line targets **Fabric API 0.155.3+26.1.2**. The 0.145.2 test set is kept under `projects/neoforge/run/{client,server}/mods-145-*` for comparison runs.
 
-**State: a playable-but-don't-trust-it beta.** Verified here: the title screen and mods menu (split mod count, measured `46 mods: NeoForge 2 + Fabric 44`; Fabric rows with Loader chips, folded child mods); Fabric API's server suite **`All 100 required tests passed`**; the client suite runs through the client tag, tag-removal, command, dynamic-registry-sync, singleplayer client-tag and remove-entry-defaulting cases, failing only `clientTagDedicatedServerTests` (after the dedicated server removes a built-in pack and reloads, the client still sees the old tag contents — `minecraft:dirt` remains in `minecraft:sword_efficient`). That case is green on the 26.1.2 line; on 26w14a it is the one remaining difference. Not done: the 432-mod set was not re-run on this branch; the production installer chain was not separately tested; no multi-device testing.
+**State: a playable-but-don't-trust-it beta.** Verified here: the title screen and mods menu (split mod count, measured `46 mods: NeoForge 2 + Fabric 44`; Fabric rows with Loader chips, folded child mods); Fabric API's **server suite `All 100 required tests passed`** and **client suite `BUILD SUCCESSFUL`** (client tags, tag removal, the dedicated-server client-tag case, dynamic-registry sync, commands and the HUD-layer screenshot comparison all pass). Not done: the 432-mod set was not re-run on this branch; the production installer chain was not separately tested; no multi-device testing.
 
-**Known gaps**: custom `FabricRenderPipeline` construction is unavailable (`RenderPipelineBuilderMixin` is dropped because 26w14a's `RenderPipeline.Builder` signature differs); Fabric's custom blockstate model types are not wired yet (26.1.2's `BlockStateModelHooks.registerFabricModelType` / `fabric:type` dispatch has not been ported, so `fabric-model-loading-api-v1`'s client entrypoint is skipped with `NoSuchMethodError`). FFAPI (Forgified Fabric API) and Sinytra Connector cannot be installed alongside this bridge (same packages / same job). Use 26.1.2-built mods; do not drop 26.2/26.3 mods into it.
+**Known gaps**: FFAPI (Forgified Fabric API) and Sinytra Connector cannot be installed alongside this bridge (same packages / same job). Use 26.1.2-built mods; do not drop 26.2/26.3 mods into it.
 
 **Install & build**: build with `./gradlew :neoforge:installerJar`, install the resulting `26.1.26w14a.126-26w14a-NeoFobric` version, then drop both Fabric and 26.1.2 NeoForge mods into `mods/`. The first launch is slow: the bridge rewrites the Fabric jars it needs (mixin anchor realignment) into `.neofobric/` and reuses that cache afterwards; any change to the mod set invalidates the cache. `-Dneofobric.noPatchCache=true` forces a rebuild for debugging.
 
