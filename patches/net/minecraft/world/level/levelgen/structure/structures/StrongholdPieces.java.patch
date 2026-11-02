@@ -1,0 +1,17 @@
+--- a/net/minecraft/world/level/levelgen/structure/structures/StrongholdPieces.java
++++ b/net/minecraft/world/level/levelgen/structure/structures/StrongholdPieces.java
+@@ -785,6 +_,14 @@
+             ChunkPos chunkPos,
+             BlockPos referencePos
+         ) {
++            // NeoFobric: 26.1.2 rolled each end-portal frame's eye here at 0.9F, and 26.1.2-built
++            // mods modify that constant (End Remastered's frameHasEyeOdds). 26w14a's portal room
++            // places no portal frames at all, so the constant is gone and their @ModifyConstant
++            // finds no target. This branch is never taken; it only keeps the constant in the
++            // method for those transforms to attach to.
++            if (Boolean.getBoolean("neofobric.compat.inertPortalEyeOdds")) {
++                boolean unused = random.nextFloat() > 0.9F;
++            }
+             this.generateBox(level, chunkBB, 0, 0, 0, 10, 7, 15, false, random, StrongholdPieces.SMOOTH_STONE_SELECTOR);
+             this.generateSmallDoor(level, random, chunkBB, StrongholdPieces.StrongholdPiece.SmallDoorType.GRATES, 4, 1, 0);
+             int y = 6;

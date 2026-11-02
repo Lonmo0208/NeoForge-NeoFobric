@@ -8,6 +8,14 @@
  import net.minecraft.world.entity.EntityType;
  import net.minecraft.world.entity.EquipmentSlot;
  import net.minecraft.world.entity.Mob;
+@@ -32,6 +_,7 @@
+ import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
+ import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
+ import net.minecraft.world.entity.animal.golem.IronGolem;
++import net.minecraft.world.entity.item.ItemEntity;
+ import net.minecraft.world.entity.livingblock.LivingBlock;
+ import net.minecraft.world.entity.monster.CrossbowAttackMob;
+ import net.minecraft.world.entity.monster.Monster;
 @@ -98,7 +_,7 @@
  
      @Override
@@ -35,3 +43,35 @@
          this.performCrossbowAttack(this, 1.6F);
      }
  
+@@ -207,11 +_,17 @@
+         return this.inventory;
+     }
+ 
++    // NeoFobric: 26w14a changed Mob.pickUpItem's parameter to LivingBlock (dropped items are
++    // living blocks in the snapshot). 26.1.2 mods inject into the old ItemEntity shape with a
++    // name-only selector (Immersive Melodies' PillagerEntityMixin), and with both overloads
++    // present Mixin also matches the LivingBlock one and rejects the handler. The snapshot's
++    // method keeps its body under a name no mod targets; the 26.1.2 shape is the only
++    // pickUpItem declared here.
+     @Override
+-    protected void pickUpItem(ServerLevel level, LivingBlock entity) {
++    protected void pickUpLivingBlock(ServerLevel level, LivingBlock entity) {
+         ItemStack itemStack = entity.getItemStack();
+         if (itemStack.getItem() instanceof BannerItem) {
+-            super.pickUpItem(level, entity);
++            super.pickUpLivingBlock(level, entity);
+         } else if (this.wantsItem(itemStack)) {
+             this.onItemPickup(entity);
+             ItemStack remainder = this.inventory.addItem(itemStack);
+@@ -221,6 +_,11 @@
+                 itemStack.setCount(remainder.getCount());
+             }
+         }
++    }
++
++    @Override
++    protected void pickUpItem(ServerLevel level, ItemEntity entity) {
++        this.pickUpLivingBlock(level, entity);
+     }
+ 
+     private boolean wantsItem(ItemStack itemStack) {

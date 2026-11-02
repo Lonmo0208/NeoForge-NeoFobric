@@ -1,11 +1,25 @@
 --- a/net/minecraft/world/item/enchantment/Enchantment.java
 +++ b/net/minecraft/world/item/enchantment/Enchantment.java
+@@ -104,7 +_,12 @@
+         return new Enchantment.EnchantmentDefinition(supportedItems, Optional.empty(), weight, maxLevel, minCost, maxCost, anvilCost, List.of(slots));
+     }
+ 
+-    public Map<EquipmentSlot, ItemStack> getSlotItems(Entity entity) {
++    // NeoFobric: 26w14a takes an Entity because the snapshot's LivingBlock has equipment but is
++    // not a LivingEntity. The method is not called getSlotItems: the 26.1.2 shape below has to be
++    // the only method of that name on this class, because mods built for 26.1.2 inject into
++    // getSlotItems with a name-only selector and a LivingEntity handler - with this overload
++    // present, Mixin also matches it and rejects the handler's descriptor.
++    public Map<EquipmentSlot, ItemStack> getSlotItemsForEntity(Entity entity) {
+         Map<EquipmentSlot, ItemStack> itemStacks = Maps.newEnumMap(EquipmentSlot.class);
+ 
+         for (EquipmentSlot slot : EquipmentSlot.VALUES) {
 @@ -119,6 +_,14 @@
          return itemStacks;
      }
  
 +    public Map<EquipmentSlot, ItemStack> getSlotItems(LivingEntity entity) {
-+        return getSlotItems((Entity) entity);
++        return getSlotItemsForEntity(entity);
 +    }
 +
 +    /**

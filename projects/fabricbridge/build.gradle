@@ -14,6 +14,10 @@ base {
 def fabricGameVersion = providers.gradleProperty('neofobric.fabricGameVersion').orElse('').get()
 def bridgePropsTask = tasks.register('writeBridgeProperties') {
     def outputFile = layout.buildDirectory.file('generated-resources/neofobric/bridge.properties')
+    // The version is the task's only input: without it Gradle sees the same output file and skips the
+    // task, and the jar keeps answering with whatever property value happened to be set when it last
+    // ran (measured: 26.1.1- left over from the 0.145.2 test set while gradle.properties said 26.1.2).
+    inputs.property('fabricGameVersion', fabricGameVersion)
     outputs.file(outputFile)
     doLast {
         def props = new Properties()

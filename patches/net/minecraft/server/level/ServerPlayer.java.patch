@@ -365,12 +365,31 @@
          ItemStack removed = inventory.removeFromSelected(all);
          this.containerMenu
              .findSlot(inventory, inventory.getSelectedSlot())
-@@ -2079,7 +_,7 @@
+@@ -2079,7 +_,26 @@
              this.stopUsingItem();
          }
  
 -        this.drop(removed, true);
 +        net.neoforged.neoforge.common.CommonHooks.onPlayerTossEvent(this, removed, false, true);
++    }
++
++    // NeoFobric: 26.1.2's ServerPlayer.drop(ItemStack, boolean, boolean) shape. 26w14a replaced it
++    // with Player.drop(ItemStack, boolean), whose April-Fools path spawns the dropped stack as a
++    // LivingBlock instead of an ItemEntity. Mods built for 26.1.2 mix into the old signature (MCA's
++    // MixinServerPlayer injects at its head), and without the method their mixin fails to apply and
++    // takes the launch down. This overload keeps the 26.1.2 contract - the vanilla item entity and
++    // the drop statistics - while the 26w14a path stays reachable through the two-argument form.
++    public ItemEntity drop(ItemStack itemStack, boolean randomly, boolean thrownFromHand) {
++        ItemEntity entity = super.drop(itemStack, randomly, thrownFromHand);
++        if (thrownFromHand) {
++            ItemStack droppedItemStack = entity != null ? entity.getItem() : ItemStack.EMPTY;
++            if (!droppedItemStack.isEmpty()) {
++                this.awardStat(Stats.ITEM_DROPPED.get(droppedItemStack.getItem()), itemStack.getCount());
++                this.awardStat(Stats.DROP);
++            }
++        }
++
++        return entity;
      }
  
      @Override

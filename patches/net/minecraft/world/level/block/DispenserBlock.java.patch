@@ -22,3 +22,17 @@
              player.awardStat(dispenser instanceof DropperBlockEntity ? Stats.INSPECT_DROPPER : Stats.INSPECT_DISPENSER);
          }
  
+@@ -86,7 +_,12 @@
+         if (blockEntity == null) {
+             LOGGER.warn("Ignoring dispensing attempt for Dispenser without matching block entity at {}", pos);
+         } else {
+-            DispenseSource source = new BlockSource(level, pos, state, blockEntity);
++            // NeoFobric: 26w14a widened this local to DispenseSource; 26.1.2 mods capture it as
++            // BlockSource (Fabric's FarmersDelight injects into this method with a BlockSource
++            // @Local), and Mixin matches locals by their declared type in the LVT. The only value
++            // ever assigned here is a BlockSource, so declaring the concrete type changes nothing
++            // for the snapshot's own code and restores the 26.1.2 shape.
++            BlockSource source = new BlockSource(level, pos, state, blockEntity);
+             int slot = blockEntity.getRandomSlot(level.getRandom());
+             if (slot < 0) {
+                 level.levelEvent(1001, pos, 0);

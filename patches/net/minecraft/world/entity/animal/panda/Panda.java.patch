@@ -1,0 +1,11 @@
+--- a/net/minecraft/world/entity/animal/panda/Panda.java
++++ b/net/minecraft/world/entity/animal/panda/Panda.java
+@@ -530,7 +_,7 @@
+     }
+ 
+     @Override
+-    protected void pickUpItem(ServerLevel level, LivingBlock entity) {
++    protected void pickUpLivingBlock(ServerLevel level, LivingBlock entity) {
+         if (this.getItemBySlot(EquipmentSlot.MAINHAND).isEmpty() && canPickUpAndEat(entity)) {
+             this.onItemPickup(entity);
+             ItemStack itemStack = entity.getItemStack();

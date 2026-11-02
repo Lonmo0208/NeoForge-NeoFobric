@@ -1,5 +1,23 @@
 --- a/net/minecraft/world/entity/raid/Raider.java
 +++ b/net/minecraft/world/entity/raid/Raider.java
+@@ -207,7 +_,7 @@
+     }
+ 
+     @Override
+-    protected void pickUpItem(ServerLevel level, LivingBlock entity) {
++    protected void pickUpLivingBlock(ServerLevel level, LivingBlock entity) {
+         ItemStack itemStack = entity.getItemStack();
+         boolean hasRaidLeader = this.hasActiveRaid() && this.getCurrentRaid().getLeader(this.getWave()) != null;
+         if (this.hasActiveRaid()
+@@ -227,7 +_,7 @@
+             this.getCurrentRaid().setLeader(this.getWave(), this);
+             this.setPatrolLeader(true);
+         } else {
+-            super.pickUpItem(level, entity);
++            super.pickUpLivingBlock(level, entity);
+         }
+     }
+ 
 @@ -307,7 +_,7 @@
              if (target != null) {
                  for (Raider entity : getServerLevel(this.mob)
@@ -9,3 +27,12 @@
                      entity.setAggressive(true);
                  }
  
+@@ -425,7 +_,7 @@
+         @Override
+         public void tick() {
+             if (this.pursuedBannerItemEntity != null && this.pursuedBannerItemEntity.closerThan(this.mob, 1.414)) {
+-                this.mob.pickUpItem(getServerLevel(Raider.this.level()), this.pursuedBannerItemEntity);
++                this.mob.pickUpLivingBlock(getServerLevel(Raider.this.level()), this.pursuedBannerItemEntity);
+             }
+         }
+     }

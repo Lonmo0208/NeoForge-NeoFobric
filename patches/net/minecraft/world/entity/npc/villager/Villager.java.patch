@@ -22,7 +22,15 @@
                  w.setPersistenceRequired();
                  this.releaseAllPois();
              });
-@@ -782,7 +_,10 @@
+@@ -775,14 +_,17 @@
+     }
+ 
+     @Override
+-    protected void pickUpItem(ServerLevel level, LivingBlock entity) {
++    protected void pickUpLivingBlock(ServerLevel level, LivingBlock entity) {
+         InventoryCarrier.pickUpItem(level, this, this, entity);
+     }
+ 
      @Override
      public boolean wantsToPickUp(ServerLevel level, ItemStack itemStack) {
          Item item = itemStack.getItem();

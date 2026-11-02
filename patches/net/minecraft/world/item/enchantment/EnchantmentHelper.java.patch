@@ -73,6 +73,15 @@
                      (enchantment, level, itemx) -> enchantment.value()
                          .doPostAttack(serverLevel, level, itemx, EnchantmentTarget.ATTACKER, victim, damageSource)
                  );
+@@ -270,7 +_,7 @@
+     }
+ 
+     public static int getEnchantmentLevel(Holder<Enchantment> enchantment, Entity entity) {
+-        Iterable<ItemStack> allowedSlots = enchantment.value().getSlotItems(entity).values();
++        Iterable<ItemStack> allowedSlots = enchantment.value().getSlotItemsForEntity(entity).values();
+         int bestLevel = 0;
+ 
+         for (ItemStack piece : allowedSlots) {
 @@ -283,6 +_,10 @@
          return bestLevel;
      }

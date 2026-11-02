@@ -87,3 +87,18 @@
  
      protected static List<ItemStack> draw(ItemStack weapon, ItemStack projectile, LivingEntity shooter) {
          if (projectile.isEmpty()) {
+@@ -122,6 +_,14 @@
+     }
+ 
+     protected static ItemStack useAmmo(ItemStack weapon, ItemStack projectile, LivingEntity holder, boolean forceInfinite) {
++        // NeoFobric: 26.1.2 split the projectile here to consume ammo, and 26.1.2-built mods wrap
++        // that call (Spell Engine's quiver hands the arrow back instead of consuming it). 26w14a
++        // made ammunition intangible - the copy below is always returned - so the call is gone and
++        // those wrappers find no target, failing the whole mixin. This branch is never taken; it
++        // only keeps the 26.1.2 call site available for the wrapper to attach to.
++        if (Boolean.getBoolean("neofobric.compat.inertAmmoSplit")) {
++            projectile.split(1);
++        }
+         ItemStack copy = projectile.copyWithCount(1);
+         copy.set(DataComponents.INTANGIBLE_PROJECTILE, Unit.INSTANCE);
+         return copy;

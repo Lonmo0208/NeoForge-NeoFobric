@@ -1,5 +1,14 @@
 --- a/net/minecraft/world/entity/animal/fox/Fox.java
 +++ b/net/minecraft/world/entity/animal/fox/Fox.java
+@@ -534,7 +_,7 @@
+     }
+ 
+     @Override
+-    protected void pickUpItem(ServerLevel level, LivingBlock entity) {
++    protected void pickUpLivingBlock(ServerLevel level, LivingBlock entity) {
+         ItemStack itemStack = entity.getItemStack();
+         if (this.canHoldItem(itemStack)) {
+             int count = itemStack.getCount();
 @@ -638,7 +_,7 @@
      }
  

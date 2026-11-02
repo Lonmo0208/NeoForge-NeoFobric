@@ -197,6 +197,15 @@ neoDev {
             client()
             sourceSet = sourceSets.client
             loadedMods = [joinedMod, neoDev.mods."neoforge-coremods"]
+            // NeoFobric: quick-play is only passed when the command line asks for it; the default is the
+            // main menu, so nobody lands in a world they did not choose.
+            //   ./gradlew :neoforge:runClient -Pneofobric.quickPlayServer=127.0.0.1:25565
+            //   ./gradlew :neoforge:runClient -Pneofobric.quickPlayWorld=<save-folder>
+            if (project.hasProperty('neofobric.quickPlayServer')) {
+                programArguments.addAll('--quickPlayMultiplayer', project.property('neofobric.quickPlayServer'))
+            } else if (project.hasProperty('neofobric.quickPlayWorld')) {
+                programArguments.addAll('--quickPlaySingleplayer', project.property('neofobric.quickPlayWorld'))
+            }
         }
         server {
             server()
@@ -216,6 +225,23 @@ neoDev {
             programArguments.addAll '--mod', 'neoforge', '--flat', '--all', '--validate',
                     '--existing', rootProject.file("src/main/resources").absolutePath,
                     '--output', rootProject.file("src/generated/resources").absolutePath
+        }
+    }
+}
+
+// NeoFobric: FML derives the "minecraft" mod's version from version.json's id, and in dev the
+// game jar is this resources jar. The snapshot id "26w14a" is not a Maven version range any
+// 26.1.2-built NeoForge mod accepts, so every one of them is rejected before the game starts.
+// The id is rewritten to the version the branch's mod ecosystem targets; data/protocol/pack
+// formats and everything else in version.json stay the snapshot's own.
+def minecraftCompatVersion = providers.gradleProperty('neofobric.minecraftCompatVersion').orElse('').get()
+tasks.named('vanillaResources', Zip).configure { task ->
+    if (minecraftCompatVersion != '') {
+        task.filesMatching('version.json') { details ->
+            details.filter { line ->
+                line.replaceFirst('("id"\\s*:\\s*")[0-9]+w[0-9]+[a-z](")',
+                        '$1' + java.util.regex.Matcher.quoteReplacement(minecraftCompatVersion) + '$2')
+            }
         }
     }
 }

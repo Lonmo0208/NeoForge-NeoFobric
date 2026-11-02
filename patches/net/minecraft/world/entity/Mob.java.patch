@@ -178,17 +178,29 @@
 +                    if (itemEntity != null) {
 +                        this.pickUpItem(serverLevel, itemEntity);
 +                    } else {
-+                        this.pickUpItem(serverLevel, entity);
++                        this.pickUpLivingBlock(serverLevel, entity);
 +                    }
                  }
              }
          }
+@@ -516,7 +_,10 @@
+         return ITEM_PICKUP_REACH;
+     }
+ 
+-    protected void pickUpItem(ServerLevel level, LivingBlock entity) {
++    // NeoFobric: the snapshot's pickup path, renamed so that the 26.1.2-shaped pickUpItem below is
++    // the only method of that name. 26.1.2 mods inject into pickUpItem by name with an ItemEntity
++    // handler; an overload taking LivingBlock makes Mixin match and reject that handler.
++    protected void pickUpLivingBlock(ServerLevel level, LivingBlock entity) {
+         ItemStack itemStack = entity.getItemStack();
+         ItemStack equippedWithStack = this.equipItemIfPossible(level, itemStack.copy());
+         if (!equippedWithStack.isEmpty()) {
 @@ -529,6 +_,10 @@
          }
      }
  
 +    protected void pickUpItem(ServerLevel level, ItemEntity entity) {
-+        this.pickUpItem(level, (LivingBlock) entity);
++        this.pickUpLivingBlock(level, entity);
 +    }
 +
      public ItemStack equipItemIfPossible(ServerLevel level, ItemStack itemStack) {

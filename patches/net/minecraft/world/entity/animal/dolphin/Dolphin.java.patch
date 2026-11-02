@@ -8,15 +8,24 @@
  import net.minecraft.world.entity.EntityType;
  import net.minecraft.world.entity.EquipmentSlot;
  import net.minecraft.world.entity.Mob;
-@@ -178,6 +_,11 @@
-     @Override
-     public boolean canAttack(Entity target) {
-         return !this.isBaby() && super.canAttack(target);
-+    }
-+
-+    @Override
-+    public boolean canAttack(LivingEntity target) {
-+        return this.canAttack((Entity) target);
+@@ -181,6 +_,11 @@
      }
  
      @Override
++    public boolean canAttack(LivingEntity target) {
++        return this.canAttack((Entity) target);
++    }
++
++    @Override
+     public int getMaxAirSupply() {
+         return 4800;
+     }
+@@ -211,7 +_,7 @@
+     }
+ 
+     @Override
+-    protected void pickUpItem(ServerLevel level, LivingBlock entity) {
++    protected void pickUpLivingBlock(ServerLevel level, LivingBlock entity) {
+         if (this.getItemBySlot(EquipmentSlot.MAINHAND).isEmpty()) {
+             ItemStack itemStack = entity.getItemStack();
+             if (this.canHoldItem(itemStack)) {

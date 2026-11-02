@@ -54,3 +54,12 @@
      }
  
      protected boolean canReplaceCurrentItem(ItemStack newItemStack) {
+@@ -394,7 +_,7 @@
+     }
+ 
+     @Override
+-    protected void pickUpItem(ServerLevel level, LivingBlock entity) {
++    protected void pickUpLivingBlock(ServerLevel level, LivingBlock entity) {
+         this.onItemPickup(entity);
+         PiglinAi.pickUpItem(level, this, entity);
+     }

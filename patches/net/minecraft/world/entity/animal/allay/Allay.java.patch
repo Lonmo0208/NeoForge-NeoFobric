@@ -12,3 +12,12 @@
      }
  
      private boolean allayConsidersItemEqual(ItemStack item1, ItemStack item2) {
+@@ -355,7 +_,7 @@
+     }
+ 
+     @Override
+-    protected void pickUpItem(ServerLevel level, LivingBlock entity) {
++    protected void pickUpLivingBlock(ServerLevel level, LivingBlock entity) {
+         InventoryCarrier.pickUpItem(level, this, this, entity);
+     }
+ 

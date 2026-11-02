@@ -1,5 +1,26 @@
 --- a/net/minecraft/client/gui/screens/inventory/InventoryScreen.java
 +++ b/net/minecraft/client/gui/screens/inventory/InventoryScreen.java
+@@ -112,6 +_,20 @@
+         return false;
+     }
+ 
++    // NeoFobric: 26.1.2's InventoryScreen.extractBackground. 26w14a moved the generic background
++    // into AbstractRecipeBookScreen and dropped this override, so mods built for 26.1.2 that
++    // modify the inventory background (SmoothGUI's @ModifyArgs on the player-preview bounds) find
++    // no target and their mixin fails to apply. This is the 26.1.2 body: super draws the screen
++    // background 26w14a supplies, then the inventory texture and the rotated player preview.
++    @Override
++    public void extractBackground(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
++        super.extractBackground(graphics, mouseX, mouseY, a);
++        int xo = this.leftPos;
++        int yo = this.topPos;
++        graphics.blit(net.minecraft.client.renderer.RenderPipelines.GUI_TEXTURED, INVENTORY_LOCATION, xo, yo, 0.0F, 0.0F, this.imageWidth, this.imageHeight, 256, 256);
++        extractEntityInInventoryFollowsMouse(graphics, xo + 26, yo + 8, xo + 75, yo + 78, 30, 0.0625F, this.xMouse, this.yMouse, this.minecraft.player);
++    }
++
+     public static void extractEntityInInventoryFollowsMouse(
+         GuiGraphicsExtractor graphics, int x0, int y0, int x1, int y1, int size, float offsetY, float mouseX, float mouseY, LivingEntity entity
+     ) {
 @@ -119,6 +_,13 @@
          float centerY = (y0 + y1) / 2.0F;
          float xAngle = (float)Math.atan((centerX - mouseX) / 40.0F);
