@@ -5835,23 +5835,32 @@ public final class MixinJarPatcher {
                                 + " callback builds those caches once registration is complete");
                     }
                 }
-                // fabric-rendering-v1 on the 26w14aCp26 line: two mixins target 26.1.2-only shapes
-                // (GuiRendererMixin shadows a field that does not exist yet, RenderPipelineBuilderMixin
-                // wraps a call whose signature differs), so they are dropped here and the one dangerous
-                // consequence - GameRendererMixin's unguarded cast to the extension interface the first
-                // mixin would have carried - is guarded at class level (see RenderingV1Compat).
+                // fabric-rendering-v1 on the 26w14aCp26 line: RenderPipelineBuilderMixin's snippet wrapper
+                // lists the RenderPipeline.Snippet constructor's arguments, and 26w14a added a twelfth one
+                // (stencilTest). The class is widened to that shape later in this pass (see
+                // RenderingV1Compat); only when the rewrite does not recognize the class is the mixin
+                // dropped here, because the config is `required` and a mixin that cannot apply would take
+                // the launch down.
                 if (jarPath.getFileName().toString().startsWith("fabric-rendering-v1-")
                         && entry.getName().equals(RENDERING_MIXINS)
                         && !Boolean.getBoolean("neofobric.keepRenderingMixins")) {
                     var configText = new String(zip.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                    var builderEntry = zip.getEntry(
+                            "net/fabricmc/fabric/mixin/client/rendering/RenderPipelineBuilderMixin.class");
+                    var builderPatchable = false;
+                    if (builderEntry != null) {
+                        builderPatchable = net.neoforged.fabricbridge.compbridlnk.RenderingV1Compat
+                                .patchRenderPipelineBuilderMixin(zip.getInputStream(builderEntry).readAllBytes(),
+                                        builderEntry.getName()) != null;
+                    }
                     var filtered = net.neoforged.fabricbridge.compbridlnk.RenderingV1Compat
-                            .withoutInapplicableMixins(configText);
+                            .withoutInapplicableMixins(configText, builderPatchable);
                     if (filtered != null) {
                         patched.put(entry.getName(), filtered.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                        LOGGER.info("[NeoFobric] Dropped fabric-rendering-v1's GuiRendererMixin and"
-                                + " RenderPipelineBuilderMixin - both target 26.1.2-only renderer shapes;"
-                                + " picture-in-picture GUI rendering and FabricRenderPipeline are known gaps"
-                                + " of this branch");
+                        LOGGER.info("[NeoFobric] Dropped fabric-rendering-v1's RenderPipelineBuilderMixin -"
+                                + " its snippet wrapper could not be widened to this base's"
+                                + " RenderPipeline.Snippet shape; custom FabricRenderPipeline construction"
+                                + " is unavailable for this jar");
                     }
                 }
                 // TEMPORARY DIAGNOSTIC (not for release): -Dneofobric.debugDropNoxesiumMixins=entry,entry
@@ -6187,6 +6196,12 @@ public final class MixinJarPatcher {
                 // The chain starts from what the passes above already produced, not from the raw jar bytes:
                 // their annotation rewrites belong to the class too, and restarting from the original threw
                 // them away whenever a later pass also happened to fire on the same class.
+                var pipelineBuilderPatched = net.neoforged.fabricbridge.compbridlnk.RenderingV1Compat
+                        .patchRenderPipelineBuilderMixin(versionMoved, entry.getName());
+                if (pipelineBuilderPatched != null) {
+                    versionMoved = pipelineBuilderPatched;
+                    patched.put(entry.getName(), versionMoved);
+                }
                 var realigned = realignMixinTargets(versionMoved, entry.getName());
                 var source = realigned != null ? realigned : versionMoved;
                 var leadingFixed = alignGametestBeforeFreezeHandler(source, entry.getName());
