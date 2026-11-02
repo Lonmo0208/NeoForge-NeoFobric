@@ -51,14 +51,19 @@ public final class RenderingV1Compat {
     private RenderingV1Compat() {}
 
     /**
-     * Removes the two mixins the 26w14a shapes cannot carry from the rendering mixin config.
+     * Removes the mixin the 26w14a shapes still cannot carry from the rendering mixin config.
+     *
+     * <p>{@code GuiRendererMixin} is no longer dropped: the fork keeps the vanilla
+     * {@code pictureInPictureRenderers} map and the {@code ImmutableMap.builder()} call in the
+     * constructor, so its {@code @Shadow} resolves and its registrations land in the map the renderer
+     * falls back to (see the GuiRenderer patch). {@code RenderPipelineBuilderMixin} still wraps a
+     * {@code RenderPipeline.Builder} method whose signature differs on this base.
      *
      * @return the filtered config text, or {@code null} when this is not the rendering config or
      *         nothing needed dropping
      */
     public static String withoutInapplicableMixins(String configText) {
-        var filtered = configText.replaceAll("(?m)^\\s*\"GuiRendererMixin\"\\s*,?\\s*\\r?\\n", "")
-                .replaceAll("(?m)^\\s*\"RenderPipelineBuilderMixin\"\\s*,?\\s*\\r?\\n", "");
+        var filtered = configText.replaceAll("(?m)^\\s*\"RenderPipelineBuilderMixin\"\\s*,?\\s*\\r?\\n", "");
         return filtered.equals(configText) ? null : filtered;
     }
 
