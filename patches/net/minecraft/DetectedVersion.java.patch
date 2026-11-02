@@ -34,7 +34,7 @@
 -            GsonHelper.getAsString(root, "id"),
 -            GsonHelper.getAsString(root, "name"),
 +            snapshotToNumeric(rawId),
-+            "26.1.2 Comp " + rawName,
++            rawName,
              new DataVersion(GsonHelper.getAsInt(root, "world_version"), GsonHelper.getAsString(root, "series_id", "main")),
              GsonHelper.getAsInt(root, "protocol_version"),
              PackFormat.of(GsonHelper.getAsInt(packVersion, "resource_major"), GsonHelper.getAsInt(packVersion, "resource_minor")),

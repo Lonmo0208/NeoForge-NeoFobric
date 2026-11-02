@@ -1,0 +1,40 @@
+--- a/net/minecraft/world/entity/ai/behavior/StopAttackingIfTargetInvalid.java
++++ b/net/minecraft/world/entity/ai/behavior/StopAttackingIfTargetInvalid.java
+@@ -34,14 +_,21 @@
+                     i,
+                     (attackTarget, cantReachSince) -> (level, body, timestamp) -> {
+                         Entity target = i.get(attackTarget);
++                        // NeoFobric: 26w14a widened the target to Entity (the snapshot's LivingBlock can be
++                        // attacked), while 26.1.2's condition and callback take a LivingEntity - and mods
++                        // compiled against 26.1.2 build their lambdas with that descriptor (MCA's villager
++                        // tasks). The interfaces keep the 26.1.2 shape, so the call sites narrow here; a
++                        // non-living target cannot be handed to a 26.1.2 lambda and simply skips it.
+                         if (body.canAttack(target)
+                             && (!canGrowTiredOfTryingToReachTarget || !isTiredOfTryingToReachTarget(body, i.tryGet(cantReachSince)))
+                             && target.isAlive()
+                             && target.level() == body.level()
+-                            && !stopAttackingWhen.test(level, target)) {
++                            && !(target instanceof LivingEntity livingTarget && stopAttackingWhen.test(level, livingTarget))) {
+                             return true;
+                         } else {
+-                            onTargetErased.accept(level, body, target);
++                            if (target instanceof LivingEntity livingTarget) {
++                                onTargetErased.accept(level, body, livingTarget);
++                            }
+                             attackTarget.erase();
+                             return true;
+                         }
+@@ -56,11 +_,11 @@
+ 
+     @FunctionalInterface
+     public interface StopAttackCondition {
+-        boolean test(ServerLevel level, Entity target);
++        boolean test(ServerLevel level, LivingEntity target);
+     }
+ 
+     @FunctionalInterface
+     public interface TargetErasedCallback<E> {
+-        void accept(ServerLevel level, E body, Entity target);
++        void accept(ServerLevel level, E body, LivingEntity target);
+     }
+ }
