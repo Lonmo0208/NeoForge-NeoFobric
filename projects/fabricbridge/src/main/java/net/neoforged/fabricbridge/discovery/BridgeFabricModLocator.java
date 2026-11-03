@@ -227,6 +227,20 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     private static final java.util.List<Path> fmlProvidedJars = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /**
+     * Parent jar -> (nested entry name -> the copy with the duplicate's entrypoints removed).
+     *
+     * <p>The bridge skips a Fabric jar whose id a NeoForge mod provides, but fabric-loader's own JiJ
+     * handling still reads the copy nested inside a Fabric parent (toms_storage nests the Fabric build
+     * of Cloth Config) and runs its {@code client}/{@code modmenu} entrypoints - against classes that
+     * resolve from the platform build, so Cloth Config's example initializer registers its demo config
+     * twice and ModMenu fails to instantiate a demo class that only the Fabric build ships. The nested
+     * jar is rewritten to carry no entrypoints; it stays a child mod, so the parent's dependency on it
+     * still resolves and {@code isModLoaded} keeps answering, but nothing from the wrong flavour runs.
+     */
+    private static final java.util.Map<Path, java.util.Map<String, Path>> platformDuplicateNestedJars =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
      * Packages the FML side of the game layer will provide, so the Fabric composite module must not claim
      * them. Filled while the mods folder is scanned: every jar that is not a Fabric mod (an FML mod, or a
      * jar with no metadata at all) contributes the packages of its classes - recursively, because these
@@ -352,6 +366,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         // and into the Fabric one, and the JDK refuses to resolve that (Sodium and Iris both died with
         // "Modules neofobric.fabric.mods and sodium export package net.caffeinemc.mods.sodium.api.util").
         fmlProvidedJars.clear();
+        platformDuplicateNestedJars.clear();
         fmlSidePackages.clear();
         fmlProvidedModIds = readForgeModIds(modsDir);
         fmlDeclaredMixinConfigs = readForgeDeclaredMixinConfigs(modsDir);
@@ -919,6 +934,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             try {
                 var extracted = extractNestedJar(path, info, nestedJar);
                 examineJar(extracted, fabricJars, depth + 1, info.modId());
+                notePlatformDuplicateNested(path, nestedJar, extracted, fabricJars);
             } catch (Exception e) {
                 LOGGER.error("[NeoFobric] Failed to process nested jar {} of Fabric mod {}", nestedJar, info.modId(), e);
             }
@@ -2104,6 +2120,89 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     }
 
     /**
+     * Notes a nested jar the platform already provides and prepares the copy that replaces it inside
+     * the parent (see {@link #platformDuplicateNestedJars}).
+     *
+     * <p>Only nested jars the bridge skipped are candidates: a registered one is a real Fabric mod and
+     * keeps its metadata. The check re-reads the extracted jar rather than threading the skip decision
+     * out of {@code examineJar}, because that method is shared with top-level jars, whose duplicates
+     * need no replacement (they are not inside another jar).
+     */
+    private static void notePlatformDuplicateNested(Path parent, String nestedJar, Path extracted,
+            Map<Path, FabricModInfo> fabricJars) {
+        if (fabricJars.containsKey(extracted)) {
+            return;
+        }
+        FabricModInfo info;
+        try (var jar = JarContents.ofPath(extracted)) {
+            var metadata = jar.readFile(FabricJarRegistry.FABRIC_MOD_JSON);
+            if (metadata == null) {
+                return;
+            }
+            info = FabricModJsonParser.parse(metadata);
+        } catch (Exception e) {
+            return;
+        }
+        if (info == null || !isPlatformProvidedMod(info.modId())) {
+            return;
+        }
+        try {
+            var neutralised = neutraliseNestedDuplicate(extracted, nestedJar);
+            platformDuplicateNestedJars
+                    .computeIfAbsent(parent, p -> new java.util.concurrent.ConcurrentHashMap<>())
+                    .put(nestedJar, neutralised);
+            LOGGER.info("[NeoFobric] Nested jar {} of {} is the Fabric build of the platform mod {} -"
+                    + " its entrypoints are removed from the copy inside the parent, so fabric-loader"
+                    + " does not run a second initialisation against the platform classes",
+                    nestedJar, parent.getFileName(), info.modId());
+        } catch (Exception e) {
+            LOGGER.warn("[NeoFobric] Could not neutralise the nested duplicate {} of {} - fabric-loader"
+                    + " may run its entrypoints against the platform classes", nestedJar, parent.getFileName(), e);
+        }
+    }
+
+    /**
+     * Writes a copy of a nested jar whose {@code fabric.mod.json} carries no {@code entrypoints}.
+     *
+     * <p>Everything else - the id, version, {@code provides}, dependencies and the jar's own nested
+     * entries - stays untouched: the child mod has to remain resolvable for its parent and for
+     * {@code isModLoaded} checks, only the initialisers belong to the platform build.
+     */
+    private static Path neutraliseNestedDuplicate(Path extracted, String nestedJar) throws IOException {
+        var fileName = safeNestedFileName(nestedJar);
+        if (fileName == null) {
+            throw new IOException("Unusable nested jar name '" + nestedJar + "'");
+        }
+        var target = extracted.resolveSibling(fileName + ".neofobric-platform-duplicate.jar");
+        try (var zip = new java.util.zip.ZipFile(extracted.toFile());
+                var out = new java.util.zip.ZipOutputStream(Files.newOutputStream(target))) {
+            var entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                var entry = entries.nextElement();
+                out.putNextEntry(new java.util.zip.ZipEntry(entry.getName()));
+                if (!entry.isDirectory()) {
+                    if (FabricJarRegistry.FABRIC_MOD_JSON.equals(entry.getName())) {
+                        out.write(withoutEntrypoints(zip.getInputStream(entry).readAllBytes()));
+                    } else {
+                        zip.getInputStream(entry).transferTo(out);
+                    }
+                }
+                out.closeEntry();
+            }
+        }
+        return target;
+    }
+
+    /** {@return the given {@code fabric.mod.json} with its {@code entrypoints} object removed} */
+    private static byte[] withoutEntrypoints(byte[] metadata) {
+        var root = com.google.gson.JsonParser.parseString(
+                new String(metadata, java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
+        root.remove("entrypoints");
+        return new com.google.gson.GsonBuilder().disableHtmlEscaping().create()
+                .toJson(root).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /**
      * {@return the classpath entries that currently expose the Minecraft classes}
      *
      * <p>Used to resolve Mixin targets while the game layer is not built yet. In dev that is the
@@ -2709,7 +2808,14 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             if (info.nestedJarPaths().isEmpty()) {
                 continue;
             }
-            var replacements = nestedReplacements(info.modId(), info.nestedJarPaths());
+            var replacements = new java.util.HashMap<>(nestedReplacements(info.modId(), info.nestedJarPaths()));
+            // A nested copy of a platform-provided mod is replaced as well: the parent has to carry the
+            // copy without entrypoints, or fabric-loader reads the original one out of the parent and
+            // runs an initialiser that belongs to the platform build (see platformDuplicateNestedJars).
+            var neutralised = platformDuplicateNestedJars.get(parent);
+            if (neutralised != null) {
+                replacements.putAll(neutralised);
+            }
             if (replacements.isEmpty()) {
                 continue;
             }
