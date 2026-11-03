@@ -99,6 +99,26 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     /** The mod ids the NeoForge mods in the mods folder provide, for the current discovery pass. */
     private static volatile java.util.Set<String> fmlProvidedModIds = java.util.Set.of();
 
+    /**
+     * {@return whether a NeoForge mod in the mods folder provides this Fabric mod id}
+     *
+     * <p>The bridge skips the Fabric jar of such a pair (see {@code examineJar}), but fabric-loader
+     * still discovers a nested copy through its own JiJ handling: a Fabric parent that ships a
+     * duplicate of a platform library (toms_storage nests the Fabric build of Cloth Config) declares
+     * it in {@code jars}, so the loader loads it as a child mod and runs its entrypoints - against
+     * classes that resolve from the FML-side build on the module path, which is the wrong flavour.
+     * Cloth Config's example initializer is the visible case: it registers its demo config twice and
+     * dies, and ModMenu reports the mod's {@code modmenu} entrypoint as broken because the demo class
+     * only exists in the Fabric build.
+     *
+     * <p>The entrypoint dispatch consults this to leave those child mods to the platform build, whose
+     * own initialisation already ran. The child mod stays in the loader's mod list either way, which
+     * is what keeps the parent's dependency on it resolved.
+     */
+    public static boolean isPlatformProvidedMod(String modId) {
+        return modId != null && fmlProvidedModIds.contains(normalizeModId(modId));
+    }
+
     /** {@return the mixin config paths the FML side declares for itself, nested JarInJar mods included} */
     public static java.util.Set<String> fmlDeclaredMixinConfigs() {
         return fmlDeclaredMixinConfigs;

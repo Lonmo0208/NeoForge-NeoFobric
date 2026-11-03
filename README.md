@@ -45,7 +45,8 @@ bug 可能还有很多，兼容性也可能还不够好，**甚至无法和 FFAP
 - **26.1.2 形状差异的移植**：`validate()` 一次性、注册表冻结幂等、`RegistryDataLoader` 的 4 参 shim、`SimpleJsonResourceReloadListener` 的 `Optional` 标记、`ReloadableServerRegistries` 的 `ConditionalOps`、`AttributeSupplier.Builder` 回退、`CustomPacketPayload` 的 2 参 codec、`handleCustomPayloadCommon` 拆分、`ServerModLoader` 的"模组已加载"守卫、`GuiRenderer` 的原版 picture-in-picture map（NeoForge 的 PIP 重构换掉了原版调用点，Fabric 的注册会丢）；
 - **资源 / 着色器 / 配方**：重载监听器列表保持可变、显式移除的 required 包在重载时不再被加回（`rebuildSelectedForReload`）、模组命名空间的静态管线失败只记 WARN、`neoforge:recipe_content` 预编码并剔除无法编码的配方；
 - **渲染侧**：`FabricHudLayers` 把 Fabric 的 HUD 元素挂到 NeoForge 的 `GuiLayerManager` 上（Fabric 的 `GuiMixin` 包的是原版调用点，平台化之后那些调用点已经不存在）；`RenderPipelineBuilderMixin` 按 26w14a 的十二参 `RenderPipeline.Snippet` 形状重写，`FabricRenderPipeline` 的 GUI draw-mode 标记重新可用；
-- **Fabric 侧数据语义**：tag 的 `fabric:remove` 合并、blockstate 的 `fabric:type` 分派（`registerFabricModelType`）、燃料事件、堆肥 / 斧头 / 流体等 Fabric 模组行为翻译成平台语义。
+- **Fabric 侧数据语义**：tag 的 `fabric:remove` 合并、blockstate 的 `fabric:type` 分派（`registerFabricModelType`）、燃料事件、堆肥 / 斧头 / 流体等 Fabric 模组行为翻译成平台语义；
+- **重复模组的归属**：同一个模组的 NeoForge 构建与 Fabric 构建同时在场时只加载 NeoForge 那份；fabric-loader 自己还会经 JiJ 发现父模组里嵌的 Fabric 副本（toms_storage 内嵌 Fabric 版 Cloth Config），这些子模组的 entrypoint 现在也交给平台构建，不会再拿平台类跑一遍 Fabric 初始化（此前 Cloth Config 的示例初始化器会撞"配置重复注册"、ModMenu 也会把它报成 broken）。
 
 ## 怎么装 / 怎么构建
 

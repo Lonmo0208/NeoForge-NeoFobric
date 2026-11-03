@@ -321,6 +321,12 @@ public final class FabricBridge {
                             + " FRAPI renderer, and the registry accepts only one", key, modId);
                     continue;
                 }
+                if (net.neoforged.fabricbridge.discovery.BridgeFabricModLocator.isPlatformProvidedMod(modId)) {
+                    LOGGER.info("[NeoFobric] Skipping the '{}' entrypoint of '{}' - a NeoForge mod in the"
+                            + " mods folder provides this id, so the platform build is the one that"
+                            + " initialises; this child copy would run against the platform classes", key, modId);
+                    continue;
+                }
                 invoker.accept(container.getEntrypoint());
             } catch (Throwable t) {
                 LOGGER.error("[NeoFobric] Entrypoint '{}' of Fabric mod '{}' failed and was skipped",
