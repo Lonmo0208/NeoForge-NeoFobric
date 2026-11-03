@@ -1,16 +1,31 @@
 --- a/net/minecraft/world/item/enchantment/EnchantmentHelper.java
 +++ b/net/minecraft/world/item/enchantment/EnchantmentHelper.java
-@@ -47,7 +_,19 @@
+@@ -47,7 +_,33 @@
  import org.jspecify.annotations.Nullable;
  
  public class EnchantmentHelper {
+-    public static int getItemEnchantmentLevel(Holder<Enchantment> enchantment, ItemInstance piece) {
 +    /**
 +     * @deprecated Neo: Use {@link #getTagEnchantmentLevel(Holder, ItemInstance)} for NBT enchantments, or {@link ItemStack#getEnchantmentLevel(Holder)} for gameplay.
 +     */
 +    @Deprecated
-     public static int getItemEnchantmentLevel(Holder<Enchantment> enchantment, ItemInstance piece) {
++    public static int getItemEnchantmentLevelForInstance(Holder<Enchantment> enchantment, ItemInstance piece) {
 +        // Neo: To reduce patch size, update this method to always check gameplay enchantments, and add getTagEnchantmentLevel as a helper for mods.
 +        return piece.getEnchantmentLevel(enchantment);
++    }
++
++    /**
++     * NeoFobric: 26.1.2's shape. The snapshot widened the parameter to ItemInstance (the April-Fools
++     * LivingBlock carries items too), but 26.1.2 mods anchor the call inside ApplyBonusCount by this
++     * exact descriptor (Curios' MixinApplyBonusCount @At(INVOKE_ASSIGN)s it), and the loot call sites
++     * hold the tool in an ItemInstance local - with only the widened overload present, the emitted
++     * invoke carries (Holder, ItemInstance) and the mixin never binds. The ItemStack overload is the
++     * most specific one for ItemStack call sites, so they compile to the 26.1.2 shape again; the
++     * snapshot's widened form stays reachable through the renamed method.
++     */
++    @Deprecated
++    public static int getItemEnchantmentLevel(Holder<Enchantment> enchantment, ItemStack piece) {
++        return getItemEnchantmentLevelForInstance(enchantment, piece);
 +    }
 +
 +    /**

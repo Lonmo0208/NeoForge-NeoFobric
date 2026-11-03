@@ -8,7 +8,25 @@
  import net.minecraft.world.entity.Mob;
  import net.minecraft.world.entity.MoverType;
  import net.minecraft.world.entity.Pose;
-@@ -324,7 +_,7 @@
+@@ -318,13 +_,25 @@
+         return entity instanceof Slime slime && slime.getSize() != 1 ? false : entity.is(EntityTypeTags.FROG_FOOD);
+     }
+ 
++    /**
++     * NeoFobric: 26.1.2's shape. The snapshot widened the parameter to Entity, but lithium's
++     * FrogAttackablesSensorMixin anchors the call inside FrogAttackablesSensor by the 26.1.2
++     * descriptor - with only the widened overload present, the emitted invoke carries (Entity) and
++     * the mixin never binds. This overload is the most specific one for the sensor's LivingEntity
++     * argument, so the call site compiles to the 26.1.2 shape again while the snapshot's widened
++     * form stays for the Entity-typed call sites.
++     */
++    public static boolean canEat(LivingEntity entity) {
++        return canEat((Entity) entity);
++    }
++
+     @Override
+     protected PathNavigation createNavigation(Level level) {
+         return new Frog.FrogPathNavigation(this, level);
      }
  
      @Override
