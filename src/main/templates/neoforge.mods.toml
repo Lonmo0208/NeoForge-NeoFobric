@@ -7,7 +7,9 @@ license="LGPL v2.1"
 [[mods]]
     modId="neoforge"
     # We use the global NeoForge version
-    version="${version}"
+    # NeoFobric: FML answers mods' `neoforge` dependency ranges with this version, so it stays on the
+    # emulated 26.1.2 line even though the artifact carries the branch's own snapshot version.
+    version="${neoforge_mod_version}"
     #updateJSONURL="https://maven.neoforged.net/releases/net/neoforged/forge/promotions_slim.json"
     displayName="NeoForge"
     credits="Anyone who has contributed on Github and supports our development"

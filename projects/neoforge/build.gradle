@@ -386,6 +386,9 @@ final static boolean isPRBuild(String neoVersion) {
 // Exposed project properties
 Map<String, String> placeholders = [
         'version' : project.version.toString(),
+        // NeoFobric: the version the neoforge mod declares to FML's dependency checks, kept on the
+        // emulated 26.1.2 line while `version` names the artifact (see gradle.properties).
+        'neoforge_mod_version' : (rootProject.findProperty('neofobric.neoforgeModVersion') ?: project.version).toString(),
         'neoform_version' : project.neoform_version,
         'minecraft_version' : project.minecraft_version,
         'build_type' : isPRBuild(project.version.toString()) ? "PULL_REQUEST" : (project.version.toString().contains("-beta") ? "BETA" : "STABLE")
