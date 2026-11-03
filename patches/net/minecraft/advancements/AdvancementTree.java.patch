@@ -1,0 +1,79 @@
+--- a/net/minecraft/advancements/AdvancementTree.java
++++ b/net/minecraft/advancements/AdvancementTree.java
+@@ -55,13 +_,72 @@
+         List<AdvancementHolder> advancementsToAdd = new ArrayList<>(advancements);
+ 
+         while (!advancementsToAdd.isEmpty()) {
+-            if (!advancementsToAdd.removeIf(this::tryInsert)) {
+-                LOGGER.error("Couldn't load advancements: {}", advancementsToAdd);
+-                break;
+-            }
++            if (advancementsToAdd.removeIf(this::tryInsert)) {
++                continue;
++            }
++            // NeoFobric: 26w14a reworked vanilla's advancement progression - most of the 26.1.2 ids
++            // (adventure/voluntary_exile, adventure/whos_the_pillager_now, adventure/throw_trident, ...)
++            // no longer exist - while 26.1.2 mods still name them as parents. Dropping those branches
++            // hides the mod's advancements (and every child of them); hanging them off the root of the
++            // tab the missing parent belonged to keeps the content reachable instead. See
++            // attachOrphansToTabRoot: only non-vanilla advancements are touched, and only when that
++            // tab root exists.
++            if (this.attachOrphansToTabRoot(advancementsToAdd)) {
++                continue;
++            }
++            LOGGER.error("Couldn't load advancements: {}", advancementsToAdd);
++            break;
+         }
+ 
+         LOGGER.info("Loaded {} advancements", this.nodes.size());
++    }
++
++    /**
++     * NeoFobric: inserts advancements whose parent did not load under the root of the parent's tab.
++     *
++     * <p>The parent id is the only hint about where an advancement belongs, so a parent of the form
++     * {@code minecraft:<tab>/<path>} maps to {@code minecraft:<tab>/root} when that root is loaded -
++     * which is where the old progression branched from and which tab the advancement was displayed
++     * in. A mod-namespaced parent that has not inserted yet is left alone: it may itself be waiting
++     * for a re-parented ancestor, and the caller's loop retries after this pass.
++     *
++     * @return whether at least one advancement was re-parented and inserted
++     */
++    private boolean attachOrphansToTabRoot(List<AdvancementHolder> orphans) {
++        var attached = false;
++        for (var it = orphans.iterator(); it.hasNext(); ) {
++            var holder = it.next();
++            var parentId = holder.value().parent();
++            if (parentId.isEmpty() || "minecraft".equals(holder.id().getNamespace())) {
++                continue;
++            }
++            var tabRoot = this.resolveTabRoot(parentId.get());
++            if (tabRoot == null) {
++                continue;
++            }
++            var value = holder.value();
++            var reParented = new Advancement(Optional.of(tabRoot), value.display(), value.rewards(),
++                    value.criteria(), value.requirements(), value.sendsTelemetryEvent(), value.name());
++            if (this.tryInsert(new AdvancementHolder(holder.id(), reParented))) {
++                it.remove();
++                attached = true;
++            }
++        }
++        return attached;
++    }
++
++    /** {@return the loaded {@code minecraft:<tab>/root} a {@code minecraft:<tab>/...} parent belongs to} */
++    private @Nullable Identifier resolveTabRoot(Identifier parentId) {
++        if (!"minecraft".equals(parentId.getNamespace())) {
++            return null;
++        }
++        var path = parentId.getPath();
++        var slash = path.indexOf('/');
++        if (slash <= 0) {
++            return null;
++        }
++        var root = Identifier.fromNamespaceAndPath("minecraft", path.substring(0, slash) + "/root");
++        return this.nodes.containsKey(root) ? root : null;
+     }
+ 
+     private boolean tryInsert(AdvancementHolder holder) {
