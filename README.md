@@ -19,7 +19,7 @@
 2. **26.1.2 的"伪原版"调用点** —— Cp26.1 为 26.1.2 模组的 mixin 补出的落点；NeoForge 的平台语义照旧；
 3. **Fabric 模组** —— 桥按 Fabric 的规矩加载，和 NeoForge 模组并排跑。
 
-**不装任何 Fabric 模组时，它就是带 Cp26.1 兼容的 NeoForge。** 装模组时**优先选 NeoForge 版**，只有 NeoForge 版不存在时再用 Fabric 版：桥接的兼容性是"能跑"级别的，不是"保证"级别的。版本号：**`26.1.2.128-26w14a-NeoFobric`**。
+**不装任何 Fabric 模组时，它就是带 Cp26.1 兼容的 NeoForge。** 装模组时**优先选 NeoForge 版**，只有 NeoForge 版不存在时再用 Fabric 版：桥接的兼容性是"能跑"级别的，不是"保证"级别的。版本号：**`26.1.26w14a.126-26w14a-NeoFobric`**。
 
 ### 为什么用 26.1.2 的 Fabric API？
 
@@ -29,7 +29,7 @@
 
 bug 可能还有很多，兼容性也可能还不够好，**甚至无法和 FFAPI（Forgified Fabric API）一起用**（见下）。**本分支实际验证过的范围**：
 
-- **客户端**：标题界面 / 模组菜单实机确认 —— 双端计数（最小集实测读数 `共 46 个模组：NeoForge 2 + Fabric 44`）与 Fabric 模组的折叠行、Loader 标签都正常；主菜单的版本行显示 `Minecraft 26.1.2 Comp 26w14a`，加载器版本 `26.1.2.128-26w14a-NeoFobric`；
+- **客户端**：标题界面 / 模组菜单实机确认 —— 双端计数（最小集实测读数 `共 46 个模组：NeoForge 2 + Fabric 44`）与 Fabric 模组的折叠行、Loader 标签都正常；主菜单的版本行显示 `Minecraft 26.1.2 Comp 26w14a`，加载器版本 `26.1.26w14a.126-26w14a-NeoFobric`；
 - **26.1.2 全量模组集（439 个 jar）**：能启动并进入存档 `neofobric-2612-modtest`；创造物品栏可打开、翻页计数正常；Fabric 版 Sodium 0.9.1 + Iris 1.11.4 + Voxy 0.2.18 同时生效（Voxy 的 Iris 管线经桥 realign 后建起来），IMBlocker 按 26.1.2 的协议号走原版输入路径；
 - **Fabric API 服务端套件**：**`All 100 required tests passed`** ✓（0.155.3+26.1.2，2026-11-03）；
 - **Fabric API 客户端套件**：**`BUILD SUCCESSFUL`** ✓（2026-11-03）—— 客户端 tag、tag 移除、专服 client tag、动态注册表同步、命令、HUD 图层截图对比（`HudTests`）、关卡渲染事件截图（`LevelRenderEventsTests`）与 PIP 渲染器用例全过。
@@ -60,7 +60,7 @@ git checkout 26w14aCp26-Neofobric
 ./gradlew :neoforge:installerJar      # 产物在 projects/neoforge/build/libs/
 ```
 
-普通克隆也行：`settings.gradle` 会在缺失时自动把 `fabric-loader` 子模块拉下来（钉在一个固定提交上）。**安装**：用上面构建出来的安装器装出 `26.1.2.128-26w14a-NeoFobric` 这一版；然后把 **26.1.2 构建的 NeoForge 模组** 和 **Fabric 模组**一起丢进 `mods/`。**卸载 / 回退**：把本加载器从安装配置里去掉，或用 NeoForge 自己的安装覆盖一遍即可 —— 它没有往游戏本体写不可逆的东西。
+普通克隆也行：`settings.gradle` 会在缺失时自动把 `fabric-loader` 子模块拉下来（钉在一个固定提交上）。**安装**：用上面构建出来的安装器装出 `26.1.26w14a.126-26w14a-NeoFobric` 这一版；然后把 **26.1.2 构建的 NeoForge 模组** 和 **Fabric 模组**一起丢进 `mods/`。**卸载 / 回退**：把本加载器从安装配置里去掉，或用 NeoForge 自己的安装覆盖一遍即可 —— 它没有往游戏本体写不可逆的东西。
 
 ### 第一次启动会慢，这是正常的
 
@@ -99,7 +99,7 @@ git checkout 26w14aCp26-Neofobric
 
 **NeoFobric** is a bridge that lets fabric-loader run inside a NeoForge instance. This branch (`26w14aCp26-Neofobric`) sits on **Minecraft 26w14a** (this year's April-Fools snapshot, derived from 26.1.2) plus this repository's **`26w14a-Cp26.1`** compatibility line, which adds the call sites that let **26.1.2 NeoForge mods** install on 26w14a. The bridge then pulls the real **fabric-loader** (compiled from this repository's `fabric-loader` submodule) into the same process, so Fabric mods are loaded the Fabric way: `fabric.mod.json`, entrypoints, nested jars, access wideners / class tweakers and Fabric mixin configs.
 
-Three shapes therefore coexist here: 26w14a's own vanilla call sites and April-Fools behaviour; 26.1.2's "pseudo-vanilla" call sites added by Cp26.1 for 26.1.2 mod mixins; and the NeoForge platform semantics. With no Fabric mod installed, this is plain NeoForge with the Cp26.1 compatibility layer. Version: **`26.1.2.128-26w14a-NeoFobric`**.
+Three shapes therefore coexist here: 26w14a's own vanilla call sites and April-Fools behaviour; 26.1.2's "pseudo-vanilla" call sites added by Cp26.1 for 26.1.2 mod mixins; and the NeoForge platform semantics. With no Fabric mod installed, this is plain NeoForge with the Cp26.1 compatibility layer. Version: **`26.1.26w14a.126-26w14a-NeoFobric`**.
 
 **Fabric API**: 26w14a ships 0.145.2, which is too old and too thin for 26.1.2-era mods. The bridge therefore reports the game version as **26.1.2** (`neofobric.fabricGameVersion`) to Fabric's dependency checks, and the test line targets **Fabric API 0.155.3+26.1.2**. The 0.145.2 test set is kept under `projects/neoforge/run/{client,server}/mods-145-*` for comparison runs.
 
@@ -107,7 +107,7 @@ Three shapes therefore coexist here: 26w14a's own vanilla call sites and April-F
 
 **Known gaps**: FFAPI (Forgified Fabric API) and Sinytra Connector cannot be installed alongside this bridge (same packages / same job). Use 26.1.2-built mods; do not drop 26.2/26.3 mods into it.
 
-**Install & build**: build with `./gradlew :neoforge:installerJar`, install the resulting `26.1.2.128-26w14a-NeoFobric` version, then drop both Fabric and 26.1.2 NeoForge mods into `mods/`. The first launch is slow: the bridge rewrites the Fabric jars it needs (mixin anchor realignment) into `.neofobric/` and reuses that cache afterwards; any change to the mod set invalidates the cache. `-Dneofobric.noPatchCache=true` forces a rebuild for debugging.
+**Install & build**: build with `./gradlew :neoforge:installerJar`, install the resulting `26.1.26w14a.126-26w14a-NeoFobric` version, then drop both Fabric and 26.1.2 NeoForge mods into `mods/`. The first launch is slow: the bridge rewrites the Fabric jars it needs (mixin anchor realignment) into `.neofobric/` and reuses that cache afterwards; any change to the mod set invalidates the cache. `-Dneofobric.noPatchCache=true` forces a rebuild for debugging.
 
 **Licensing**: see [README-LICENSE.md](README-LICENSE.md). Our own code is `LGPL-2.1-only`; embedded Fabric API modules and fabric-loader stay `Apache-2.0`. No code was copied from FFAPI or Sinytra Connector.
 
