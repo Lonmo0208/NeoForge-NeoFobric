@@ -1,0 +1,47 @@
+# MIXIN REFERENCES THAT DO NOT RESOLVE (silent injections)
+# scanned 38324 classes, 1900 mixin classes, 2 miss(es) dropped as mixin-produced, 43 wildcard selector(s) skipped
+
+=== MISSING MEMBER: 35 ===
+create-fly-26.2-rc-2-6.0.9-1.jar.neofobric-realigned.jar!com.zurrtum.create.client.mixin.RrvRecipeViewMenuMixin  @WrapOperation method=updateByPage()V  -> [cc/cassian/rrv/common/recipe/inventory/RecipeViewMenu]
+create-fly-26.2-rc-2-6.0.9-1.jar.neofobric-realigned.jar!com.zurrtum.create.client.mixin.RrvRecipeViewScreenMixin  @Inject method=checkGui()V  -> [cc/cassian/rrv/common/recipe/inventory/RecipeViewScreen]
+create-fly-26.2-rc-2-6.0.9-1.jar.neofobric-realigned.jar!com.zurrtum.create.client.mixin.RrvRecipeViewScreenMixin  @WrapOperation method=checkGui()V  -> [cc/cassian/rrv/common/recipe/inventory/RecipeViewScreen]
+create-fly-26.2-rc-2-6.0.9-1.jar.neofobric-realigned.jar!com.zurrtum.create.client.mixin.RrvRecipeViewScreenMixin  @Inject method=checkGui()V  -> [cc/cassian/rrv/common/recipe/inventory/RecipeViewScreen]
+create-fly-26.2-rc-2-6.0.9-1.jar.neofobric-realigned.jar!com.zurrtum.create.client.mixin.RrvRecipeViewScreenMixin  @ModifyReceiver method=extractBackground(Lnet/minecraft/client/gui/GuiGraphicsExtractor;IIF)V  -> [cc/cassian/rrv/common/recipe/inventory/RecipeViewScreen]
+create-fly-26.2-rc-2-6.0.9-1.jar.neofobric-realigned.jar!com.zurrtum.create.client.mixin.RrvRecipeViewScreenMixin  @Inject method=renderInvalidSlots(Lnet/minecraft/client/gui/GuiGraphicsExtractor;I)V  -> [cc/cassian/rrv/common/recipe/inventory/RecipeViewScreen]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.MixinBiomeAmbientSoundsHandler  @Inject method=method_75840  -> [net/minecraft/client/resources/sounds/BiomeAmbientSoundsHandler]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.MixinLevelRenderer  @Inject method=lambda$addSkyPass$8  -> [net/minecraft/client/renderer/LevelRenderer]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.MixinLevelRenderer  @Inject method=lambda$addSkyPass$8  -> [net/minecraft/client/renderer/LevelRenderer]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.MixinLevelRenderer  @Inject method=lambda$addCloudsPass$3  -> [net/minecraft/client/renderer/LevelRenderer]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.MixinLevelRenderer  @Inject method=lambda$addCloudsPass$3  -> [net/minecraft/client/renderer/LevelRenderer]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.MixinLevelRenderer  @WrapOperation method=lambda$addMainPass$1  -> [net/minecraft/client/renderer/LevelRenderer]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.MixinLevelRenderer  @Inject method=lambda$addWeatherPass$4  -> [net/minecraft/client/renderer/LevelRenderer]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.MixinLevelRenderer  @Inject method=lambda$addWeatherPass$4  -> [net/minecraft/client/renderer/LevelRenderer]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.MixinLevelRenderer  @Inject method=lambda$addWeatherPass$4  -> [net/minecraft/client/renderer/LevelRenderer]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.MixinLevelRenderer  @Inject method=lambda$addMainPass$1  -> [net/minecraft/client/renderer/LevelRenderer]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.MixinLevelRenderer_Sky  @Inject method=lambda$addSkyPass$8  -> [net/minecraft/client/renderer/LevelRenderer]
+iris-neoforge-1.11.2+mc26.2.jar.neofobric-fml.jar!net.irisshaders.iris.mixin.texture.MixinTextureManager  @Inject method=lambda$reload$3  -> [net/minecraft/client/renderer/texture/TextureManager]
+voxy-0.2.19-beta.jar.neofobric-realigned.jar!me.cortex.voxy.client.mixin.flashback.MixinFlashbackMeta  @Inject method=toJson  -> [com/moulberry/flashback/record/FlashbackMeta]
+voxy-0.2.19-beta.jar.neofobric-realigned.jar!me.cortex.voxy.client.mixin.flashback.MixinFlashbackMeta  @Inject method=fromJson  -> [com/moulberry/flashback/record/FlashbackMeta]
+voxy-extra-0.2.6.jar.neofobric-realigned.jar!me.imgrui.mixin.flashback.FlashbackMetaMixin  @Inject method=toJson  -> [com/moulberry/flashback/record/FlashbackMeta]
+voxy-extra-0.2.6.jar.neofobric-realigned.jar!me.imgrui.mixin.flashback.FlashbackMetaMixin  @Inject method=fromJson  -> [com/moulberry/flashback/record/FlashbackMeta]
+voxy-extra-0.2.6.jar.neofobric-realigned.jar!me.imgrui.mixin.flashback.FlashbackMetaMixin  @Shadow field replayIdentifier:Ljava/util/UUID;  -> [com/moulberry/flashback/record/FlashbackMeta]
+byepregen-neoforge-26.2-1.1.2.5.jar!com.moepus.byepregen.mixin.dfc.DensityFlatCacheMixin  @Shadow field byepregen$owner:Lnet/minecraft/world/level/levelgen/NoiseChunk;  -> [net/minecraft/world/level/levelgen/NoiseChunk$FlatCache]
+nested15791525025865291556.jar!com.ishland.c2me.base.mixin.exp_warning.MixinMinecraftClient  @Inject method=createInitScreens  -> [net/minecraft/client/Minecraft]
+nested4857115098177164131.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field c2me$packed1:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested4857115098177164131.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field c2me$packed2:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested4857115098177164131.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field c2me$packed3:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested4857115098177164131.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field c2me$packed4:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested4857115098177164131.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field c2me$packedBlockPositions:[S  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested4857115098177164131.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field startX:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested4857115098177164131.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field startY:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested4857115098177164131.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field startZ:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested4857115098177164131.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field sizeX:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested4857115098177164131.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field sizeZ:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+
+=== @At TARGET: 6 ===
+create-fly-26.2-rc-2-6.0.9-1.jar.neofobric-realigned.jar!com.zurrtum.create.client.mixin.RrvRecipeViewMenuMixin  @At(INVOKE) cc/cassian/rrv/api/recipe/ReliableClientRecipeType.placeSlots(Lcc/cassian/rrv/common/recipe/inventory/RecipeViewMenu$SlotDefinition;)V (no such member)
+create-fly-26.2-rc-2-6.0.9-1.jar.neofobric-realigned.jar!com.zurrtum.create.client.mixin.RrvRecipeViewScreenMixin  @At(INVOKE_ASSIGN) cc/cassian/rrv/common/recipe/inventory/RecipeViewMenu.guiOffsetLeft()I (no such member)
+create-fly-26.2-rc-2-6.0.9-1.jar.neofobric-realigned.jar!com.zurrtum.create.client.mixin.RrvRecipeViewScreenMixin  @At(INVOKE) cc/cassian/rrv/common/recipe/inventory/RecipeViewScreen.addRenderableWidget(Lnet/minecraft/client/gui/components/events/GuiEventListener;)Lnet/minecraft/client/gui/components/events/GuiEventListener; (no such member)
+create-fly-26.2-rc-2-6.0.9-1.jar.neofobric-realigned.jar!com.zurrtum.create.client.mixin.RrvRecipeViewScreenMixin  @At(INVOKE) cc/cassian/rrv/common/recipe/inventory/RecipeViewScreen.getMenu()Lnet/minecraft/world/inventory/AbstractContainerMenu; (no such member)
+sodium-fabric-0.9.1+mc26.2.jar.neofobric-realigned.jar!net.caffeinemc.mods.sodium.mixin.workarounds.context_creation.WindowMixin  @At(INVOKE) owner net/neoforged/fml/loading/ImmediateWindowHandler (class not reachable)
+byepregen-neoforge-26.2-1.1.2.5.jar!com.moepus.byepregen.mixin.surface.SurfaceSystemRuleCompilerMixin  @At(INVOKE) net/minecraft/world/level/levelgen/SurfaceRules$RuleSource.apply(Ljava/lang/Object;)Ljava/lang/Object; (no such member)

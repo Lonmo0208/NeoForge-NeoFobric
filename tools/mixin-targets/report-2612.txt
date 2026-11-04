@@ -1,0 +1,97 @@
+# MIXIN REFERENCES THAT DO NOT RESOLVE (silent injections)
+# scanned 124879 classes, 5740 mixin classes, 9 miss(es) dropped as mixin-produced, 64 wildcard selector(s) skipped
+
+=== MISSING MEMBER: 79 ===
+armored-elytra-1.13.0.jar!dorkix.armored.elytra.mixin.GrindStoneMixin$ResultSlotMixin  @Shadow field grindstoneMenu:Lnet/minecraft/world/inventory/GrindstoneMenu;  -> [net/minecraft/world/inventory/GrindstoneMenu$4]
+AsyncParticles-26.1.2.8+26.1.2.jar!fun.qu_an.minecraft.asyncparticles.client.mixin.compat.particletweaks.MixinMixinSingleQuadParticle  @ModifyReturnValue method=@MixinSquaredHandler  -> [net/minecraft/client/particle/SingleQuadParticle]
+AsyncParticles-26.1.2.8+26.1.2.jar!fun.qu_an.minecraft.asyncparticles.client.mixin.compat.particletweaks.MixinMixinSingleQuadParticle  @WrapMethod method=@MixinSquaredHandler  -> [net/minecraft/client/particle/SingleQuadParticle]
+AsyncParticles-26.1.2.8+26.1.2.jar!fun.qu_an.minecraft.asyncparticles.client.mixin.compat.particletweaks.MixinMixinSingleQuadParticle  @ModifyExpressionValue method=@MixinSquaredHandler  -> [net/minecraft/client/particle/SingleQuadParticle]
+AsyncParticles-26.1.2.8+26.1.2.jar!fun.qu_an.minecraft.asyncparticles.client.mixin.compat.particletweaks.MixinMixinSingleQuadParticle  @ModifyReturnValue method=@MixinSquaredHandler  -> [net/minecraft/client/particle/SingleQuadParticle]
+AsyncParticles-26.1.2.8+26.1.2.jar!fun.qu_an.minecraft.asyncparticles.client.mixin.compat.sodium_extra.MixinFireworkParticles$Starter  @Redirect method=@MixinSquaredHandler  -> [net/minecraft/client/particle/FireworkParticles$Starter]
+AsyncParticles-26.1.2.8+26.1.2.jar!fun.qu_an.minecraft.asyncparticles.client.mixin.compat.sodium_extra.MixinParticleEngine  @Redirect method=@MixinSquaredHandler  -> [net/minecraft/client/particle/ParticleEngine]
+AsyncParticles-26.1.2.8+26.1.2.jar!fun.qu_an.minecraft.asyncparticles.client.mixin.conditional.MixinClassInstanceMultiMap_SafeClassInstanceMultiMap_On  @ModifyVariable method=@MixinSquaredHandler  -> [net/minecraft/util/ClassInstanceMultiMap]
+biomereplacer-3.1-newt-neo.jar!net.werdei.biome_replacer.mixin.terrablender.ClimateParameterListMixin  @ModifyArg method=@MixinSquaredHandler  -> [net/minecraft/world/level/biome/Climate$ParameterList]
+controlify-3.5.3+mc26.1-universal.jar!dev.isxander.controlify.mixins.feature.screenop.impl.chat.CommandSuggestionsMixin  @ModifyExpressionValue method=renderUsage  -> [net/minecraft/client/gui/components/CommandSuggestions]
+curios-neoforge-15.0.0+26.1.2.jar!top.theillusivec4.curios.mixin.core.MixinCuriosTriggers  @Inject method=equip(Lnet/minecraft/advancements/critereon/ItemPredicate$Builder;)Lnet/minecraft/advancements/Criterion;  -> [top/theillusivec4/curios/api/CuriosTriggers]
+curios-neoforge-15.0.0+26.1.2.jar!top.theillusivec4.curios.mixin.core.MixinCuriosTriggers  @Inject method=equipAtLocation  -> [top/theillusivec4/curios/api/CuriosTriggers]
+CustomPlayerModels-26.1-0.6.27b.jar!com.tom.cpm.mixin.compat.AbstractTextureMixin_OF  @Shadow field multiTex:Lnet/optifine/shaders/MultiTexID;  -> [net/minecraft/client/renderer/texture/AbstractTexture]
+e4mc-neoforge-6.2.3.jar!link.e4mc.mixin.ConnectionMixin  @Inject method=/^(connect|method_52271|m_290025_)$/  -> [net/minecraft/network/Connection]
+e4mc-neoforge-6.2.3.jar!link.e4mc.mixin.ConnectionMixin  @ModifyArg method=/^(connect|method_52271|m_290025_|connectToServer|method_10753|m_178300_)$/  -> [net/minecraft/network/Connection]
+e4mc-neoforge-6.2.3.jar!link.e4mc.mixin.ConnectionMixin  @ModifyArg method=/^(connect|method_52271|m_290025_|connectToServer|method_10753|m_178300_)$/  -> [net/minecraft/network/Connection]
+e4mc-neoforge-6.2.3.jar!link.e4mc.mixin.ConnectionMixin  @WrapOperation method=/^(connect|method_52271|m_290025_|connectToServer|method_10753|m_178300_)$/  -> [net/minecraft/network/Connection]
+e4mc-neoforge-6.2.3.jar!link.e4mc.mixin.ServerboundKeyPacketMixin  @Redirect method=/^<init>$/  -> [net/minecraft/network/protocol/login/ServerboundKeyPacket]
+emotecraft-for-MC26.1.2-3.3.0-b.build.164.jar!io.github.kosmx.emotes.arch.mixin.EmoteAvatarMixin  @Inject method=method_5773  -> [net/minecraft/world/entity/Avatar]
+EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar!com.euphoriapatches.euphoria_patcher.neoforge.mixin.EnderDragonRendererMixin  @Inject method=renderRays  -> [net/minecraft/client/renderer/entity/EnderDragonRenderer]
+EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar!com.euphoriapatches.euphoria_patcher.neoforge.mixin.IrisHeaderEntryMixin  @Inject method=renderContent(Lnet/minecraft/client/gui/GuiGraphics;IIZF)V  -> [net/irisshaders/iris/gui/element/ShaderPackOptionList$HeaderEntry]
+EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar!com.euphoriapatches.euphoria_patcher.neoforge.mixin.IrisModernExclusiveUniformsMixin  @Inject method=addIrisExclusiveUniforms(Lnet/irisshaders/iris/gl/uniform/UniformHolder;)V  -> [net/irisshaders/iris/uniforms/IrisExclusiveUniforms]
+EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar!com.euphoriapatches.euphoria_patcher.neoforge.mixin.IrisModernShaderPackMixin  @Inject method=<init>(Ljava/nio/file/Path;Ljava/util/Map;Lcom/google/common/collect/ImmutableList;)V  -> [net/irisshaders/iris/shaderpack/ShaderPack]
+EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar!com.euphoriapatches.euphoria_patcher.neoforge.mixin.ScreenshotMixin  @Inject method=takeScreenshot(Lcom/mojang/blaze3d/pipeline/RenderTarget;)Lcom/mojang/blaze3d/platform/NativeImage;  -> [net/minecraft/client/Screenshot]
+EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar!com.euphoriapatches.euphoria_patcher.neoforge.mixin.SodiumMessagePopupContainerMixin  @ModifyVariable method=renderWidget  -> [net/minecraft/client/gui/components/AbstractSelectionList]
+EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar!com.euphoriapatches.euphoria_patcher.neoforge.mixin.SodiumMessagePopupContainerMixin  @ModifyVariable method=renderWidget  -> [net/minecraft/client/gui/components/AbstractSelectionList]
+EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar!com.euphoriapatches.euphoria_patcher.neoforge.mixin.SodiumMessagePopupMixin  @Inject method=mouseClicked(DDI)Z  -> [net/irisshaders/iris/gui/screen/ShaderPackScreen]
+EuphoriaPatcher-1.10.5-r5.9.3-neoforge.jar!com.euphoriapatches.euphoria_patcher.neoforge.mixin.SodiumMessagePopupMixin  @Inject method=keyPressed(III)Z  -> [net/irisshaders/iris/gui/screen/ShaderPackScreen]
+FarmersDelight-26.1-3.6.30+refabricated.jar!vectorwing.farmersdelight.common.mixin.refabricated.GuiMixin  @Inject method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+FarmersDelight-26.1-3.6.30+refabricated.jar!vectorwing.farmersdelight.common.mixin.refabricated.GuiMixin  @Inject method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+IMBlocker-7.3.2-neoforge-26.1+.jar!io.github.reserveword.imblocker.mixin.GuiMixin  @Inject method=setScreen  -> [net/minecraft/client/gui/Gui]
+IMBlocker-7.3.2-neoforge-26.1+.jar!io.github.reserveword.imblocker.mixin.KeyboardHandlerMixin  @Inject method=textEditing  -> [net/minecraft/client/KeyboardHandler]
+IMBlocker-7.3.2-neoforge-26.1+.jar!io.github.reserveword.imblocker.mixin.WindowMixin  @Inject method=onFocus(Z)V  -> [com/mojang/blaze3d/platform/Window]
+IMBlocker-7.3.2-neoforge-26.1+.jar!io.github.reserveword.imblocker.mixin.WindowsIngameIMEInitializer  @Inject method=<init>(Lcom/mojang/blaze3d/platform/WindowEventHandler;Lcom/mojang/blaze3d/platform/DisplayData;Ljava/lang/String;ZLjava/lang/String;Lcom/mojang/blaze3d/platform/MonitorManager;Lcom/mojang/blaze3d/systems/GpuBackend;)V  -> [com/mojang/blaze3d/platform/Window]
+IMBlocker-7.3.2-neoforge-26.1+.jar!io.github.reserveword.imblocker.mixin.WindowsIngameIMEInitializer  @Inject method=<init>(Lcom/mojang/blaze3d/platform/WindowEventHandler;Lcom/mojang/blaze3d/platform/DisplayData;Ljava/lang/String;ZLjava/lang/String;Lcom/mojang/blaze3d/platform/MonitorManager;Lcom/mojang/renderpearl/api/device/GpuBackend;)V  -> [com/mojang/blaze3d/platform/Window]
+IMBlocker-7.3.2-neoforge-26.1+.jar!io.github.reserveword.imblocker.mixin.WindowsIngameIMEInitializer  @Inject method=<init>(Lcom/mojang/blaze3d/platform/WindowEventHandler;Lcom/mojang/blaze3d/platform/DisplayData;Ljava/lang/String;ZLjava/lang/String;Lcom/mojang/blaze3d/platform/MonitorManager;Lcom/mojang/renderpearl/api/device/GpuBackend;I)V  -> [com/mojang/blaze3d/platform/Window]
+iris-fabric-1.11.4+mc26.1.2.jar!net.irisshaders.iris.mixin.MixinBiomeAmbientSoundsHandler  @Inject method=method_75840  -> [net/minecraft/client/resources/sounds/BiomeAmbientSoundsHandler]
+iris-fabric-1.11.4+mc26.1.2.jar!net.irisshaders.iris.mixin.MixinLevelRenderer_Sky  @Inject method=lambda$addSkyPass$8  -> [net/minecraft/client/renderer/LevelRenderer]
+iris-fabric-1.11.4+mc26.1.2.jar!net.irisshaders.iris.mixin.texture.MixinTextureManager  @Inject method=lambda$reload$3  -> [net/minecraft/client/renderer/texture/TextureManager]
+litematica-fabric-26.1.2-0.27.14.jar!fi.dy.masa.litematica.mixin.render.MixinLevelRenderer  @Inject method=lambda$addMainPass$0(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;Lnet/minecraft/client/renderer/state/level/LevelRenderState;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/client/renderer/chunk/ChunkSectionsToRender;Lcom/mojang/blaze3d/resource/ResourceHandle;Lcom/mojang/blaze3d/resource/ResourceHandle;Lcom/mojang/blaze3d/resource/ResourceHandle;Lcom/mojang/blaze3d/resource/ResourceHandle;Lcom/mojang/blaze3d/resource/ResourceHandle;ZLorg/joml/Matrix4fc;)V  -> [net/minecraft/client/renderer/LevelRenderer]
+litematica-fabric-26.1.2-0.27.14.jar!fi.dy.masa.litematica.mixin.render.MixinLevelRenderer  @Inject method=lambda$addMainPass$0(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;Lnet/minecraft/client/renderer/state/level/LevelRenderState;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/client/renderer/chunk/ChunkSectionsToRender;Lcom/mojang/blaze3d/resource/ResourceHandle;Lcom/mojang/blaze3d/resource/ResourceHandle;Lcom/mojang/blaze3d/resource/ResourceHandle;Lcom/mojang/blaze3d/resource/ResourceHandle;Lcom/mojang/blaze3d/resource/ResourceHandle;ZLorg/joml/Matrix4fc;)V  -> [net/minecraft/client/renderer/LevelRenderer]
+lootr-neoforge-26.1.2-1.23.38.123.jar!noobanidus.mods.lootr.common.mixin.ticker.MixinStructureTemplate  @WrapOperation method=lambda$placeEntities$0  -> [net/minecraft/world/level/levelgen/structure/templatesystem/StructureTemplate]
+MoogsStructureLib-neoforge-26.1.2-3.4.2.jar!com.finndog.moogs_structures.mixins.neoforge.structures.StructurePoolMixin  @WrapOperation method=method_28886  -> [net/minecraft/world/level/levelgen/structure/pools/StructureTemplatePool]
+NoChatRestrictions-NeoForge-MC26.1-v1.1.3.jar!com.aizistral.nochatrestrictions.mixins.MixinMinecraft  @Inject method=m_193585_  -> [net/minecraft/client/Minecraft]
+notenoughcrashes-neoforge-4.4.9+26.1.2.jar!fudge.notenoughcrashes.mixins.MixinTileEntity  @Inject method=populateCrashReport  -> [net/minecraft/world/level/block/entity/BlockEntity]
+notenoughcrashes-neoforge-4.4.9+26.1.2.jar!fudge.notenoughcrashes.mixins.client.MixinKeyboard  @Inject method=pollDebugCrash()V  -> [net/minecraft/client/KeyboardHandler]
+nuit-neoforge-1.0.0-beta.6+mc26.1.2.jar!me.flashyreese.mods.nuit.mixin.MixinLevelRenderer  @Inject method=lambda$addSkyPass$0(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;Lnet/minecraft/client/renderer/state/level/SkyRenderState;Lnet/minecraft/client/renderer/SkyRenderer;)V  -> [net/minecraft/client/renderer/LevelRenderer]
+PlayerAnimationLibMerged-1.2.8+mc.26.1.jar!com.zigythebird.playeranim.mixin.AvatarMixin  @Inject method=method_5773  -> [net/minecraft/world/entity/Avatar]
+reglass-26.1-2.1.1.jar!restudio.reglass.mixin.accessor.GuiRenderStateAccessor  @Accessor member blurLayer#I  -> [net/minecraft/client/renderer/state/gui/GuiRenderState]
+sodium-fabric-0.9.1+mc26.1.2.jar!net.caffeinemc.mods.sodium.mixin.features.gui.hooks.settings.OptionsScreenMixin  @Inject method=method_19828  -> [net/minecraft/client/gui/screens/options/OptionsScreen]
+nested9265655091590174190.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field c2me$packed1:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested9265655091590174190.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field c2me$packed2:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested9265655091590174190.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field c2me$packed3:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested9265655091590174190.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field c2me$packed4:I  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested9265655091590174190.jar!com.ishland.c2me.opts.natives_math.mixin.MixinAquiferSamplerImpl  @Shadow field c2me$packedBlockPositions:[S  -> [net/minecraft/world/level/levelgen/Aquifer$NoiseBasedAquifer]
+nested1063994912756968884.jar!eu.pb4.polymer.core.mixin.other.ByteBufCodecsHolderMixin  @ModifyVariable method=encode(Lnet/minecraft/network/RegistryFriendlyByteBuf;Lnet/minecraft/core/Holder;)V  -> [net/minecraft/network/codec/ByteBufCodecs$30]
+nested1063994912756968884.jar!eu.pb4.polymer.core.mixin.other.ByteBufCodecsRegistryMixin  @ModifyVariable method=encode(Lnet/minecraft/network/RegistryFriendlyByteBuf;Ljava/lang/Object;)V  -> [net/minecraft/network/codec/ByteBufCodecs$29]
+nested1063994912756968884.jar!eu.pb4.polymer.core.mixin.other.ByteBufCodecsRegistryMixin  @Shadow field val$registryKey:Lnet/minecraft/resources/ResourceKey;  -> [net/minecraft/network/codec/ByteBufCodecs$29]
+nested13722807075760609345.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested13722807075760609345.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested13722807075760609345.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested13722807075760609345.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested13722807075760609345.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested13722807075760609345.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested13722807075760609345.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested3589175281059492764.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested3589175281059492764.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested3589175281059492764.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested3589175281059492764.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested3589175281059492764.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested3589175281059492764.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested3589175281059492764.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested1593202731154350534.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested1593202731154350534.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested1593202731154350534.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested1593202731154350534.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested1593202731154350534.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested1593202731154350534.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+nested1593202731154350534.jar!net.fabricmc.fabric.mixin.client.rendering.GuiMixin  @WrapOperation method=extractHotbarAndDecorations  -> [net/minecraft/client/gui/Gui]
+
+=== @At TARGET: 12 ===
+architectury-neoforge-20.1.17.jar!dev.architectury.mixin.forge.neoforge.MixinChunkMap  @At(INVOKE) owner net/neoforged/bus/api/IEventBus (class not reachable)
+collective-26.1.2-8.69.jar!com.natamus.collective.neoforge.mixin.ModListScreenMixin  @At(INVOKE) owner net/neoforged/neoforgespi/language/IModInfo (class not reachable)
+curios-neoforge-15.0.0+26.1.2.jar!top.theillusivec4.curios.mixin.core.MixinApplyBonusCount  @At(INVOKE_ASSIGN) net/minecraft/world/item/enchantment/EnchantmentHelper.getItemEnchantmentLevel(Lnet/minecraft/core/Holder;Lnet/minecraft/world/item/ItemStack;)I (no such member)
+cwb-5.0.0+26.1.jar!dev.kirant.cwb.mixin.MainMixin  @At(INVOKE) owner joptsimple/OptionParser (class not reachable)
+friendsandfoes-neoforge-5.0.4+mc26.1.2.jar!com.faboslav.friendsandfoes.common.mixin.LivingEntityMixin  @At(INVOKE) net/minecraft/world/level/block/state/BlockState.getFriction(Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/entity/Entity;)F (no such member)
+no-telemetry-1.10.0.jar!de.kb1000.notelemetry.mixin.OptionsScreenMixin  @At(INVOKE) owner net/minecraft/class_7845$class_7939 (class not reachable)
+owo-lib-0.13.1+26.1.jar!io.wispforest.owo.mixin.MainMixin  @At(INVOKE) owner net/fabricmc/loader/impl/game/minecraft/Hooks (class not reachable)
+owo-lib-0.13.1+26.1.jar!io.wispforest.owo.mixin.MainMixin  @At(INVOKE) owner org/quiltmc/loader/impl/game/minecraft/Hooks (class not reachable)
+owo-lib-0.13.1+26.1.jar!io.wispforest.owo.mixin.MinecraftMixin  @At(INVOKE) owner net/fabricmc/loader/impl/game/minecraft/Hooks (class not reachable)
+owo-lib-0.13.1+26.1.jar!io.wispforest.owo.mixin.MinecraftMixin  @At(INVOKE) owner org/quiltmc/loader/impl/game/minecraft/Hooks (class not reachable)
+sodium-fabric-0.9.1+mc26.1.2.jar!net.caffeinemc.mods.sodium.mixin.workarounds.context_creation.WindowMixin  @At(INVOKE) owner net/neoforged/fml/loading/ImmediateWindowHandler (class not reachable)
+supermartijn642corelib-1.1.26-neoforge-mc26.1.jar!com.supermartijn642.core.mixin.GameDataMixin  @At(INVOKE) owner net/neoforged/fml/ModLoader (class not reachable)
