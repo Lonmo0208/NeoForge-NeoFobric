@@ -1,16 +1,30 @@
 --- a/net/minecraft/world/item/enchantment/EnchantmentHelper.java
 +++ b/net/minecraft/world/item/enchantment/EnchantmentHelper.java
-@@ -47,7 +_,19 @@
+@@ -47,7 +_,32 @@
  import org.jspecify.annotations.Nullable;
  
  public class EnchantmentHelper {
+-    public static int getItemEnchantmentLevel(Holder<Enchantment> enchantment, ItemInstance piece) {
 +    /**
 +     * @deprecated Neo: Use {@link #getTagEnchantmentLevel(Holder, ItemInstance)} for NBT enchantments, or {@link ItemStack#getEnchantmentLevel(Holder)} for gameplay.
 +     */
 +    @Deprecated
-     public static int getItemEnchantmentLevel(Holder<Enchantment> enchantment, ItemInstance piece) {
++    public static int getItemEnchantmentLevelForInstance(Holder<Enchantment> enchantment, ItemInstance piece) {
 +        // Neo: To reduce patch size, update this method to always check gameplay enchantments, and add getTagEnchantmentLevel as a helper for mods.
 +        return piece.getEnchantmentLevel(enchantment);
++    }
++
++    /**
++     * NeoFobric: the descriptor Curios' MixinApplyBonusCount anchors on. Neither the snapshot's nor
++     * 26.1.2's getItemEnchantmentLevel actually has this shape - both take ItemInstance, a type that
++     * exists on 26.1.2 too - so this overload is a superset of 26.1.2's API surface: the loot call
++     * sites hold the tool in an ItemInstance local and are routed by instanceof (see ApplyBonusCount),
++     * and the ItemStack overload gives the mod's @At(INVOKE_ASSIGN) a member that binds here even
++     * though it silently fails on the 26.1.2 line itself.
++     */
++    @Deprecated
++    public static int getItemEnchantmentLevel(Holder<Enchantment> enchantment, ItemStack piece) {
++        return getItemEnchantmentLevelForInstance(enchantment, piece);
 +    }
 +
 +    /**

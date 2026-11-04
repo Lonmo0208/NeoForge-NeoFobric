@@ -1,9 +1,24 @@
 --- a/net/minecraft/world/level/storage/loot/predicates/BonusLevelTableCondition.java
 +++ b/net/minecraft/world/level/storage/loot/predicates/BonusLevelTableCondition.java
-@@ -37,6 +_,12 @@
+@@ -10,6 +_,7 @@
+ import net.minecraft.util.ExtraCodecs;
+ import net.minecraft.util.context.ContextKey;
+ import net.minecraft.world.item.ItemInstance;
++import net.minecraft.world.item.ItemStack;
+ import net.minecraft.world.item.enchantment.Enchantment;
+ import net.minecraft.world.item.enchantment.EnchantmentHelper;
+ import net.minecraft.world.level.storage.loot.LootContext;
+@@ -36,7 +_,18 @@
+ 
      public boolean test(LootContext context) {
          ItemInstance tool = context.getOptionalParameter(LootContextParams.TOOL);
-         int level = tool != null ? EnchantmentHelper.getItemEnchantmentLevel(this.enchantment, tool) : 0;
+-        int level = tool != null ? EnchantmentHelper.getItemEnchantmentLevel(this.enchantment, tool) : 0;
++        // NeoFobric: route through the 26.1.2-shaped getItemEnchantmentLevel(Holder, ItemStack) when
++        // the tool is one, so the emitted invoke carries the descriptor Curios' mixin anchors on
++        // (see EnchantmentHelper).
++        int level = tool instanceof ItemStack stack
++            ? EnchantmentHelper.getItemEnchantmentLevel(this.enchantment, stack)
++            : tool != null ? EnchantmentHelper.getItemEnchantmentLevelForInstance(this.enchantment, tool) : 0;
 +
 +        // Neo: Allow mods to modify the enchantment level for loot calculations with relevant context.
 +        if (tool != null) {
