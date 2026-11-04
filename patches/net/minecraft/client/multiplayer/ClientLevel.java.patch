@@ -188,7 +188,7 @@
              }
          }
  
-@@ -1276,10 +_,34 @@
+@@ -1276,10 +_,39 @@
                      ClientLevel.this.dragonParts.removeAll(Arrays.asList(dragon.getSubEntities()));
                      break;
                  default:
@@ -216,6 +216,11 @@
 +    @Override
 +    public net.neoforged.neoforge.model.data.ModelDataManager getModelDataManager() {
 +        return modelDataManager;
++    }
++
++    @Override
++    public net.neoforged.neoforge.attachment.SessionData getSessionData() {
++        return this.connection.getSessionData();
 +    }
 +
 +    @Override
