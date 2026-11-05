@@ -12,3 +12,20 @@
      public void enableScissor(int x, int y, int width, int height) {
          if (width > 0 && height > 0) {
              if (x >= this.renderArea.x()
+@@ -530,8 +_,14 @@
+             }
+ 
+             if (!dynamicVertexBuffer) {
+-                for (int i = 0; i < 16; i++) {
+-                    if (this.vertexBuffers[i] == null && this.boundPipeline.vertexFormats().get(i) != null) {
++                // NeoFobric: a compiled pipeline only carries entries for the vertex buffers it
++                // actually declares. Iris' Vulkan pipelines declare fewer than the fixed 16 slots,
++                // and indexing the list with 0..15 threw "Index 1 out of bounds for length 1" on
++                // every draw that used such a pipeline (crash on entering a world). Walk the
++                // declared formats instead, capped at the array's size.
++                var vertexFormats = this.boundPipeline.vertexFormats();
++                for (int i = 0; i < Math.min(vertexFormats.size(), this.vertexBuffers.length); i++) {
++                    if (this.vertexBuffers[i] == null && vertexFormats.get(i) != null) {
+                         throw new IllegalStateException("Vertex format contains elements but vertex buffer at slot " + i + " is null");
+                     }
+ 
