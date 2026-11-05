@@ -1,0 +1,43 @@
+--- a/com/mojang/renderpearl/backend/vulkan/VulkanGpuSurface.java
++++ b/com/mojang/renderpearl/backend/vulkan/VulkanGpuSurface.java
+@@ -179,7 +_,14 @@
+ 
+     @Override
+     public void configure(GpuSurface.Configuration config) throws SurfaceException {
+-        this.destroySwapchain();
++        // NeoFobric: hand the previous swapchain over to vkCreateSwapchainKHR instead of waiting for
++        // the queue to go idle first. The old code called vkQueueWaitIdle here, and on the AMD LLPC
++        // driver that call can block forever while a present is still pending for a window the render
++        // thread itself has to pump - the game then hangs in its first frames (Vulkan only, and far
++        // easier to hit once mods make startup slower). The oldSwapchain handover is the sanctioned
++        // way to replace a swapchain; the old handle is destroyed right after the new one exists.
++        long oldSwapchain = this.swapchain;
++        long[] oldPresentSemaphores = this.presentSemaphores;
+ 
+         try (MemoryStack stack = MemoryStack.stackPush()) {
+             VkSurfaceCapabilitiesKHR surfaceCapabilities = VkSurfaceCapabilitiesKHR.calloc(stack);
+@@ -209,6 +_,9 @@
+ 
+             VkSwapchainCreateInfoKHR swapchainCreateInfo = VkSwapchainCreateInfoKHR.calloc(stack).sType$Default();
+             swapchainCreateInfo.surface(this.surface);
++            // NeoFobric: retire the previous swapchain through the create call instead of destroying
++            // it after an unbounded queue wait (see the comment at the top of this method).
++            swapchainCreateInfo.oldSwapchain(oldSwapchain);
+             int currentPresentMode = VulkanConst.toVk(config.presentMode());
+             int requestedImageCount = 3;
+             swapchainCreateInfo.minImageCount(Math.max(3, surfaceCapabilities.minImageCount()));
+@@ -225,6 +_,14 @@
+             LongBuffer swapchainPtr = stack.callocLong(1);
+             throwIfFailure(KHRSwapchain.vkCreateSwapchainKHR(this.device.vkDevice(), swapchainCreateInfo, null, swapchainPtr), "Failed to create Swapchain");
+             this.swapchain = swapchainPtr.get(0);
++            // The old swapchain was retired by the create call above; destroy the handle and its
++            // present semaphores now instead of waiting for the queue to drain first.
++            if (oldSwapchain != 0L) {
++                KHRSwapchain.vkDestroySwapchainKHR(this.device.vkDevice(), oldSwapchain, null);
++                for (long semaphore : oldPresentSemaphores) {
++                    VK12.vkDestroySemaphore(this.device.vkDevice(), semaphore, null);
++                }
++            }
+             IntBuffer imageCountPtr = stack.callocInt(1);
+             throwIfFailure(
+                 KHRSwapchain.vkGetSwapchainImagesKHR(this.device.vkDevice(), this.swapchain, imageCountPtr, null), "Failed to get swapchain image count"
