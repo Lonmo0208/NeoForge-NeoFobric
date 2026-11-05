@@ -1047,6 +1047,22 @@ public final class MixinJarPatcher {
                     || fmlLayerClassNames().contains(name)) {
                 continue;
             }
+            // NeoFobric: a type the platform always provides (MixinExtras, the NeoForge/FML namespaces)
+            // must not be stubbed into this jar even when the probes above miss it - the stub would carry
+            // its package into the composite module, which then exports it alongside the platform's own
+            // module and the whole layer is refused ("Modules mixinextras.neoforge and neofobric.fabric.mods
+            // export package com.llamalad7.mixinextras.injector.wrapoperation"). At runtime the frame type
+            // resolves from the platform's module instead, which is the copy every other consumer sees.
+            var dottedPackage = name.contains("/")
+                    ? name.substring(0, name.lastIndexOf('/')).replace('/', '.')
+                    : name;
+            if (BridgeFabricModLocator.isPlatformNamespace(dottedPackage)
+                    || BridgeFabricModLocator.isAlwaysPlatformLibrary(dottedPackage)) {
+                LOGGER.info("[NeoFobric] Not stubbing the absent frame type {} - the platform's own module"
+                        + " provides it, and a stub here would make this jar's module export the package"
+                        + " alongside it", name);
+                continue;
+            }
             try {
                 // Anything the running JVM already answers for (the JDK and the loader's own classes)
                 // needs no stub either.
@@ -1165,8 +1181,26 @@ public final class MixinJarPatcher {
         }
         var names = java.util.concurrent.ConcurrentHashMap.<String>newKeySet();
         try {
-            var root = FMLPaths.GAMEDIR.get().resolve("libraries").resolve("net").resolve("neoforged");
-            if (Files.isDirectory(root)) {
+            // NeoFobric: the libraries root moves with the install layout. A standard install puts it
+            // under the game directory, while an isolated per-version install (game directory =
+            // .minecraft/versions/<version>) keeps it two levels above - scanning only the first shape
+            // missed the whole FML layer there, and the frame-type stubs then carried platform classes
+            // (MixinExtras) into the composite module, which the layer refuses to resolve.
+            var gameDir = FMLPaths.GAMEDIR.get();
+            var roots = new java.util.ArrayList<Path>();
+            roots.add(gameDir.resolve("libraries").resolve("net").resolve("neoforged"));
+            var parent = gameDir.getParent();
+            if (parent != null) {
+                roots.add(parent.resolve("libraries").resolve("net").resolve("neoforged"));
+                var grandParent = parent.getParent();
+                if (grandParent != null) {
+                    roots.add(grandParent.resolve("libraries").resolve("net").resolve("neoforged"));
+                }
+            }
+            for (var root : roots) {
+                if (!Files.isDirectory(root)) {
+                    continue;
+                }
                 try (var libs = Files.list(root)) {
                     for (var lib : (Iterable<Path>) libs::iterator) {
                         if (!Files.isDirectory(lib)) {
@@ -1188,6 +1222,16 @@ public final class MixinJarPatcher {
                                 }
                             }
                         }
+                    }
+                }
+            }
+            // A launcher layout that keeps the platform jars next to the game directory instead of a
+            // libraries tree: the name filter keeps everything that is not an FML-layer jar out.
+            try (var jars = Files.list(gameDir)) {
+                for (var jar : (Iterable<Path>) jars::iterator) {
+                    var fileName = jar.getFileName().toString();
+                    if (Files.isRegularFile(jar) && fileName.endsWith(".jar") && isFmlLayerJar(fileName)) {
+                        collectJarClassNames(jar, names, 1);
                     }
                 }
             }
