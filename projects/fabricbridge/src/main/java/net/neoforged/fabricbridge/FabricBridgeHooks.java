@@ -823,6 +823,14 @@ public final class FabricBridgeHooks {
         }
 
         if (!Boolean.getBoolean("neofobric.noClientEntrypoints")) {
+            // Sodium 0.9.3's config API resolves the registering mod through FML's ModList; a Fabric
+            // mod (iris) registering its own options would NPE there. The lookup is wrapped before the
+            // first Fabric mod can reach the builder - see SodiumConfigCompat.
+            try {
+                net.neoforged.fabricbridge.compbridlnk.SodiumConfigCompat.wrapConfigModInfoFunction();
+            } catch (Throwable t) {
+                LOGGER.debug("[NeoFobric] Could not wrap Sodium's config mod-info lookup", t);
+            }
             try {
                 FabricBridge.invokeClientEntrypoints();
             } catch (Throwable t) {
