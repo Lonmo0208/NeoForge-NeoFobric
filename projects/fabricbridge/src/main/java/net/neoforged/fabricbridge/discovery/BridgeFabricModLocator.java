@@ -554,13 +554,20 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         }
 
         pipeline.addModFile(modFile);
+        var hiddenEffective = new java.util.HashSet<Path>();
         for (var entry : fabricJars.entrySet()) {
             // The registry must point at the jar that actually carries the mixin configs the bridge
             // will read back, i.e. the realigned copy when there is one.
             var effective = realignedJars.getOrDefault(entry.getKey(), entry.getKey());
             FabricJarRegistry.register(effective, entry.getValue());
             FabricJarRegistry.markGameLayerPath(effective);
+            // The bootstrap reads configs from the realigned jar, so record the path it will actually
+            // see for a duplicate whose classes were hidden (see hiddenDuplicateJars).
+            if (duplicatePackages.containsKey(entry.getKey())) {
+                hiddenEffective.add(effective);
+            }
         }
+        hiddenDuplicateJars = java.util.Set.copyOf(hiddenEffective);
 
         // Publish what the Mods screen should show. NeoForge's own screen knows only FML's mod list,
         // which the composite game library deliberately is not part of (single-module JPMS merge), so
@@ -2103,6 +2110,13 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
      * fabric-resource-loader). The copy with the highest version keeps all of its packages, the others lose
      * all of theirs.
      */
+    private static volatile java.util.Set<Path> hiddenDuplicateJars = java.util.Set.of();
+
+    /** {@return whether this jar's classes were hidden in favour of a newer copy of the same mod} */
+    public static boolean isHiddenDuplicateJar(Path path) {
+        return hiddenDuplicateJars.contains(path);
+    }
+
     private static java.util.Map<Path, java.util.Set<String>> duplicateFabricPackages(Map<Path, FabricModInfo> fabricJars) {
         var copies = new java.util.HashMap<String, java.util.List<Map.Entry<Path, FabricModInfo>>>();
         for (var entry : fabricJars.entrySet()) {
@@ -2166,6 +2180,14 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
      * text, so an unusual version can only order wrongly, never throw.
      */
     private static int compareModuleVersions(String first, String second) {
+        // A placeholder version ("unspecified", as shipped by some dummy nested jars) must never
+        // outrank a real one: the string fallback below sorts "unspecified" above "1.8.3", which hid
+        // amecs' real API implementation in favour of an empty dummy jar.
+        var firstPlaceholder = isPlaceholderVersion(first);
+        var secondPlaceholder = isPlaceholderVersion(second);
+        if (firstPlaceholder != secondPlaceholder) {
+            return firstPlaceholder ? -1 : 1;
+        }
         var left = stripBuildSuffix(first);
         var right = stripBuildSuffix(second);
         var leftParts = left.split("\\.");
@@ -2189,6 +2211,12 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     private static String stripBuildSuffix(String version) {
         var plus = version.indexOf('+');
         return plus < 0 ? version : version.substring(0, plus);
+    }
+
+    /** {@return whether the version is a placeholder that must sort below any real version} */
+    private static boolean isPlaceholderVersion(String version) {
+        var stripped = stripBuildSuffix(version).trim();
+        return stripped.isEmpty() || stripped.equalsIgnoreCase("unspecified");
     }
 
     /**
