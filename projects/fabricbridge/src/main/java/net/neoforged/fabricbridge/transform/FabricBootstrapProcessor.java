@@ -163,7 +163,7 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
         forceMixinPreparationIfPending();
         var node = context.node();
         var changed = switch (node.name) {
-            case MINECRAFT_CLASS -> injectClientGameInstanceHandoff(node);
+            case MINECRAFT_CLASS -> injectClientGameInstanceHandoff(node) | injectClientTickHook(node);
             case MINECRAFT_SERVER_CLASS -> wrapBranding(node, "getServerModName");
             case BUILT_IN_REGISTRIES_CLASS -> injectBootstrapFreeze(node);
             case CLIENT_BRAND_RETRIEVER_CLASS -> wrapBranding(node, "getClientModName");
@@ -1026,6 +1026,45 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
         // Sodium's Minecraft#setFullscreen mixin reads the client config during this same
         // constructor, so the entrypoint that registers that config has to run first. Running them
         // after construction (or after the first screen) is too late and crashes the client.
+        return true;
+    }
+
+    /**
+     * Injects {@code FabricBridgeHooks.clientTick()} at the head of {@code Minecraft#tick()}.
+     *
+     * <p>This is the bridge's own client heartbeat. It exists because compat work sometimes has to wait
+     * for a moment that only the game can announce but Fabric API's tick events cannot be used for: the
+     * bridge does not bundle Fabric API, and a minimal install (Iris + Sodium only) has no Fabric API at
+     * all. Sodium's config mod-info fallback is the first user - the NeoForge build of Sodium installs
+     * its FML-only lookup from the {@code Minecraft} constructor, after the entrypoint hand-off, and
+     * assembles its config pages at the end of the loading overlay. The first tick sits exactly between
+     * the two.
+     *
+     * <p>The hook is a static call with no arguments and no branches, so it needs no stack map frame and
+     * is a non-issue for classes FML writes back without recomputing frames.
+     */
+    private static boolean injectClientTickHook(ClassNode node) {
+        MethodNode target = null;
+        for (var method : node.methods) {
+            if (method.name.equals("tick") && method.desc.equals("()V")) {
+                target = method;
+                break;
+            }
+        }
+        if (target == null) {
+            LOGGER.error("[NeoFobric] Could not find Minecraft#tick() - the Sodium config mod-info fallback"
+                    + " will not be installed before Sodium builds its pages, and a Fabric mod with a"
+                    + " Sodium config page will crash at the end of the loading overlay");
+            return false;
+        }
+        for (var insn : target.instructions) {
+            if (insn instanceof MethodInsnNode call && call.getOpcode() == Opcodes.INVOKESTATIC
+                    && call.owner.equals(HOOKS_CLASS) && call.name.equals("clientTick")) {
+                return false; // Already injected.
+            }
+        }
+        target.instructions.insert(new MethodInsnNode(Opcodes.INVOKESTATIC, HOOKS_CLASS, "clientTick", "()V", false));
+        LOGGER.info("[NeoFobric] Client tick hook injected into Minecraft#tick()");
         return true;
     }
 
