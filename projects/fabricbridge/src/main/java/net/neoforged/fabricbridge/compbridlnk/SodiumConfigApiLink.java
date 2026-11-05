@@ -207,43 +207,36 @@ public final class SodiumConfigApiLink {
     /**
      * Sodium labels every page it builds with a mod's display name and version, and it looks those up
      * through FML's {@code ModList} - which has never heard of a Fabric mod ("Mod with id X not found in
-     * ModList" is what the build does instead). Its NeoForge build sets that lookup while {@code Minecraft}
-     * is being constructed, so replacing it can only happen later: the first client tick runs long before
-     * the loading overlay finishes, which is when the pages are actually assembled.
+     * ModList" is what the build does instead). Its NeoForge build installs that lookup from
+     * {@code ConfigLoaderForge.collectConfigEntryPoints()}, called after {@code new Options(...)} in the
+     * {@code Minecraft} constructor - later than this bridge's entrypoint hand-off, which sits in front of
+     * that constructor call. So the lookup can only be replaced afterwards.
+     *
+     * <p>The bridge's own first client tick is the right moment: it is long after the constructor has set
+     * the FML-only lookup and long before the loading overlay finishes, which is when Sodium assembles the
+     * pages. It deliberately does <em>not</em> go through Fabric API's {@code ClientTickEvents}: the bridge
+     * does not bundle Fabric API, and a minimal install (Iris + Sodium only) has no Fabric API at all - the
+     * reflective arm then dies with {@code ClassNotFoundException} and the NPE comes back.
      */
     private static void scheduleModInfoFallback(Class<?> manager) {
-        try {
-            // Fabric API is not on this project's compile classpath, so the tick event is reached reflectively
-            // through the loader that owns Sodium's classes (which is also the one that owns the Fabric mods).
-            var loader = manager.getClassLoader();
-            var tickEvents = Class.forName("net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents", false, loader);
-            var listener = Class.forName("net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents$StartTick", false, loader);
-            var event = Class.forName("net.fabricmc.fabric.api.event.Event", false, loader);
-            var startTick = tickEvents.getField("START_CLIENT_TICK").get(null);
-            var register = event.getMethod("register", Object.class);
-            var handler = java.lang.reflect.Proxy.newProxyInstance(loader, new Class<?>[] {listener}, (proxy, method, args) -> {
-                if (method.getDeclaringClass() == Object.class) {
-                    return switch (method.getName()) {
-                        case "toString" -> "NeoFobric Sodium mod-info installer";
-                        case "hashCode" -> System.identityHashCode(proxy);
-                        case "equals" -> proxy == args[0];
-                        default -> null;
-                    };
-                }
-                if (!modInfoInstalled) {
-                    modInfoInstalled = true;
-                    installModInfoFallback(manager);
-                }
-                return null;
-            });
-            register.invoke(startTick, handler);
-            LOGGER.info("[NeoFobric] Sodium mod-info fallback armed for the first client tick");
-        } catch (Throwable t) {
-            LOGGER.warn("[NeoFobric] Could not arm the Sodium mod-info fallback", t);
-        }
+        pendingModInfoInstall.set(manager);
+        LOGGER.info("[NeoFobric] Sodium mod-info fallback armed for the bridge's own client tick");
     }
 
-    private static volatile boolean modInfoInstalled;
+    private static final java.util.concurrent.atomic.AtomicReference<Class<?>> pendingModInfoInstall =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    /**
+     * Called once per client tick from the bridge's injected {@code Minecraft#tick} hook. The first call
+     * after a Sodium config API was linked replaces Sodium's FML-only mod-info lookup with one that also
+     * answers for Fabric mods; every other call is a volatile read.
+     */
+    public static void clientTick() {
+        var manager = pendingModInfoInstall.get();
+        if (manager != null && pendingModInfoInstall.compareAndSet(manager, null)) {
+            installModInfoFallback(manager);
+        }
+    }
 
     /** Installs a mod-info lookup that answers for FML mods and for Fabric mods alike. */
     private static void installModInfoFallback(Class<?> manager) {
