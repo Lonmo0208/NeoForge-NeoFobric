@@ -2404,34 +2404,57 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
      */
     private static java.util.List<Path> installedGameContent() {
         var found = new ArrayList<Path>();
-        var patchedRoot = FMLPaths.GAMEDIR.get().resolve("libraries").resolve("net").resolve("neoforged");
-        // Whichever side this is, the newest install of either jar describes the same patched game; a
-        // client-only or server-only install simply has one of them.
-        for (var name : new String[] { "minecraft-client-patched", "minecraft-server-patched" }) {
-            var versions = patchedRoot.resolve(name);
-            if (!Files.isDirectory(versions)) {
-                continue;
+        // NeoFobric: the libraries root moves with the install layout, exactly like MixinJarPatcher's
+        // FML layer scan. A standard install puts it under the game directory; an isolated per-version
+        // install (game directory = .minecraft/versions/<version>) keeps it two levels above. Missing
+        // the walk-up left isolated installs with no patched game here, so mixin target resolution
+        // fell back to the class path - the *unpatched* versions/<id>.jar - and a handler whose anchor
+        // NeoForge moved then scanned 0 targets at runtime: c2me-notickvd's MixinWorld killed every
+        // isolated 26.2 launch in ViaFabricPlus's entrypoint with "InjectionError ... (0/1) succeeded.
+        // Scanned 0 target(s)".
+        var gameDir = FMLPaths.GAMEDIR.get();
+        var roots = new ArrayList<Path>();
+        roots.add(gameDir.resolve("libraries").resolve("net").resolve("neoforged"));
+        var parent = gameDir.getParent();
+        if (parent != null) {
+            roots.add(parent.resolve("libraries").resolve("net").resolve("neoforged"));
+            var grandParent = parent.getParent();
+            if (grandParent != null) {
+                roots.add(grandParent.resolve("libraries").resolve("net").resolve("neoforged"));
             }
-            var byNewest = new ArrayList<Path>();
-            try (var entries = Files.list(versions)) {
-                entries.filter(Files::isDirectory).forEach(byNewest::add);
-            } catch (IOException e) {
-                LOGGER.debug("[NeoFobric] Failed to list the installed game versions under {}", versions, e);
-                continue;
-            }
-            // Newest first, by when the version directory was written: an install that was upgraded leaves the
-            // older game behind, and resolving mixin targets against it would realign handlers for a Minecraft
-            // that is not the one running. (Ordering by name would misread 26.2.0.99 as newer than 26.2.0.117.)
-            byNewest.sort(java.util.Comparator.comparingLong(BridgeFabricModLocator::lastModified).reversed());
-            for (var versionDir : byNewest) {
-                try (var jars = Files.list(versionDir)) {
-                    for (var jar : jars.filter(path -> path.getFileName().toString().endsWith(".jar")).toList()) {
-                        if (exposesGameContent(jar)) {
-                            found.add(jar);
-                        }
-                    }
+        }
+        for (var patchedRoot : roots) {
+            // Whichever side this is, the newest install of either jar describes the same patched game; a
+            // client-only or server-only install simply has one of them.
+            for (var name : new String[] { "minecraft-client-patched", "minecraft-server-patched" }) {
+                var versions = patchedRoot.resolve(name);
+                if (!Files.isDirectory(versions)) {
+                    continue;
+                }
+                var byNewest = new ArrayList<Path>();
+                try (var entries = Files.list(versions)) {
+                    entries.filter(Files::isDirectory).forEach(byNewest::add);
                 } catch (IOException e) {
-                    LOGGER.debug("[NeoFobric] Failed to list the game jars under {}", versionDir, e);
+                    LOGGER.debug("[NeoFobric] Failed to list the installed game versions under {}", versions, e);
+                    continue;
+                }
+                // Newest first, by when the version directory was written: an install that was upgraded leaves the
+                // older game behind, and resolving mixin targets against it would realign handlers for a Minecraft
+                // that is not the one running. (Ordering by name would misread 26.2.0.99 as newer than 26.2.0.117.)
+                byNewest.sort(java.util.Comparator.comparingLong(BridgeFabricModLocator::lastModified).reversed());
+                for (var versionDir : byNewest) {
+                    try (var jars = Files.list(versionDir)) {
+                        for (var jar : jars.filter(path -> path.getFileName().toString().endsWith(".jar")).toList()) {
+                            if (exposesGameContent(jar)) {
+                                found.add(jar);
+                            }
+                        }
+                    } catch (IOException e) {
+                        LOGGER.debug("[NeoFobric] Failed to list the game jars under {}", versionDir, e);
+                    }
+                    if (!found.isEmpty()) {
+                        break;
+                    }
                 }
                 if (!found.isEmpty()) {
                     break;
