@@ -78,8 +78,86 @@ public class ResourcePackLoader {
         findResourcePacks();
         // First add the mod's builtin packs
         resourcePacks.addPackFinder(buildPackFinder(modResourcePacks, packType));
+        // Then the Fabric mods' own packs, for installs without Fabric API's resource loader
+        resourcePacks.addPackFinder(buildFabricPackFinder(packType));
         // Then fire the event to add more packs
         ModLoader.postEvent(new AddPackFindersEvent(packType, resourcePacks::addPackFinder, trusted));
+    }
+
+    // NeoFobric: Fabric mods' resource packs.
+    //
+    // In a Fabric install, fabric-resource-loader registers a pack for every mod; in NeoFobric that
+    // module is only present when the player installs Fabric API. A minimal install (Iris + Sodium,
+    // no Fabric API) therefore had no packs for its Fabric mods: their language files and textures
+    // were missing, which a player sees as raw keys such as options.iris.shade... in Sodium's config
+    // screen. The bridge knows every Fabric jar it loaded, so it registers those packs itself - and
+    // skips the job when Fabric API's own resource loader is present, to avoid duplicate pack ids.
+    private static final PackSelectionConfig FABRIC_PACK_SELECTION_CONFIG = new PackSelectionConfig(true, Pack.Position.TOP, false);
+
+    private static RepositorySource buildFabricPackFinder(PackType packType) {
+        return packAcceptor -> {
+            if (fabricResourceLoaderPresent()) {
+                return;
+            }
+            for (var entry : net.neoforged.fabricbridge.discovery.FabricJarRegistry.getEntries().entrySet()) {
+                var jar = entry.getKey();
+                var info = entry.getValue();
+                // The other side's mods, and dual-loader jars whose id the platform already owns
+                // (sodium-fabric next to sodium-neoforge), must not add a second pack.
+                if (!appliesToSide(info.environment(), packType) || ModList.get().isLoaded(info.modId())) {
+                    continue;
+                }
+                try {
+                    if (!hasResourcesFor(jar, packType)) {
+                        continue;
+                    }
+                    var location = new PackLocationInfo(
+                            info.modId(),
+                            Component.literal(info.displayName()),
+                            PackSource.BUILT_IN,
+                            Optional.empty());
+                    // Built directly instead of readMetaAndCreate: a Fabric mod jar carries no
+                    // pack.mcmeta (Fabric synthesises one), so reading pack metadata would reject
+                    // every single one of them.
+                    packAcceptor.accept(new Pack(
+                            location,
+                            new FilePackResources.FileResourcesSupplier(jar),
+                            new Pack.Metadata(Component.literal(info.displayName()), PackCompatibility.COMPATIBLE,
+                                    FeatureFlagSet.of(), List.of()),
+                            FABRIC_PACK_SELECTION_CONFIG));
+                } catch (Throwable t) {
+                    LOGGER.warn("Could not add the resource pack of the Fabric mod {}", info.modId(), t);
+                }
+            }
+        };
+    }
+
+    private static boolean fabricResourceLoaderPresent() {
+        for (var info : net.neoforged.fabricbridge.discovery.FabricJarRegistry.getEntries().values()) {
+            if (info.modId().startsWith("fabric-resource-loader-")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** {@return whether the mod's {@code environment} declaration applies to this pack type} */
+    private static boolean appliesToSide(String environment, PackType packType) {
+        if (environment == null || environment.isEmpty() || "*".equals(environment)) {
+            return true;
+        }
+        return (packType == PackType.CLIENT_RESOURCES) == "client".equals(environment);
+    }
+
+    /** {@return whether the jar carries {@code assets/} (or {@code data/}) entries} */
+    private static boolean hasResourcesFor(java.nio.file.Path jar, PackType packType) {
+        var prefix = packType.getDirectory() + "/";
+        try (var zip = new java.util.zip.ZipFile(jar.toFile())) {
+            return zip.stream().anyMatch(entry -> entry.getName().startsWith(prefix));
+        } catch (IOException e) {
+            LOGGER.debug("Could not inspect {} for {} resources", jar, packType.getDirectory(), e);
+            return false;
+        }
     }
 
     private synchronized static void findResourcePacks() {
