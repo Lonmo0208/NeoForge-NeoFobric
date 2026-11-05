@@ -134,6 +134,19 @@ public final class FabricBridgeHooks {
         traceFabricPaths();
     }
 
+    /**
+     * Called once per client tick from the injection in {@code Minecraft#tick()}.
+     *
+     * <p>Some compat work cannot run at the entrypoint hand-off: the NeoForge build of Sodium installs
+     * its config mod-info lookup from the {@code Minecraft} constructor, after the hand-off, so replacing
+     * it has to wait for a later point - and the first tick is early enough, because Sodium assembles its
+     * config pages at the end of the loading overlay. This deliberately does not use Fabric API's tick
+     * events: the bridge does not bundle Fabric API, and a minimal install may not have it.
+     */
+    public static void clientTick() {
+        net.neoforged.fabricbridge.compbridlnk.SodiumConfigApiLink.clientTick();
+    }
+
     private static void traceFabricPaths() {
         if (!Boolean.getBoolean("neofobric.traceTags")) {
             return;

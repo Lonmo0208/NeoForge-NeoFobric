@@ -36,11 +36,11 @@ public final class SodiumConfigCompat {
             metadataCtor.setAccessible(true);
             var field = manager.getDeclaredField("modInfoFunction");
             field.setAccessible(true);
-            var original = field.get(null);
-            if (!(original instanceof java.util.function.Function<?, ?> platformFunction)) {
-                LOGGER.info("[NeoFobric] Sodium's config mod-info lookup is not set yet - left alone");
-                return;
-            }
+                var original = field.get(null);
+                if (!(original instanceof java.util.function.Function<?, ?> platformFunction)) {
+                    LOGGER.debug("[NeoFobric] Sodium's config mod-info lookup is not set yet - the bridge's first client tick will install the merged lookup");
+                    return;
+                }
 
             @SuppressWarnings("unchecked")
             var platformLookup = (java.util.function.Function<Object, Object>) platformFunction;
