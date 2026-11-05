@@ -2075,7 +2075,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
      * ships them must not merge them into the composite module - see
      * {@link #platformProvidedPackages}.
      */
-    private static boolean isPlatformNamespace(String packageName) {
+    static boolean isPlatformNamespace(String packageName) {
         return packageName.equals("net.neoforged") || packageName.startsWith("net.neoforged.")
                 || packageName.equals("cpw.mods") || packageName.startsWith("cpw.mods.");
     }
@@ -2093,7 +2093,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
      * {@link #platformProvidedPackages} could see it; the platform's copy stays and the bundled one is
      * shadowed, exactly like the platform namespaces above.
      */
-    private static boolean isAlwaysPlatformLibrary(String packageName) {
+    static boolean isAlwaysPlatformLibrary(String packageName) {
         return packageName.equals("com.llamalad7.mixinextras")
                 || packageName.startsWith("com.llamalad7.mixinextras.");
     }
