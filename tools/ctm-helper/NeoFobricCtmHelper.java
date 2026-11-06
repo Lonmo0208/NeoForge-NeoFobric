@@ -58,17 +58,23 @@ public final class NeoFobricCtmHelper {
             QuadEmitter emitter = mesh.emitter();
             ((FabricBlockStateModel) model).emitQuads(emitter, level, pos, state, random, direction -> false);
             QuadCollection.Builder builder = new QuadCollection.Builder();
+            // The part's ambient-occlusion flag is what Sodium's chunk renderer reads; the per-quad
+            // MaterialInfo flag only reaches renderers that look at it. Continuity marks every cutout
+            // model (grass, flowers, cross plants) ambientOcclusion=FALSE, and forcing the part to true
+            // makes Sodium smooth-light those quads inside the block's own space: the surrounding grass
+            // occludes them to roughly a fifth of the light and they render almost black without a
+            // shader pack. A part is unoccluded when no quad asks for AO.
+            boolean[] useAo = {false};
             mesh.forEach(quad -> {
                 TextureAtlasSprite sprite = finder.find(quad);
                 if (sprite == null) {
                     return;
                 }
+                if (net.fabricmc.fabric.api.util.TriState.FALSE != quad.ambientOcclusion()) {
+                    useAo[0] = true;
+                }
                 // toBakedQuad() goes through the six-argument MaterialInfo constructor, which defaults
-                // ambientOcclusion to true. The FRAPI quad carries Continuity's own TriState, and the
-                // cutout models (grass, flowers, every cross plant) say FALSE: they sit inside the
-                // block's own space, so ambient occlusion samples the surrounding grass and drives the
-                // light to zero - the plants render black without shaders (Iris computes its own
-                // lighting, which is why they look right with a shader pack). Carry the quad's AO over.
+                // ambientOcclusion to true; carry the quad's own flag over for renderers that read it.
                 BakedQuad plain = quad.toBakedQuad(sprite);
                 BakedQuad baked = plain;
                 if (net.fabricmc.fabric.api.util.TriState.FALSE == quad.ambientOcclusion()) {
@@ -88,7 +94,7 @@ public final class NeoFobricCtmHelper {
                     builder.addCulledFace(cullFace, baked);
                 }
             });
-            parts.add(new SimpleModelWrapper(builder.build(), true, model.particleMaterial()));
+            parts.add(new SimpleModelWrapper(builder.build(), useAo[0], model.particleMaterial()));
             if (first) {
                 LOGGER.info("[NeoFobric] CTM helper produced {} part(s) with {} quad(s)",
                         parts.size(), ((MutableMeshImpl) mesh).size());
