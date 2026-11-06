@@ -384,6 +384,11 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
         // so the loading mod list does not carry one entry per Fabric mod.
         for (var entry : net.neoforged.fabricbridge.discovery.FabricJarRegistry.getEntries().entrySet()) {
             var info = entry.getValue();
+            if (net.neoforged.fabricbridge.discovery.BridgeFabricModLocator.isHiddenDuplicateJar(entry.getKey())) {
+                LOGGER.info("[NeoFobric] Skipping the mixin configs of {} ({}) - a newer copy of the same mod owns its classes",
+                        info.modId(), entry.getKey().getFileName());
+                continue;
+            }
 
             // fabric-loader does not load a mod whose environment is the other side, so its mixins never
             // apply there - and a client-only module's mixins are written against classes that side does
