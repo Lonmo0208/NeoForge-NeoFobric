@@ -2117,6 +2117,22 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         return hiddenDuplicateJars.contains(path);
     }
 
+    /**
+     * {@return whether the platform (FML) supplies a mod with this id}
+     *
+     * <p>Used to keep the Fabric half of a mod that both loaders ship from running its entrypoints. The
+     * discovery pass already skips a top-level jar whose id the platform provides, but a Fabric build
+     * nested in another mod's {@code jars} array is discovered by fabric-loader itself, after the bridge's
+     * own scan, so that pass cannot skip it: Cloth Config's Fabric build is nested in Cinderscapes and
+     * Tom's Storage, and its {@code main}/{@code client} entrypoints then run against the platform build's
+     * classes - the second {@code AutoConfig.register} throws "Config ... already registered", and the
+     * {@code modmenu} entrypoint names a class only the Fabric build ships
+     * ({@code ClothConfigModMenuDemo}), which duplicate-package hiding keeps off the classpath.
+     */
+    public static boolean isProvidedByPlatformMod(String modId) {
+        return modId != null && fmlProvidedModIds.contains(normalizeModId(modId));
+    }
+
     private static java.util.Map<Path, java.util.Set<String>> duplicateFabricPackages(Map<Path, FabricModInfo> fabricJars) {
         var copies = new java.util.HashMap<String, java.util.List<Map.Entry<Path, FabricModInfo>>>();
         for (var entry : fabricJars.entrySet()) {

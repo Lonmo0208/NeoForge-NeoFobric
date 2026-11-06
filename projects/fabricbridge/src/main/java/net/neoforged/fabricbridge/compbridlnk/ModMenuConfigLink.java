@@ -71,6 +71,13 @@ public final class ModMenuConfigLink {
             var linked = new java.util.ArrayList<String>();
             for (var container : containers) {
                 var modId = container.getProvider().getMetadata().getId();
+                if (net.neoforged.fabricbridge.discovery.BridgeFabricModLocator.isProvidedByPlatformMod(modId)) {
+                    // A Fabric build nested in another mod's jars array: the platform build supplies this mod,
+                    // and its classes are the ones on the classpath, so the nested build's entrypoints (and
+                    // the class names they mention) do not exist here. Mod Menu itself still reports it.
+                    LOGGER.debug("[NeoFobric] Not linking the Mod Menu screen of {} - the NeoForge build of that mod is the one loaded", modId);
+                    continue;
+                }
                 try {
                     var entrypoint = container.getEntrypoint();
                     var factory = entrypoint.getClass().getMethod("getModConfigScreenFactory").invoke(entrypoint);
