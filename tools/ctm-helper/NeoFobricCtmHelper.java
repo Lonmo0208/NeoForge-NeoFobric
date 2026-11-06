@@ -63,7 +63,24 @@ public final class NeoFobricCtmHelper {
                 if (sprite == null) {
                     return;
                 }
-                BakedQuad baked = quad.toBakedQuad(sprite);
+                // toBakedQuad() goes through the six-argument MaterialInfo constructor, which defaults
+                // ambientOcclusion to true. The FRAPI quad carries Continuity's own TriState, and the
+                // cutout models (grass, flowers, every cross plant) say FALSE: they sit inside the
+                // block's own space, so ambient occlusion samples the surrounding grass and drives the
+                // light to zero - the plants render black without shaders (Iris computes its own
+                // lighting, which is why they look right with a shader pack). Carry the quad's AO over.
+                BakedQuad plain = quad.toBakedQuad(sprite);
+                BakedQuad baked = plain;
+                if (net.fabricmc.fabric.api.util.TriState.FALSE == quad.ambientOcclusion()) {
+                    var mi = plain.materialInfo();
+                    baked = new BakedQuad(
+                            plain.position0(), plain.position1(), plain.position2(), plain.position3(),
+                            plain.packedUV0(), plain.packedUV1(), plain.packedUV2(), plain.packedUV3(),
+                            plain.direction(),
+                            new BakedQuad.MaterialInfo(mi.sprite(), mi.layer(), mi.itemRenderType(),
+                                    mi.tintIndex(), mi.shade(), mi.lightEmission(), false),
+                            plain.bakedNormals(), plain.bakedColors());
+                }
                 Direction cullFace = quad.cullFace();
                 if (cullFace == null) {
                     builder.addUnculledFace(baked);

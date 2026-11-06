@@ -1505,6 +1505,9 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     /** Suffix of the rewritten copy of an FML mod whose unsatisfiable-in-FML requirements were relaxed. */
     private static final String RELAXED_SUFFIX = ".neofobric-fml.jar";
 
+    /** Suffix of Sodium's emitter-gated copy (see {@link #writeSodiumEmitterGateCopy}). */
+    private static final String SODIUM_GATE_SUFFIX = ".neofobric-emittergate.jar";
+
     /**
      * Relaxes the mod-file requirements that only a Fabric mod can satisfy.
      *
@@ -1536,6 +1539,18 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                 var fileName = jarPath.getFileName().toString();
                 if (!Files.isRegularFile(jarPath) || !fileName.toLowerCase(java.util.Locale.ROOT).endsWith(".jar")) {
                     continue;
+                }
+                if (sodiumRunsItsFrapiEmitter(jarPath, loadedFabricIds)) {
+                    var gated = writeSodiumEmitterGateCopy(modsDir, jarPath);
+                    if (gated != null) {
+                        context.addLocated(jarPath);
+                        pipeline.addPath(gated, ModFileDiscoveryAttributes.DEFAULT, IncompatibleFileReporting.WARN_ALWAYS);
+                        LOGGER.info("[NeoFobric] Left {} to the emitter-gated copy {} - the Fabric renderer API "
+                                + "is visible to FML here, and Sodium's FRAPI emitter drops Continuity's tint on "
+                                + "this build; the default emitter re-tints every quad itself", fileName,
+                                gated.getFileName());
+                        continue;
+                    }
                 }
                 var relaxed = planRequirementRelaxations(jarPath, fabricIds);
                 if (relaxed == null) {
@@ -1755,6 +1770,175 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             LOGGER.error("[NeoFobric] Could not write the relaxed copy of {}", jarPath, e);
             return null;
         }
+    }
+
+    /**
+     * {@return whether this FML mod file is Sodium's NeoForge build while the Fabric renderer API loads,
+     * the combination under which its FRAPI emitter would activate and drop Continuity's tint}
+     *
+     * <p>On upstream NeoForge no Fabric renderer API exists, so Sodium's own check answers false and its
+     * default emitter runs; the bridge's Fabric modules make that check succeed here, which is the one
+     * state the NeoForge build was never shipped for. Forcing the default emitter restores the path
+     * where every quad is re-tinted by Sodium's own per-block color provider (see
+     * compbridlnk.SodiumFrapiGate).
+     */
+    private static boolean sodiumRunsItsFrapiEmitter(Path jarPath, java.util.Set<String> loadedFabricIds) {
+        // The set is keyed by normalizeModId, which folds dashes to underscores.
+        if (!loadedFabricIds.contains("fabric_renderer_api_v1")) {
+            return false;
+        }
+        try (var zip = new java.util.zip.ZipFile(jarPath.toFile())) {
+            var entry = zip.getEntry("META-INF/neoforge.mods.toml");
+            if (entry == null) {
+                return false;
+            }
+            var text = new String(zip.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            boolean inModsBlock = false;
+            for (var rawLine : text.split("\n", -1)) {
+                var stripped = rawLine.strip();
+                if (stripped.startsWith("[")) {
+                    inModsBlock = stripped.equals("[[mods]]");
+                    continue;
+                }
+                if (inModsBlock && stripped.startsWith("modId")) {
+                    var eq = stripped.indexOf('=');
+                    if (eq >= 0 && "sodium".equals(tomlValue(stripped.substring(eq + 1).strip()))) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            LOGGER.debug("[NeoFobric] Could not read {} while checking for Sodium's FRAPI emitter gate", jarPath, e);
+            return false;
+        }
+    }
+
+    /**
+     * Writes the emitter-gated copy of Sodium's NeoForge mod file: a flat jar carrying every class of
+     * the wrapper and of its nested code jar, with the FRAPI emitter provider patched to answer
+     * disabled.
+     *
+     * <p>The copy cannot keep the jarjar layout: a mod file that enters through the discovery pipeline
+     * (as every bridge-claimed file does) does not get its nested jar wired into the mod - the original
+     * works only because the folder locator resolves the jarjar chain itself. Flattening makes the copy
+     * a plain single-file mod, wired exactly like the original, with the wrapper's {@code [[mods]]} and
+     * {@code [[mixins]]} tables staying authoritative. Metadata follows the nested jar when it carries
+     * any: Sodium 26.2's wrapper is an FML {@code LIBRARY} (a launcher-warning tool whose manifest says
+     * {@code FMLModType: LIBRARY}) and only the nested jar is the mod, so keeping the wrapper's manifest
+     * would make FML register the flattened copy as a library again and every dependency would report
+     * "sodium is not installed". Service files the two jars both carry are concatenated.
+     */
+    private static Path writeSodiumEmitterGateCopy(Path modsDir, Path jarPath) {
+        var cacheDir = modsDir.resolve(MixinJarPatcher.CACHE_DIR_NAME);
+        var copy = cacheDir.resolve(jarPath.getFileName().toString() + SODIUM_GATE_SUFFIX);
+        try {
+            Files.createDirectories(cacheDir);
+            try (var zip = new java.util.zip.ZipFile(jarPath.toFile())) {
+                byte[] innerBytes = null;
+                var outerEntries = new java.util.LinkedHashMap<String, byte[]>();
+                var entries = zip.entries();
+                while (entries.hasMoreElements()) {
+                    var entry = entries.nextElement();
+                    var entryName = entry.getName();
+                    if (isJarSignature(entryName) || entryName.equals("META-INF/jarjar/metadata.json")) {
+                        continue;
+                    }
+                    if (entryName.startsWith("META-INF/jarjar/") && entryName.endsWith(".jar")) {
+                        innerBytes = zip.getInputStream(entry).readAllBytes();
+                        continue;
+                    }
+                    outerEntries.put(entryName, zip.getInputStream(entry).readAllBytes());
+                }
+                if (innerBytes == null) {
+                    LOGGER.warn("[NeoFobric] The emitter gate found no nested code jar in {} - the original "
+                            + "file stays in place instead", jarPath.getFileName());
+                    return null;
+                }
+                var gated = false;
+                byte[] innerManifest = null;
+                byte[] innerModsToml = null;
+                var merged = new java.util.LinkedHashMap<String, byte[]>(outerEntries);
+                try (var in = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(innerBytes))) {
+                    java.util.zip.ZipEntry innerEntry;
+                    while ((innerEntry = in.getNextEntry()) != null) {
+                        var name = innerEntry.getName();
+                        if (isJarSignature(name) || name.endsWith("/")) {
+                            continue;
+                        }
+                        var bytes = in.readAllBytes();
+                        if (name.equals("META-INF/MANIFEST.MF")) {
+                            innerManifest = bytes;
+                            continue;
+                        }
+                        if (name.equals("META-INF/neoforge.mods.toml")) {
+                            innerModsToml = bytes;
+                            continue;
+                        }
+                        if (name.equals(net.neoforged.fabricbridge.compbridlnk.SodiumFrapiGate.PROVIDER_CLASS)) {
+                            var rewritten = net.neoforged.fabricbridge.compbridlnk.SodiumFrapiGate
+                                    .forceDefaultEmitter(bytes);
+                            if (rewritten != null) {
+                                bytes = rewritten;
+                                gated = true;
+                            }
+                        }
+                        var existing = merged.get(name);
+                        if (existing != null) {
+                            if (name.startsWith("META-INF/services/")) {
+                                merged.put(name, concatServiceEntries(existing, bytes));
+                            }
+                            // Anything else: the wrapper's own file wins, the nested copy is redundant.
+                        } else {
+                            merged.put(name, bytes);
+                        }
+                    }
+                }
+                // The nested jar carries the mod (Sodium 26.2's wrapper is an FML LIBRARY); its own
+                // metadata has to win, or the flattened copy is registered as a library again.
+                if (innerModsToml != null) {
+                    merged.put("META-INF/neoforge.mods.toml", innerModsToml);
+                }
+                if (innerManifest != null) {
+                    merged.put("META-INF/MANIFEST.MF", innerManifest);
+                }
+                if (!gated) {
+                    LOGGER.warn("[NeoFobric] The emitter-gated Sodium copy carries no patched provider - "
+                            + "the original file stays in place instead");
+                    return null;
+                }
+                try (var out = new java.util.zip.ZipOutputStream(Files.newOutputStream(copy,
+                        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING))) {
+                    for (var flattened : merged.entrySet()) {
+                        out.putNextEntry(new java.util.zip.ZipEntry(flattened.getKey()));
+                        out.write(flattened.getValue());
+                        out.closeEntry();
+                    }
+                }
+            }
+            return copy;
+        } catch (IOException e) {
+            LOGGER.error("[NeoFobric] Could not write the emitter-gated copy of {}", jarPath, e);
+            return null;
+        }
+    }
+
+    /** Concatenates two {@code META-INF/services} files, dropping repeated provider lines. */
+    private static byte[] concatServiceEntries(byte[] first, byte[] second) {
+        var lines = new java.util.LinkedHashSet<String>();
+        for (var part : new byte[][] {first, second}) {
+            for (var line : new String(part, java.nio.charset.StandardCharsets.UTF_8).split("\n", -1)) {
+                var stripped = line.strip();
+                if (!stripped.isEmpty() && !stripped.startsWith("#")) {
+                    lines.add(stripped);
+                }
+            }
+        }
+        var out = new java.lang.StringBuilder();
+        for (var line : lines) {
+            out.append(line).append('\n');
+        }
+        return out.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private static boolean isJarSignature(String entryName) {
