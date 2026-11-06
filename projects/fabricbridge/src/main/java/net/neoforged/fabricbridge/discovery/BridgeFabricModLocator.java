@@ -99,6 +99,29 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     /** The mod ids the NeoForge mods in the mods folder provide, for the current discovery pass. */
     private static volatile java.util.Set<String> fmlProvidedModIds = java.util.Set.of();
 
+    private static volatile java.util.Set<Path> hiddenDuplicateJars = java.util.Set.of();
+
+    /** {@return whether the jar's classes were hidden in favour of a newer copy of the same mod} */
+    public static boolean isHiddenDuplicateJar(Path path) {
+        return hiddenDuplicateJars.contains(path);
+    }
+
+    /**
+     * {@return whether the platform (FML) supplies a mod with this id}
+     *
+     * <p>Used to keep the Fabric half of a mod that both loaders ship from running its entrypoints. The
+     * discovery pass already skips a top-level jar whose id the platform provides, but a Fabric build
+     * nested in another mod's {@code jars} array is discovered by fabric-loader itself, after the bridge's
+     * own scan, so that pass cannot skip it: Cloth Config's Fabric build is nested in Cinderscapes and
+     * Tom's Storage, and its {@code main}/{@code client} entrypoints then run against the platform build's
+     * classes - the second {@code AutoConfig.register} throws "Config ... already registered", and the
+     * {@code modmenu} entrypoint names a class only the Fabric build ships
+     * ({@code ClothConfigModMenuDemo}), which duplicate-package hiding keeps off the classpath.
+     */
+    public static boolean isProvidedByPlatformMod(String modId) {
+        return modId != null && fmlProvidedModIds.contains(normalizeModId(modId));
+    }
+
     /** {@return the mixin config paths the FML side declares for itself, nested JarInJar mods included} */
     public static java.util.Set<String> fmlDeclaredMixinConfigs() {
         return fmlDeclaredMixinConfigs;
@@ -554,13 +577,20 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         }
 
         pipeline.addModFile(modFile);
+        var hiddenEffective = new java.util.HashSet<Path>();
         for (var entry : fabricJars.entrySet()) {
             // The registry must point at the jar that actually carries the mixin configs the bridge
             // will read back, i.e. the realigned copy when there is one.
             var effective = realignedJars.getOrDefault(entry.getKey(), entry.getKey());
             FabricJarRegistry.register(effective, entry.getValue());
             FabricJarRegistry.markGameLayerPath(effective);
+            if (duplicatePackages.containsKey(entry.getKey())) {
+                // A duplicate whose classes were hidden: record the effective path so the bootstrap
+                // leaves its mixin configs to the newer copy that owns the classes.
+                hiddenEffective.add(effective);
+            }
         }
+        hiddenDuplicateJars = java.util.Set.copyOf(hiddenEffective);
 
         // Publish what the Mods screen should show. NeoForge's own screen knows only FML's mod list,
         // which the composite game library deliberately is not part of (single-module JPMS merge), so
@@ -1618,8 +1648,11 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
      * (as every bridge-claimed file does) does not get its nested jar wired into the mod - the original
      * works only because the folder locator resolves the jarjar chain itself. Flattening makes the copy
      * a plain single-file mod, wired exactly like the original, with the wrapper's {@code [[mods]]} and
-     * {@code [[mixins]]} tables staying authoritative. The nested manifest and mods.toml are dropped
-     * with the nesting; service files the two jars both carry are concatenated.
+     * {@code [[mixins]]} tables staying authoritative. Metadata follows the nested jar when it carries
+     * any: Sodium's wrapper can be an FML {@code LIBRARY} (a launcher-warning tool whose manifest says
+     * {@code FMLModType: LIBRARY}) with only the nested jar being the mod, so keeping the wrapper's
+     * manifest would make FML register the flattened copy as a library again and every dependency
+     * would report "sodium is not installed". Service files the two jars both carry are concatenated.
      */
     private static Path writeSodiumEmitterGateCopy(Path modsDir, Path jarPath) {
         var cacheDir = modsDir.resolve(MixinJarPatcher.CACHE_DIR_NAME);
@@ -1648,16 +1681,25 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                     return null;
                 }
                 var gated = false;
+                byte[] innerManifest = null;
+                byte[] innerModsToml = null;
                 var merged = new java.util.LinkedHashMap<String, byte[]>(outerEntries);
                 try (var in = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(innerBytes))) {
                     java.util.zip.ZipEntry innerEntry;
                     while ((innerEntry = in.getNextEntry()) != null) {
                         var name = innerEntry.getName();
-                        if (isJarSignature(name) || name.equals("META-INF/MANIFEST.MF")
-                                || name.equals("META-INF/neoforge.mods.toml") || name.endsWith("/")) {
+                        if (isJarSignature(name) || name.endsWith("/")) {
                             continue;
                         }
                         var bytes = in.readAllBytes();
+                        if (name.equals("META-INF/MANIFEST.MF")) {
+                            innerManifest = bytes;
+                            continue;
+                        }
+                        if (name.equals("META-INF/neoforge.mods.toml")) {
+                            innerModsToml = bytes;
+                            continue;
+                        }
                         if (name.equals(net.neoforged.fabricbridge.compbridlnk.SodiumFrapiGate.PROVIDER_CLASS)) {
                             var rewritten = net.neoforged.fabricbridge.compbridlnk.SodiumFrapiGate
                                     .forceDefaultEmitter(bytes);
@@ -1676,6 +1718,16 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                             merged.put(name, bytes);
                         }
                     }
+                }
+                // The nested jar may carry the mod (Sodium's wrapper can be an FML LIBRARY - Sodium
+                // 26.2's launcher-warning wrapper is exactly that); its own metadata has to win, or the
+                // flattened copy is registered as a library again and every dependency reports
+                // "sodium is not installed".
+                if (innerModsToml != null) {
+                    merged.put("META-INF/neoforge.mods.toml", innerModsToml);
+                }
+                if (innerManifest != null) {
+                    merged.put("META-INF/MANIFEST.MF", innerManifest);
                 }
                 if (!gated) {
                     LOGGER.warn("[NeoFobric] The emitter-gated Sodium copy carries no patched provider - "
@@ -2329,6 +2381,14 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
      * text, so an unusual version can only order wrongly, never throw.
      */
     private static int compareModuleVersions(String first, String second) {
+        // A placeholder version ("unspecified", as shipped by some dummy nested jars) must never
+        // outrank a real one: the string fallback below sorts "unspecified" above "1.8.3", which hid
+        // amecs' real API implementation in favour of an empty dummy jar.
+        var firstPlaceholder = isPlaceholderVersion(first);
+        var secondPlaceholder = isPlaceholderVersion(second);
+        if (firstPlaceholder != secondPlaceholder) {
+            return firstPlaceholder ? -1 : 1;
+        }
         var left = stripBuildSuffix(first);
         var right = stripBuildSuffix(second);
         var leftParts = left.split("\\.");
@@ -2352,6 +2412,12 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     private static String stripBuildSuffix(String version) {
         var plus = version.indexOf('+');
         return plus < 0 ? version : version.substring(0, plus);
+    }
+
+    /** {@return whether the version is a placeholder that must sort below any real version} */
+    private static boolean isPlaceholderVersion(String version) {
+        var stripped = stripBuildSuffix(version).trim();
+        return stripped.isEmpty() || stripped.equalsIgnoreCase("unspecified");
     }
 
     /**
@@ -2539,41 +2605,59 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
      */
     private static java.util.List<Path> installedGameContent() {
         var found = new ArrayList<Path>();
-        var patchedRoot = FMLPaths.GAMEDIR.get().resolve("libraries").resolve("net").resolve("neoforged");
-        // Whichever side this is, the newest install of either jar describes the same patched game; a
-        // client-only or server-only install simply has one of them.
-        for (var name : new String[] { "minecraft-client-patched", "minecraft-server-patched" }) {
-            var versions = patchedRoot.resolve(name);
-            if (!Files.isDirectory(versions)) {
-                continue;
+        // NeoFobric: the libraries root moves with the install layout, exactly like MixinJarPatcher's
+        // FML layer scan. A standard install puts it under the game directory; an isolated per-version
+        // install (game directory = .minecraft/versions/<version>) keeps it two levels above. Missing
+        // the walk-up left isolated installs with no patched game here, so mixin target resolution
+        // fell back to the class path - the *unpatched* versions/<id>.jar - and a handler whose anchor
+        // NeoForge moved then scanned 0 targets at runtime.
+        var gameDir = FMLPaths.GAMEDIR.get();
+        var roots = new ArrayList<Path>();
+        roots.add(gameDir.resolve("libraries").resolve("net").resolve("neoforged"));
+        var parent = gameDir.getParent();
+        if (parent != null) {
+            roots.add(parent.resolve("libraries").resolve("net").resolve("neoforged"));
+            var grandParent = parent.getParent();
+            if (grandParent != null) {
+                roots.add(grandParent.resolve("libraries").resolve("net").resolve("neoforged"));
             }
-            var byNewest = new ArrayList<Path>();
-            try (var entries = Files.list(versions)) {
-                entries.filter(Files::isDirectory).forEach(byNewest::add);
-            } catch (IOException e) {
-                LOGGER.debug("[NeoFobric] Failed to list the installed game versions under {}", versions, e);
-                continue;
-            }
-            // Newest first, by when the version directory was written: an install that was upgraded leaves the
-            // older game behind, and resolving mixin targets against it would realign handlers for a Minecraft
-            // that is not the one running. (Ordering by name would misread 26.2.0.99 as newer than 26.2.0.117.)
-            byNewest.sort(java.util.Comparator.comparingLong(BridgeFabricModLocator::lastModified).reversed());
-            for (var versionDir : byNewest) {
-                try (var jars = Files.list(versionDir)) {
-                    for (var jar : jars.filter(path -> path.getFileName().toString().endsWith(".jar")).toList()) {
-                        if (exposesGameContent(jar)) {
-                            found.add(jar);
-                        }
-                    }
+        }
+        for (var patchedRoot : roots) {
+            // Whichever side this is, the newest install of either jar describes the same patched game; a
+            // client-only or server-only install simply has one of them.
+            for (var name : new String[] { "minecraft-client-patched", "minecraft-server-patched" }) {
+                var versions = patchedRoot.resolve(name);
+                if (!Files.isDirectory(versions)) {
+                    continue;
+                }
+                var byNewest = new ArrayList<Path>();
+                try (var entries = Files.list(versions)) {
+                    entries.filter(Files::isDirectory).forEach(byNewest::add);
                 } catch (IOException e) {
-                    LOGGER.debug("[NeoFobric] Failed to list the game jars under {}", versionDir, e);
+                    LOGGER.debug("[NeoFobric] Failed to list the installed game versions under {}", versions, e);
+                    continue;
+                }
+                // Newest first, by when the version directory was written: an install that was upgraded leaves the
+                // older game behind, and resolving mixin targets against it would realign handlers for a Minecraft
+                // that is not the one running. (Ordering by name would misread 26.2.0.99 as newer than 26.2.0.117.)
+                byNewest.sort(java.util.Comparator.comparingLong(BridgeFabricModLocator::lastModified).reversed());
+                for (var versionDir : byNewest) {
+                    try (var jars = Files.list(versionDir)) {
+                        for (var jar : jars.filter(path -> path.getFileName().toString().endsWith(".jar")).toList()) {
+                            if (exposesGameContent(jar)) {
+                                found.add(jar);
+                            }
+                        }
+                    } catch (IOException e) {
+                        LOGGER.debug("[NeoFobric] Failed to list the game jars under {}", versionDir, e);
+                    }
+                    if (!found.isEmpty()) {
+                        break;
+                    }
                 }
                 if (!found.isEmpty()) {
                     break;
                 }
-            }
-            if (!found.isEmpty()) {
-                break;
             }
         }
         return found;
