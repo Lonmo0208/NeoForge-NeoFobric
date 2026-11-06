@@ -58,12 +58,35 @@ public final class NeoFobricCtmHelper {
             QuadEmitter emitter = mesh.emitter();
             ((FabricBlockStateModel) model).emitQuads(emitter, level, pos, state, random, direction -> false);
             QuadCollection.Builder builder = new QuadCollection.Builder();
+            // The part's ambient-occlusion flag is what Sodium's chunk renderer reads; the per-quad
+            // MaterialInfo flag only reaches renderers that look at it. Continuity marks every cutout
+            // model (grass, flowers, cross plants) ambientOcclusion=FALSE, and forcing the part to true
+            // makes Sodium smooth-light those quads inside the block's own space: the surrounding grass
+            // occludes them to roughly a fifth of the light and they render almost black without a
+            // shader pack. A part is unoccluded when no quad asks for AO.
+            boolean[] useAo = {false};
             mesh.forEach(quad -> {
                 TextureAtlasSprite sprite = finder.find(quad);
                 if (sprite == null) {
                     return;
                 }
-                BakedQuad baked = quad.toBakedQuad(sprite);
+                if (net.fabricmc.fabric.api.util.TriState.FALSE != quad.ambientOcclusion()) {
+                    useAo[0] = true;
+                }
+                // toBakedQuad() goes through the six-argument MaterialInfo constructor, which defaults
+                // ambientOcclusion to true; carry the quad's own flag over for renderers that read it.
+                BakedQuad plain = quad.toBakedQuad(sprite);
+                BakedQuad baked = plain;
+                if (net.fabricmc.fabric.api.util.TriState.FALSE == quad.ambientOcclusion()) {
+                    var mi = plain.materialInfo();
+                    baked = new BakedQuad(
+                            plain.position0(), plain.position1(), plain.position2(), plain.position3(),
+                            plain.packedUV0(), plain.packedUV1(), plain.packedUV2(), plain.packedUV3(),
+                            plain.direction(),
+                            new BakedQuad.MaterialInfo(mi.sprite(), mi.layer(), mi.itemRenderType(),
+                                    mi.tintIndex(), mi.shade(), mi.lightEmission(), false),
+                            plain.bakedNormals(), plain.bakedColors());
+                }
                 Direction cullFace = quad.cullFace();
                 if (cullFace == null) {
                     builder.addUnculledFace(baked);
@@ -71,7 +94,7 @@ public final class NeoFobricCtmHelper {
                     builder.addCulledFace(cullFace, baked);
                 }
             });
-            parts.add(new SimpleModelWrapper(builder.build(), true, model.particleMaterial()));
+            parts.add(new SimpleModelWrapper(builder.build(), useAo[0], model.particleMaterial()));
             if (first) {
                 LOGGER.info("[NeoFobric] CTM helper produced {} part(s) with {} quad(s)",
                         parts.size(), ((MutableMeshImpl) mesh).size());

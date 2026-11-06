@@ -316,6 +316,15 @@ public final class FabricBridge {
                     LOGGER.info("[NeoFobric][DIAG] Skipping the '{}' entrypoint of '{}' (debugSkipEntrypoints)", key, modId);
                     continue;
                 }
+                if (net.neoforged.fabricbridge.discovery.BridgeFabricModLocator.isProvidedByPlatformMod(modId)) {
+                    // A Fabric build nested in another mod's jars array is discovered by fabric-loader itself,
+                    // after the bridge's own scan, so that scan cannot skip it the way it skips top-level
+                    // duplicates. Its classes are not the ones on the classpath (the platform build's are),
+                    // and running its initializers again re-registers what the platform build registered.
+                    LOGGER.info("[NeoFobric] Skipping the '{}' entrypoint of '{}' - the NeoForge build of that mod is the one loaded",
+                            key, modId);
+                    continue;
+                }
                 if (net.neoforged.fabricbridge.compbridlnk.SodiumCompat.yieldsRendererToSodium(key, modId)) {
                     LOGGER.info("[NeoFobric] Skipping the '{}' entrypoint of '{}' - Sodium registers the"
                             + " FRAPI renderer, and the registry accepts only one", key, modId);
