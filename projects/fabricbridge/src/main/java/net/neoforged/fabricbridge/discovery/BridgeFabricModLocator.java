@@ -406,10 +406,21 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         var shadowedPackages = new java.util.concurrent.ConcurrentHashMap<Path, java.util.Set<String>>();
         for (var path : fabricJars.keySet()) {
             try {
+                var duplicatesHere = duplicatePackages.get(path);
+                // A copy whose entire content belongs to packages a newer copy owns contributes nothing to
+                // the composite: every class in it would be shadowed anyway, and keeping the jar in the
+                // module list left the duplicate package names in the layer (JPMS resolves a package to one
+                // reader, and the 220 net.fabricmc.fabric mixins of the copies that should have been
+                // shadowed became ClassNotFoundException). Leave it out instead of filtering file by file.
+                if (duplicatesHere != null && !duplicatesHere.isEmpty()
+                        && packageNamesOf(path).stream().allMatch(duplicatesHere::contains)) {
+                    LOGGER.info("[NeoFobric] Leaving {} out of the module layer - every package it carries"
+                            + " belongs to a newer copy of {}", path.getFileName(), fabricJars.get(path).modId());
+                    continue;
+                }
                 var content = JarContents.ofPath(path);
                 fabricPaths.add(path);
                 contentsList.add(content);
-                var duplicatesHere = duplicatePackages.get(path);
                 var shadowed = duplicatesHere == null ? platformPackages
                         : platformPackages.isEmpty() ? duplicatesHere
                                 : union(duplicatesHere, platformPackages);
