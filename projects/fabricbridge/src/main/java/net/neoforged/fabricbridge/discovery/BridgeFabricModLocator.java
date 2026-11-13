@@ -2641,6 +2641,28 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                 // older game behind, and resolving mixin targets against it would realign handlers for a Minecraft
                 // that is not the one running. (Ordering by name would misread 26.2.0.99 as newer than 26.2.0.117.)
                 byNewest.sort(java.util.Comparator.comparingLong(BridgeFabricModLocator::lastModified).reversed());
+                // NeoFobric: one shared libraries directory holds the patched jars of EVERY NeoFobric line the
+                // launcher has installed - a 26.2 and a 26.3 install sit side by side, and "newest first" then
+                // hands a 26.3 run the 26.2 game's shapes. The realigner resolved fabric-entity-events'
+                // nearby-monsters redirect against the 26.2 lambda signature (one BlockPos parameter) while the
+                // running game's lambda takes four, and the half-rewritten handler died in verification. Serve
+                // only the running Minecraft's line; serving none makes the realigner skip instead of guessing.
+                var mcVersion = currentMcVersion();
+                if (mcVersion != null) {
+                    var lineDirs = byNewest.stream()
+                            .filter(dir -> dir.getFileName().toString().startsWith(mcVersion + "."))
+                            .toList();
+                    if (!lineDirs.isEmpty()) {
+                        byNewest = new ArrayList<>(lineDirs);
+                    } else {
+                        // A broken install (the running line's game is absent). Serving another line's jar
+                        // realigned handlers against the wrong Minecraft once already - serve none instead,
+                        // which makes the realigner skip rather than guess.
+                        LOGGER.warn("[NeoFobric] No patched game for Minecraft {} under {} - none of the other"
+                                + " lines' installs can describe the running game", mcVersion, versions);
+                        byNewest.clear();
+                    }
+                }
                 for (var versionDir : byNewest) {
                     try (var jars = Files.list(versionDir)) {
                         for (var jar : jars.filter(path -> path.getFileName().toString().endsWith(".jar")).toList()) {
@@ -2670,6 +2692,22 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         } catch (IOException e) {
             return 0L;
         }
+    }
+
+    /**
+     * {@return the Minecraft version the game is running as, or {@code null} when FML has not told yet} Used to
+     * pick the installed patched game of the running line out of a libraries directory that holds several.
+     */
+    private static String currentMcVersion() {
+        try {
+            var loader = net.neoforged.fml.loading.FMLLoader.getCurrentOrNull();
+            if (loader != null) {
+                return loader.getVersionInfo().mcVersion();
+            }
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] FML has not published the running Minecraft version yet", t);
+        }
+        return null;
     }
 
     /**
