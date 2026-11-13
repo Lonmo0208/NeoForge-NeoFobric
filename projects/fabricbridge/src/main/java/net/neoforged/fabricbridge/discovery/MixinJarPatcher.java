@@ -2645,6 +2645,172 @@ public final class MixinJarPatcher {
         return writer.toByteArray();
     }
 
+    /**
+     * Rewrites an {@code @Inject} handler's plain {@code CallbackInfo} into a
+     * {@code CallbackInfoReturnable} when the target(s) its selector names all return a value.
+     *
+     * <p>NeoForge reshapes vanilla methods to return a value where the Fabric build still sees a void
+     * method: {@code GuiRenderer#preparePictureInPictureState} is vanilla void, NeoForge builds it as a
+     * two-pass {@code boolean} (state, guiScale, firstPass). Fabric API 26.3's {@code GuiRendererMixin}
+     * injects at its RETURN with a plain {@code CallbackInfo}, and CallbackInjector rejects that with
+     * the hard error {@code CallbackInfoReturnable is required!} - which aborts the whole mixin apply.
+     * That abort is what actually breaks the game class: MixinExtras' sugar wrappers (the
+     * {@code @ModifyExpressionValue} handler of the same mixin) strip the sugar parameter from the
+     * handler's descriptor when the injection info is built and restore it once the injection is done;
+     * an apply that dies in between leaves the game class a handler whose descriptor no longer matches
+     * its body, which the JVM rejects with {@code VerifyError: Bad local variable type} the first time
+     * the class links.
+     *
+     * <p>The rewrite is descriptor-only, exactly like MixinHandlerDescriptorFixer's reordering:
+     * CallbackInfoReturnable extends CallbackInfo, so a body that never cancels works unchanged. It
+     * fires only when the selector names one method, every target method of that name is non-void, and
+     * the handler body never calls {@code cancel()} on the callback - cancelling a non-void callback
+     * needs {@code setReturnValue}, which a plain-CallbackInfo body cannot be calling correctly anyway.
+     * Frames are recomputed: the descriptor change makes the frames the handler carries lie about the
+     * callback's slot, and a stale frame riding into the game class is exactly the VerifyError above.
+     *
+     * @return the rewritten class bytes, or {@code null} when nothing matched
+     */
+    private static byte[] widenCallbackInfoToReturnable(byte[] classBytes, String entryName,
+            java.util.function.Function<String, byte[]> targetBytecode) {
+        if (Boolean.getBoolean("neofobric.noHandlerFix")) {
+            return null;
+        }
+        ClassNode node;
+        try {
+            node = new ClassNode();
+            new ClassReader(classBytes).accept(node, 0);
+        } catch (Throwable t) {
+            return null;
+        }
+        var targets = mixinTargets(node);
+        if (targets.isEmpty()) {
+            return null;
+        }
+        // The target methods of the mixin, indexed by name: a bare-name selector matches every overload.
+        var byName = new HashMap<String, java.util.List<MethodNode>>();
+        for (var target : targets) {
+            var bytes = targetBytecode.apply(target);
+            if (bytes == null) {
+                continue;
+            }
+            ClassNode targetNode;
+            try {
+                targetNode = new ClassNode();
+                new ClassReader(bytes).accept(targetNode, ClassReader.SKIP_FRAMES | ClassReader.SKIP_DEBUG);
+            } catch (Throwable t) {
+                continue;
+            }
+            for (var method : targetNode.methods) {
+                byName.computeIfAbsent(method.name, key -> new ArrayList<>()).add(method);
+            }
+        }
+        if (byName.isEmpty()) {
+            return null;
+        }
+
+        var callbackInfo = Type.getObjectType(CALLBACK_INFO);
+        var callbackInfoReturnable = Type.getObjectType(CALLBACK_INFO + "Returnable");
+        var changed = false;
+        var widened = new ArrayList<String>();
+        for (var handler : node.methods) {
+            var inject = findAnnotation(handler, "Lorg/spongepowered/asm/mixin/injection/Inject;");
+            if (inject == null) {
+                continue;
+            }
+            var args = Type.getArgumentTypes(handler.desc);
+            var callbackIndex = -1;
+            for (var i = 0; i < args.length; i++) {
+                if (args[i].equals(callbackInfo)) {
+                    callbackIndex = i;
+                    break;
+                }
+            }
+            if (callbackIndex < 0) {
+                continue; // No plain CallbackInfo, or already a CallbackInfoReturnable: nothing to widen.
+            }
+            var selector = singleMethodTarget(inject);
+            if (selector == null) {
+                continue;
+            }
+            // An explicit descriptor pins one shape; widening it would be a guess about a method this
+            // build does not even have. Only a bare name (which Mixin matches against every overload)
+            // carries the drift this pass repairs.
+            if (selector.contains("(")) {
+                continue;
+            }
+            var candidates = byName.get(selector);
+            if (candidates == null) {
+                continue;
+            }
+            var allNonVoid = true;
+            for (var candidate : candidates) {
+                if (Type.getReturnType(candidate.desc).equals(Type.VOID_TYPE)) {
+                    allNonVoid = false;
+                    break;
+                }
+            }
+            if (!allNonVoid) {
+                continue;
+            }
+            // A handler that cancels needs the returnable's setReturnValue semantics, which a plain
+            // CallbackInfo body cannot be using - leave it for Mixin to report instead of guessing.
+            var cancels = false;
+            for (var insn : handler.instructions) {
+                if (insn instanceof org.objectweb.asm.tree.MethodInsnNode call
+                        && call.getOpcode() == Opcodes.INVOKEVIRTUAL
+                        && "cancel".equals(call.name)
+                        && call.owner.startsWith(CALLBACK_INFO)) {
+                    cancels = true;
+                    break;
+                }
+            }
+            if (cancels) {
+                continue;
+            }
+
+            var oldDesc = handler.desc;
+            args[callbackIndex] = callbackInfoReturnable;
+            handler.desc = Type.getMethodDescriptor(Type.getReturnType(handler.desc), args);
+            if (handler.signature != null && handler.signature.contains(CALLBACK_INFO + ";")) {
+                // "CallbackInfo;" only matches the plain class: inside "CallbackInfoReturnable;" the name
+                // is followed by "Returnable;", not the semicolon.
+                handler.signature = handler.signature.replace(CALLBACK_INFO + ";", CALLBACK_INFO + "Returnable;");
+            }
+            var slot = (handler.access & Opcodes.ACC_STATIC) != 0 ? 0 : 1;
+            for (var i = 0; i < callbackIndex; i++) {
+                slot += args[i].getSize();
+            }
+            var returnableDescriptor = callbackInfoReturnable.getDescriptor();
+            if (handler.localVariables != null) {
+                for (var local : handler.localVariables) {
+                    if (local.index == slot && callbackInfo.getDescriptor().equals(local.desc)) {
+                        local.desc = returnableDescriptor;
+                    }
+                }
+            }
+            widened.add(handler.name + oldDesc.substring(oldDesc.indexOf('(')));
+            changed = true;
+        }
+        if (!changed) {
+            return null;
+        }
+        LOGGER.info("[NeoFobric] Widened the CallbackInfo of {} in {} to CallbackInfoReturnable - the platform"
+                + " builds the method(s) they inject into to return a value", widened, entryName);
+        var writer = new ClassWriter(ClassWriter.COMPUTE_FRAMES) {
+            @Override
+            protected String getCommonSuperClass(String type1, String type2) {
+                try {
+                    return super.getCommonSuperClass(type1, type2);
+                } catch (Throwable t) {
+                    return "java/lang/Object";
+                }
+            }
+        };
+        node.accept(writer);
+        return writer.toByteArray();
+    }
+
     /** Fabric API's tooltip-order scraper: it reads {@code ItemStack} bytecode to learn the vanilla order. */
     private static final String FABRIC_TOOLTIP_ORDER_SCANNER = "net/fabricmc/fabric/impl/item/VanillaTooltipProviderOrder";
 
@@ -6267,6 +6433,10 @@ public final class MixinJarPatcher {
                 if (fixed != null) {
                     source = fixed;
                 }
+                var returnableWidened = widenCallbackInfoToReturnable(source, entry.getName(), resolver);
+                if (returnableWidened != null) {
+                    source = returnableWidened;
+                }
                 var extended = extendConstructorInjectorHandlers(source, entry.getName(), resolver);
                 if (extended != null) {
                     source = extended;
@@ -6292,7 +6462,7 @@ public final class MixinJarPatcher {
                 // descriptor (and, in production, a method descriptor past the end of its constant pool).
                 if (realigned != null || retargeted != null || mergedList != null || stripped != null
                         || handlerStripped != null || callSitesMoved != null || renamed != null || fixed != null
-                        || extended != null || appended != null || wrapsWidened != null || trimmed != null) {
+                        || returnableWidened != null || extended != null || appended != null || wrapsWidened != null || trimmed != null) {
                     patched.put(entry.getName(), source);
                 }
             }
