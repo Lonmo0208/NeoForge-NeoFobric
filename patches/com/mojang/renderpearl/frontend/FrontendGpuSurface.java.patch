@@ -1,0 +1,25 @@
+--- a/com/mojang/renderpearl/frontend/FrontendGpuSurface.java
++++ b/com/mojang/renderpearl/frontend/FrontendGpuSurface.java
+@@ -12,6 +_,8 @@
+ 
+ @OnlyIn(Dist.CLIENT)
+ public class FrontendGpuSurface implements GpuSurface {
++    private static final org.slf4j.Logger LOGGER = com.mojang.logging.LogUtils.getLogger();
++
+     private final GpuSurfaceBackend backend;
+     private boolean hasImageAcquired = false;
+     private boolean hasBlittedTexture = false;
+@@ -24,7 +_,12 @@
+     @Override
+     public void close() {
+         if (this.hasImageAcquired) {
+-            throw new IllegalStateException("Cannot close a surface while it is acquired");
++            // Neo: a frame can still be in flight when the game shuts down - the client game-test
++            // framework stops the render loop between acquire and present, and any abrupt exit can
++            // land in the same window. An acquire that will never be presented must not block
++            // reclaiming the swapchain, so log it and tear the surface down anyway.
++            LOGGER.warn("Closing a GPU surface with an acquired but unpresented image; discarding the frame");
++            this.hasImageAcquired = false;
+         }
+ 
+         this.backend.close();

@@ -3182,7 +3182,8 @@ public final class MixinJarPatcher {
      *
      * @return the class bytes with the method names retargeted, or the original when nothing needed to change
      */
-    private static byte[] retargetInjectionMethods(byte[] classBytes, String entryName) {
+    private static byte[] retargetInjectionMethods(byte[] classBytes, String entryName,
+            java.util.function.Function<String, byte[]> targetBytecode) {
         if (!entryName.endsWith(".class")) {
             return null;
         }
@@ -3200,12 +3201,14 @@ public final class MixinJarPatcher {
         }
 
         var changed = false;
+        var retargetedHandlers = new ArrayList<MethodNode>();
         for (var method : node.methods) {
             for (var annotation : allAnnotationsOf(method)) {
                 var target = readStringValue(annotation, "method");
                 var replacement = target == null ? null : moved.get(target);
                 if (replacement != null) {
                     writeStringValue(annotation, "method", replacement);
+                    retargetedHandlers.add(method);
                     changed = true;
                 }
             }
@@ -3214,10 +3217,410 @@ public final class MixinJarPatcher {
         if (!changed) {
             return null;
         }
-        LOGGER.info("[NeoFobric] Pointed the injections in {} at the method(s) NeoForge moved the body into: {}", internalName, moved);
-        var writer = new ClassWriter(0);
+        // A selector that now names the method the anchor moved into can leave the handler's captured
+        // arguments describing the OLD host - realign exactly these handlers, nothing else.
+        var realigned = 0;
+        for (var handler : retargetedHandlers) {
+            if (realignCapturedRegion(node, handler, targetBytecode)) {
+                realigned++;
+            }
+        }
+        LOGGER.info("[NeoFobric] Pointed the injections in {} at the method(s) NeoForge moved the body into: {}{}",
+                internalName, moved, realigned == 0 ? "" : "; realigned " + realigned + " handler(s) to the new host's parameters");
+        if (realigned == 0) {
+            var writer = new ClassWriter(0);
+            node.accept(writer);
+            return writer.toByteArray();
+        }
+        var writer = new ClassWriter(ClassWriter.COMPUTE_FRAMES) {
+            @Override
+            protected String getCommonSuperClass(String type1, String type2) {
+                try {
+                    return super.getCommonSuperClass(type1, type2);
+                } catch (Throwable t) {
+                    return "java/lang/Object";
+                }
+            }
+        };
         node.accept(writer);
         return writer.toByteArray();
+    }
+
+    /**
+     * Realigns one retargeted {@code @Redirect} handler's captured target arguments with the method the anchor
+     * now sits in.
+     *
+     * <p>sponge-mixin binds a Redirect handler to the redirected call's receiver and arguments followed by
+     * <em>all</em> of the target method's own parameters. When a retarget points the selector at the method the
+     * anchor's body moved into, that method can declare different parameters than the one the mod was compiled
+     * against, and the injector rejects the handler with "has an invalid signature" (fabric-entity-events'
+     * nearby-monsters redirect against the lambda NeoForge encapsulated the sleep check into: the lambda
+     * captures the bed state, rule, position and the spawn flag, while the handler still declared the vanilla
+     * parameters led by the bed block). The rewrite builds the descriptor the injector expects - call side plus
+     * the host's parameters - and renumbers the body's slot accesses by type, so every slot still holds what it
+     * was declared with. A parameter the new host does not have is only allowed to disappear when the body
+     * never reads it, a parameter type the old handler did not declare is fine because the body simply ignores
+     * the extra slot, and any wide (long/double) slot refuses the whole rewrite.
+     *
+     * @return whether the handler was rewritten
+     */
+    private static boolean realignCapturedRegion(ClassNode node, MethodNode handler,
+            java.util.function.Function<String, byte[]> targetBytecode) {
+        var redirect = findAnnotation(handler, "Lorg/spongepowered/asm/mixin/injection/Redirect;");
+        if (redirect == null) {
+            return false;
+        }
+        if (usesHostFrame(handler)) {
+            return false; // sugar reads the host's frame by name/ordinal; a parameter rewrite breaks the binding
+        }
+        var targets = mixinTargets(node);
+        if (targets.isEmpty()) {
+            return false;
+        }
+        var at = singleInvokeAt(redirect);
+        if (at == null) {
+            return false;
+        }
+        var anchorTarget = readStringValue(at, "target");
+        if (anchorTarget == null) {
+            return false;
+        }
+        var anchor = parseCallTarget(anchorTarget);
+        if (anchor == null || anchor.name().equals("<init>")) {
+            return false;
+        }
+        var selector = singleMethodTarget(redirect);
+        if (selector == null || selector.contains("(")) {
+            return false;
+        }
+
+        // Exactly one method named by the selector, across every target class, may contain the anchor:
+        // with more the binding would be a guess.
+        org.objectweb.asm.tree.MethodInsnNode anchorInsn = null;
+        MethodNode host = null;
+        var ambiguous = false;
+        for (var target : targets) {
+            var bytes = targetBytecode.apply(target);
+            if (bytes == null) {
+                continue;
+            }
+            ClassNode targetNode;
+            try {
+                targetNode = new ClassNode();
+                new ClassReader(bytes).accept(targetNode, ClassReader.SKIP_FRAMES | ClassReader.SKIP_DEBUG);
+            } catch (Throwable t) {
+                continue;
+            }
+            for (var candidate : targetNode.methods) {
+                if (!candidate.name.equals(selector)) {
+                    continue;
+                }
+                for (var insn : candidate.instructions) {
+                    if (insn instanceof org.objectweb.asm.tree.MethodInsnNode call
+                            && call.owner.equals(anchor.owner()) && call.name.equals(anchor.name())
+                            && call.desc.equals(anchor.desc())) {
+                        if (host != null) {
+                            ambiguous = true;
+                        }
+                        host = candidate;
+                        anchorInsn = call;
+                        break;
+                    }
+                }
+                if (ambiguous) {
+                    break;
+                }
+            }
+            if (ambiguous) {
+                break;
+            }
+        }
+        if (ambiguous || host == null || anchorInsn == null) {
+            return false;
+        }
+
+        var callArgs = Type.getArgumentTypes(anchor.desc());
+        var callStatic = anchorInsn.getOpcode() == Opcodes.INVOKESTATIC;
+        var receiverOffset = callStatic ? 0 : 1;
+        var callSideLength = callArgs.length + receiverOffset;
+        var handlerArgs = Type.getArgumentTypes(handler.desc);
+        if (handlerArgs.length < callSideLength) {
+            return false;
+        }
+        var prefixMatches = true;
+        for (var i = 0; i < callArgs.length; i++) {
+            if (!callArgs[i].equals(handlerArgs[receiverOffset + i])) {
+                prefixMatches = false;
+                break;
+            }
+        }
+        if (!prefixMatches) {
+            return false;
+        }
+        var capturedOld = new Type[handlerArgs.length - callSideLength];
+        System.arraycopy(handlerArgs, callSideLength, capturedOld, 0, capturedOld.length);
+        var hostParams = Type.getArgumentTypes(host.desc);
+        if (java.util.Arrays.equals(capturedOld, hostParams)) {
+            return false; // already aligned
+        }
+
+        // The call side stays; only the captured region is rewritten. Map every old captured slot to a new
+        // captured slot of the same type (order-preserving first fit); old types the new host does not declare
+        // drop out - the body must not read them. Wide slots refuse the whole rewrite.
+        var wide = false;
+        for (var type : hostParams) {
+            if (type.getSize() == 2) {
+                wide = true;
+            }
+        }
+        for (var type : capturedOld) {
+            if (type.getSize() == 2) {
+                wide = true;
+            }
+        }
+        if (wide) {
+            return false;
+        }
+        var handlerStatic = (handler.access & Opcodes.ACC_STATIC) != 0;
+        var oldSlotCount = handlerStatic ? 0 : 1;
+        for (var type : handlerArgs) {
+            oldSlotCount += type.getSize();
+        }
+        var moves = new int[oldSlotCount]; // slot -> new slot; -1 = dropped
+        java.util.Arrays.fill(moves, -1);
+        // Which old argument each new argument keeps its (generic) signature entry from; -1 is brand-new.
+        var readable = true;
+        var slot = handlerStatic ? 0 : 1;
+        for (var i = 0; i < callSideLength; i++) {
+            moves[slot] = slot;
+            slot += handlerArgs[i].getSize();
+        }
+        // The new layout's captured region starts after the receiver and the call arguments.
+        var newCapturedStart = (handlerStatic ? 0 : 1) + receiverOffset;
+        for (var type : callArgs) {
+            newCapturedStart += type.getSize();
+        }
+        var claimed = new boolean[hostParams.length];
+        var sigSource = new int[callSideLength + hostParams.length];
+        for (var i = 0; i < callSideLength; i++) {
+            sigSource[i] = i;
+        }
+        java.util.Arrays.fill(sigSource, callSideLength, sigSource.length, -1);
+        for (var c = 0; c < capturedOld.length; c++) {
+            var type = capturedOld[c];
+            var mapped = -1;
+            var matched = -1;
+            var walk = newCapturedStart;
+            for (var p = 0; p < hostParams.length; p++) {
+                if (!claimed[p] && hostParams[p].equals(type)) {
+                    claimed[p] = true;
+                    mapped = walk;
+                    matched = p;
+                    break;
+                }
+                walk += hostParams[p].getSize();
+            }
+            if (mapped >= 0) {
+                moves[slot] = mapped;
+                sigSource[callSideLength + matched] = callSideLength + c;
+            } else {
+                // The type disappeared from the host: the body must never read this slot.
+                for (var insn : handler.instructions) {
+                    if (insn instanceof VarInsnNode varInsn && varInsn.var == slot
+                            || insn instanceof IincInsnNode iinc && iinc.var == slot) {
+                        readable = false;
+                        break;
+                    }
+                }
+                if (!readable) {
+                    return false;
+                }
+            }
+            slot += type.getSize();
+        }
+
+        // Build the new descriptor: call side + the host's parameters, then rebuild the generic signature the
+        // same way (the parameters the host kept keep their entries, brand-new ones degrade to the plain
+        // descriptor, dropped ones disappear).
+        var newArgs = new Type[callSideLength + hostParams.length];
+        for (var i = 0; i < callSideLength; i++) {
+            newArgs[i] = handlerArgs[i];
+        }
+        System.arraycopy(hostParams, 0, newArgs, callSideLength, hostParams.length);
+        var oldDesc = handler.desc;
+        var newDesc = Type.getMethodDescriptor(Type.getReturnType(handler.desc), newArgs);
+        if (handler.signature != null) {
+            var rebuilt = rebuildMethodSignature(handler.signature, newArgs, sigSource, handlerArgs);
+            if (rebuilt == null) {
+                return false;
+            }
+            handler.signature = rebuilt;
+        }
+        handler.desc = newDesc;
+        if (handler.localVariables != null) {
+            var it = handler.localVariables.iterator();
+            while (it.hasNext()) {
+                var local = it.next();
+                if (local.index >= 0 && local.index < moves.length) {
+                    if (moves[local.index] < 0) {
+                        it.remove();
+                        continue;
+                    }
+                    local.index = moves[local.index];
+                }
+            }
+        }
+        for (var insn : handler.instructions) {
+            if (insn instanceof VarInsnNode varInsn && varInsn.var >= 0 && varInsn.var < moves.length
+                    && moves[varInsn.var] >= 0) {
+                varInsn.var = moves[varInsn.var];
+            } else if (insn instanceof IincInsnNode iinc && iinc.var >= 0 && iinc.var < moves.length
+                    && moves[iinc.var] >= 0) {
+                iinc.var = moves[iinc.var];
+            }
+        }
+        LOGGER.info("[NeoFobric] Realigned the captured arguments of {}#{} from {} to the parameters of the method the anchor moved into: {}{}",
+                node.name.replace('/', '.'), handler.name, oldDesc, host.name, host.desc);
+        return true;
+    }
+
+    /**
+     * Rebuilds a method's generic signature for a rewritten parameter list: every new parameter keeps the old
+     * signature entry of the argument it was mapped from, a brand-new parameter degrades to the plain
+     * descriptor, and a dropped parameter's entry disappears. The type-parameter section and the return type
+     * are carried over verbatim.
+     *
+     * @return the rebuilt signature, or {@code null} when the old one does not describe {@code oldArgs} (the
+     *         rewrite is then refused)
+     */
+    private static String rebuildMethodSignature(String signature, Type[] newArgs, int[] sigSource, Type[] oldArgs) {
+        var rest = signature;
+        var typeParams = "";
+        if (rest.startsWith("<")) {
+            var depth = 0;
+            var i = 0;
+            while (i < rest.length()) {
+                var c = rest.charAt(i);
+                if (c == '<') {
+                    depth++;
+                } else if (c == '>') {
+                    depth--;
+                    if (depth == 0) {
+                        i++;
+                        break;
+                    }
+                }
+                i++;
+            }
+            typeParams = rest.substring(0, i);
+            rest = rest.substring(i);
+        }
+        if (rest.isEmpty() || rest.charAt(0) != '(') {
+            return null;
+        }
+        var open = 0;
+        var close = rest.indexOf(')');
+        if (close < 0) {
+            return null;
+        }
+        var oldTokens = new ArrayList<String>();
+        var cursor = open + 1;
+        while (cursor < close) {
+            var end = signatureTokenEnd(rest, cursor);
+            if (end < 0 || end > close) {
+                return null;
+            }
+            oldTokens.add(rest.substring(cursor, end));
+            cursor = end;
+        }
+        if (oldTokens.size() != oldArgs.length) {
+            return null;
+        }
+        var rebuilt = new StringBuilder(typeParams).append('(');
+        for (var i = 0; i < newArgs.length; i++) {
+            var source = sigSource[i];
+            rebuilt.append(source >= 0 ? oldTokens.get(source) : newArgs[i].getDescriptor());
+        }
+        rebuilt.append(rest.substring(close));
+        return rebuilt.toString();
+    }
+
+    /** {@return the index just past the type signature starting at {@code start}, or {@code -1}} */
+    private static int signatureTokenEnd(String s, int start) {
+        var i = start;
+        while (i < s.length() && s.charAt(i) == '[') {
+            i++;
+        }
+        if (i >= s.length()) {
+            return -1;
+        }
+        var c = s.charAt(i);
+        if (c == 'T') {
+            var end = s.indexOf(';', i);
+            return end < 0 ? -1 : end + 1;
+        }
+        if (c == 'L') {
+            var depth = 0;
+            i++;
+            while (i < s.length()) {
+                var d = s.charAt(i);
+                if (d == '<') {
+                    depth++;
+                } else if (d == '>') {
+                    depth--;
+                } else if (d == ';' && depth == 0) {
+                    return i + 1;
+                }
+                i++;
+            }
+            return -1;
+        }
+        return i + 1; // primitive
+    }
+
+    /** {@return the single {@code At} of the annotation that names an INVOKE anchor, or {@code null}} */
+    private static AnnotationNode singleInvokeAt(AnnotationNode injector) {
+        var ats = atAnnotationsOf(injector);
+        if (ats.size() != 1) {
+            return null;
+        }
+        var at = ats.get(0);
+        var kind = readStringValue(at, "value");
+        if (!"INVOKE".equals(kind) && !"INVOKE_ASSIGN".equals(kind)) {
+            return null;
+        }
+        return at;
+    }
+
+    /** {@return the owner, name and descriptor an {@code at} target string names, or {@code null}} */
+    private static CallTarget parseCallTarget(String target) {
+        // "Lowner;name(desc)Ret" - the owner ends at the first ';' following the leading 'L'.
+        if (!target.startsWith("L") || !target.contains("(")) {
+            return null;
+        }
+        var ownerEnd = target.indexOf(';');
+        if (ownerEnd < 0) {
+            return null;
+        }
+        var owner = target.substring(1, ownerEnd);
+        var rest = target.substring(ownerEnd + 1);
+        var open = rest.indexOf('(');
+        if (open < 0) {
+            return null;
+        }
+        return new CallTarget(owner, rest.substring(0, open), rest.substring(open));
+    }
+
+    private record CallTarget(String owner, String name, String desc) {}
+
+    /** {@return whether the parameter list contains the exact type} */
+    private static boolean containsType(Type[] types, Type type) {
+        for (var candidate : types) {
+            if (candidate.equals(type)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The injection annotations whose {@code at} names a member: the ones a retarget can move. */
@@ -6186,7 +6589,7 @@ public final class MixinJarPatcher {
                     versionMoved = tooltipInjectionsRetargeted;
                     patched.put(entry.getName(), versionMoved);
                 }
-                var anvilInjectionsRetargeted = retargetInjectionMethods(versionMoved, entry.getName());
+                var anvilInjectionsRetargeted = retargetInjectionMethods(versionMoved, entry.getName(), resolver);
                 if (anvilInjectionsRetargeted != null) {
                     versionMoved = anvilInjectionsRetargeted;
                     patched.put(entry.getName(), versionMoved);                }
