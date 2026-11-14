@@ -392,6 +392,34 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
      * <p>Runs for every class once any jar declares a transitive rule; the hierarchy walk is cached per
      * class name, so this is a set lookup for the vast majority of classes.
      */
+    /** { whether the loader about to define the class can resolve the interface} */
+    private static boolean interfaceIsLoadable(String iface) {
+        var name = iface.replace('/', '.');
+        var loaders = new java.util.ArrayList<ClassLoader>();
+        try {
+            var loader = net.neoforged.fml.loading.FMLLoader.getCurrentOrNull();
+            if (loader != null) {
+                loaders.add(loader.getCurrentClassLoader());
+            }
+        } catch (Throwable ignored) {
+            // Not published yet; the other loaders still get their chance.
+        }
+        loaders.add(Thread.currentThread().getContextClassLoader());
+        loaders.add(NeoFobricClassTweakerProcessor.class.getClassLoader());
+        for (var loader : loaders) {
+            if (loader == null) {
+                continue;
+            }
+            try {
+                Class.forName(name, false, loader);
+                return true;
+            } catch (Throwable notYet) {
+                // Try the next one.
+            }
+        }
+        return false;
+    }
+
     private static boolean applyTransitiveInjectedInterfaces(ClassNode node) {
         var pairs = transitiveInterfaces();
         if (pairs.isEmpty()) {
@@ -407,8 +435,28 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
                 if (node.name.equals(iface) || node.interfaces.contains(iface)) {
                     continue;
                 }
+                // The JVM resolves a class's interfaces when it defines it. While the module layer is
+                // still being assembled the Fabric class may not be reachable through the loader that
+                // defines this one, and adding it then turns a working class into a NoClassDefFoundError
+                // that aborts startup (measured: FabricBlockGetter on net.minecraft.world.level.BlockGetter,
+                // before the game reaches its window). Skipping the injection keeps the class loadable.
+                if (!interfaceIsLoadable(iface)) {
+                    if (REPORTED_TRANSITIVE.add("unloadable->" + iface)) {
+                        LOGGER.warn("[NeoFobric] Not injecting {} into {} - the interface is not loadable"
+                                        + " through the platform loader yet", iface.replace('/', '.'),
+                                node.name.replace('/', '.'));
+                    }
+                    continue;
+                }
                 node.interfaces.add(iface);
                 changed = true;
+                if (REPORTED_TRANSITIVE.add("probe->" + iface)) {
+                    var pkg = iface.substring(0, iface.lastIndexOf('/')).replace('/', '.');
+                    var mod = java.lang.ModuleLayer.boot().findModule("neofobric.fabric.mods");
+                    LOGGER.info("[NeoFobric/Probe] adding {} - composite present={} listsPackage={} modules={}",
+                            iface, mod.isPresent(), mod.map(m -> m.getPackages().contains(pkg)).orElse(false),
+                            java.lang.ModuleLayer.boot().modules().size());
+                }
                 if (REPORTED_TRANSITIVE.add(entry.getKey() + "->" + iface)) {
                     LOGGER.info("[NeoFobric] Transitive interface {} (from {}) reaches {} - injected",
                             iface.replace('/', '.'), entry.getKey().replace('/', '.'),
@@ -510,24 +558,237 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         if (Boolean.getBoolean("neofobric.noClassTweaker")) {
             return false;
         }
-        var name = selection.type().getInternalName();
-        if (DUCK_FALLBACKS.containsKey(name) || ACCESSOR_FIELDS.containsKey(name)) {
-            return true;
+        // Every class, not only the ones a tweaker rule names. This processor also runs the repairs that
+        // have to see whatever Mixin produced: the stripped-handler drop and the parameter-annotation fit.
+        // Mixin merges a handler method into whichever class its mixin targets - the broken handler of a
+        // failed injection sits on e.g. net.minecraft.client.particle.QuadParticleGroup, which no tweaker
+        // rule mentions. The name lists are still consulted by processClass for the actual rules, and each
+        // lookup there is a map hit. Before this change the same class list omitted those classes and the
+        // repair silently never ran on the class that needed it.
+        return true;
+    }
+
+    /**
+     * Keeps every method's parameter-annotation arrays the same length as its descriptor.
+     *
+     * <p>ASM indexes those arrays once per descriptor parameter when it serialises the class. A mixin
+     * machinery that strips a handler parameter (MixinExtras' sugar bookkeeping) or a widening pass that
+     * appends one can leave the array longer than the descriptor, and the write then dies with
+     * {@code ArrayIndexOutOfBoundsException: Index 1 out of bounds for length 1} while the game class
+     * loads - far away from the injection that caused it. Trimming here is safe: an annotation for a
+     * parameter the method no longer has describes nothing.
+     */
+    private static void sanitizeParameterAnnotations(org.objectweb.asm.tree.ClassNode node) {
+        for (var method : node.methods) {
+            var argumentCount = org.objectweb.asm.Type.getArgumentTypes(method.desc).length;
+            var visible = method.visibleParameterAnnotations;
+            var invisible = method.invisibleParameterAnnotations;
+            // ASM's MethodNode carries the attribute's num_parameters separately from the array it
+            // indexes (visibleAnnotableParameterCount). MixinExtras shortens a sugar handler's
+            // descriptor after copying its parameter annotations, and Mixin still merges the handler
+            // into the target - leaving e.g. count=2 over an array of 1. MethodWriter then walks past
+            // the array and the class write dies with an AIOOBE that names no method at all. Reset the
+            // counts to 0 (ASM then derives num_parameters from the array) and fit the arrays to the
+            // descriptor, which is the only shape a class file may carry.
+            var mismatched = (visible != null && (visible.length != argumentCount || method.visibleAnnotableParameterCount > visible.length))
+                    || (invisible != null && (invisible.length != argumentCount || method.invisibleAnnotableParameterCount > invisible.length));
+            if (mismatched && REPORTED_PARAMETER_ANNOTATIONS.add(node.name + '#' + method.name + method.desc
+                    + '#' + (visible == null ? -1 : visible.length) + '#' + method.visibleAnnotableParameterCount
+                    + '#' + (invisible == null ? -1 : invisible.length) + '#' + method.invisibleAnnotableParameterCount)) {
+                LOGGER.info("[NeoFobric] Repairing parameter annotations of {}.{}{}: visible={} count={},"
+                                + " invisible={} count={}, descriptor arguments={}",
+                        node.name.replace('/', '.'), method.name, method.desc,
+                        visible == null ? "none" : visible.length, method.visibleAnnotableParameterCount,
+                        invisible == null ? "none" : invisible.length, method.invisibleAnnotableParameterCount,
+                        argumentCount);
+            }
+            method.visibleAnnotableParameterCount = 0;
+            method.invisibleAnnotableParameterCount = 0;
+            method.visibleParameterAnnotations = fit(visible, argumentCount);
+            method.invisibleParameterAnnotations = fit(invisible, argumentCount);
         }
-        return RESOURCE_IMPL_CANDIDATES.contains(name) || FABRIC_CHANNEL_CLASSES.contains(name)
-                || FABRIC_NETWORKING_IMPL.equals(name)
-                || BUILT_IN_REGISTRIES.equals(name) || INGREDIENT.equals(name)
-                || PolymerCompat.handlesClass(name)
-                || FABRIC_BLOCK_STATE_MODEL.equals(name) || FABRIC_BLOCK_STATE.equals(name) || FABRIC_BLOCK.equals(name)
-                || FABRIC_ITEM_STACK.equals(name)
-                || WIDEN_PRIVATE_MEMBERS.containsKey(name)
-                || InjectedInterfaceSource.get().containsKey(name)
-                || ENUM_EXTENSION_TARGETS.contains(name)
-                || net.neoforged.fabricbridge.compbridlnk.OwoCompat.handlesClass(name)
-                || isFabricClassTweakerTarget(name)
-                // Any class may be a descendant of a transitive-inject-interface target; the hierarchy
-                // check in processClass is what decides, and it is cached per class name.
-                || !transitiveInterfaces().isEmpty();
+    }
+
+    private static final java.util.Set<String> REPORTED_PARAMETER_ANNOTATIONS =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** A vanilla static helper NeoForge re-shaped, as the descriptor a Fabric build still calls. */
+    private record VanillaShapeShim(String name, String oldDesc, String newFirstArg, String blockStateGetter) {}
+
+    /**
+     * Vanilla static helpers whose first parameter NeoForge changed to the block state.
+     *
+     * <p>A Fabric mod compiled against the vanilla shape emits {@code invokestatic <subclass>.<helper>} with
+     * the old descriptor; the JVM resolves it up the superclass chain and finds nothing, so the first tick
+     * that reaches the call dies with {@code NoSuchMethodError} - FarmersDelight's Fabric build crashed the
+     * integrated server the moment a tomato ticked. Restoring the old shape as an overload that adapts to
+     * the new one keeps the mod working without knowing which mod it is.
+     */
+    private static final Map<String, List<VanillaShapeShim>> VANILLA_SHAPE_SHIMS = Map.of(
+            "net/minecraft/world/level/block/CropBlock", List.of(
+                    // 26.2/26.3: getGrowthSpeed(Block, BlockGetter, BlockPos) -> (BlockState, ...).
+                    new VanillaShapeShim("getGrowthSpeed",
+                            "(Lnet/minecraft/world/level/block/Block;Lnet/minecraft/world/level/BlockGetter;"
+                                    + "Lnet/minecraft/core/BlockPos;)F",
+                            "Lnet/minecraft/world/level/block/state/BlockState;", "defaultBlockState")));
+
+    /**
+     * Adds the vanilla-shaped overloads of {@link #VANILLA_SHAPE_SHIMS} to the class that lost them.
+     *
+     * @return whether a method was added
+     */
+    private static boolean addVanillaShapeShims(org.objectweb.asm.tree.ClassNode node) {
+        var shims = VANILLA_SHAPE_SHIMS.get(node.name);
+        if (shims == null) {
+            return false;
+        }
+        var added = false;
+        for (var shim : shims) {
+            if (findMethod(node, shim.name, shim.oldDesc) != null) {
+                continue;
+            }
+            MethodNode reshaped = null;
+            for (var candidate : node.methods) {
+                if (!candidate.name.equals(shim.name) || (candidate.access & Opcodes.ACC_STATIC) == 0) {
+                    continue;
+                }
+                var arguments = org.objectweb.asm.Type.getArgumentTypes(candidate.desc);
+                if (arguments.length != 3 || !arguments[0].getDescriptor().equals(shim.newFirstArg)) {
+                    continue;
+                }
+                reshaped = candidate;
+                break;
+            }
+            if (reshaped == null) {
+                continue;
+            }
+            var shimMethod = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, shim.name, shim.oldDesc, null, null);
+            shimMethod.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            shimMethod.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                    "net/minecraft/world/level/block/Block", shim.blockStateGetter,
+                    "()" + shim.newFirstArg, false));
+            shimMethod.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+            shimMethod.instructions.add(new VarInsnNode(Opcodes.ALOAD, 2));
+            shimMethod.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
+                    node.name, reshaped.name, reshaped.desc, false));
+            shimMethod.instructions.add(new InsnNode(returnOpcode(org.objectweb.asm.Type.getReturnType(shim.oldDesc))));
+            shimMethod.maxStack = 3;
+            shimMethod.maxLocals = 3;
+            node.methods.add(shimMethod);
+            LOGGER.info("[NeoFobric] Restored {}.{}{} (delegates to the re-shaped {}) for Fabric callers",
+                    node.name.replace('/', '.'), shim.name, shim.oldDesc, reshaped.desc);
+            added = true;
+        }
+        return added;
+    }
+
+    private static int returnOpcode(org.objectweb.asm.Type type) {
+        return switch (type.getSort()) {
+            case org.objectweb.asm.Type.VOID -> Opcodes.RETURN;
+            case org.objectweb.asm.Type.BOOLEAN, org.objectweb.asm.Type.BYTE, org.objectweb.asm.Type.CHAR,
+                    org.objectweb.asm.Type.SHORT, org.objectweb.asm.Type.INT -> Opcodes.IRETURN;
+            case org.objectweb.asm.Type.FLOAT -> Opcodes.FRETURN;
+            case org.objectweb.asm.Type.LONG -> Opcodes.LRETURN;
+            case org.objectweb.asm.Type.DOUBLE -> Opcodes.DRETURN;
+            default -> Opcodes.ARETURN;
+        };
+    }
+
+
+    /**
+     * Drops mixin handler methods that a failed injection left with a shortened descriptor.
+     *
+     * <p>MixinExtras rewrites a handler's descriptor before it injects - the trailing sugar parameters
+     * ({@code @Local}, {@code @Share}, ...) are removed so the injector sees the plain handler - and it
+     * restores them in {@code SugarInjector#reSugarHandler} <em>after</em> a successful inject. When the
+     * injector throws instead (a generated mixin whose target call is absent: "expected 1 invocation(s)
+     * but 0 succeeded"), the restore never runs, and Mixin still merges the handler into the target class:
+     * bytes that read the sugar parameters, under a descriptor that no longer has them. The class then
+     * fails its own verification when it loads:
+     * {@code VerifyError: Bad local variable type ... locals[2] is not assignable to reference type}
+     * (measured on the AsyncParticles generated mixins and {@code QuadParticleGroup}).
+     *
+     * <p>The signal is exact: a method that <em>reads</em> a local slot it never stores, at or beyond its
+     * descriptor's parameter slots, can only be a handler whose parameters were taken away. Ordinary
+     * bytecode always stores a local before reading it, so nothing else matches. With no call site in the
+     * class the method is dead - the injection it belonged to inserted nothing - and dropping it restores
+     * the class to what it looked like before that mixin, which is the only state that verifies.
+     */
+    private static boolean dropStrippedSugarHandlers(org.objectweb.asm.tree.ClassNode node) {
+        var referenced = new java.util.HashSet<String>();
+        for (var method : node.methods) {
+            for (var insn = method.instructions.getFirst(); insn != null; insn = insn.getNext()) {
+                if (insn instanceof MethodInsnNode call) {
+                    if (node.name.equals(call.owner)) {
+                        referenced.add(call.name + call.desc);
+                    }
+                } else if (insn instanceof org.objectweb.asm.tree.InvokeDynamicInsnNode indy) {
+                    // A lambda body is reached through a method handle, not through a call instruction.
+                    for (var argument : indy.bsmArgs) {
+                        if (argument instanceof org.objectweb.asm.Handle handle && node.name.equals(handle.getOwner())) {
+                            referenced.add(handle.getName() + handle.getDesc());
+                        }
+                    }
+                }
+            }
+        }
+        var dropped = false;
+        for (var iterator = node.methods.iterator(); iterator.hasNext();) {
+            var method = iterator.next();
+            if (method.instructions == null || method.instructions.size() == 0) {
+                continue;
+            }
+            var parameterSlots = (method.access & Opcodes.ACC_STATIC) == 0 ? 1 : 0;
+            for (var argument : org.objectweb.asm.Type.getArgumentTypes(method.desc)) {
+                parameterSlots += argument.getSize();
+            }
+            var stored = new java.util.HashSet<Integer>();
+            for (var insn = method.instructions.getFirst(); insn != null; insn = insn.getNext()) {
+                if (insn instanceof VarInsnNode variable
+                        && variable.getOpcode() >= Opcodes.ISTORE && variable.getOpcode() <= Opcodes.ASTORE) {
+                    stored.add(variable.var);
+                } else if (insn instanceof org.objectweb.asm.tree.IincInsnNode increment) {
+                    stored.add(increment.var);
+                }
+            }
+            var lostParameter = -1;
+            for (var insn = method.instructions.getFirst(); insn != null; insn = insn.getNext()) {
+                if (insn instanceof VarInsnNode variable
+                        && variable.getOpcode() >= Opcodes.ILOAD && variable.getOpcode() <= Opcodes.ALOAD
+                        && variable.var >= parameterSlots && !stored.contains(variable.var)) {
+                    lostParameter = Math.max(lostParameter, variable.var);
+                }
+            }
+            if (lostParameter < 0) {
+                continue;
+            }
+            var key = method.name + method.desc;
+            if (referenced.contains(key)) {
+                // Something still calls it, so removing the method would only move the failure to the
+                // call site; leave it and let the class loader name the method if it ever runs.
+                LOGGER.warn("[NeoFobric] {}.{}{} reads local {} beyond its parameters and is still called;"
+                                + " leaving it in place (a mixin injection failed halfway)",
+                        node.name.replace('/', '.'), method.name, method.desc, lostParameter);
+                continue;
+            }
+            LOGGER.info("[NeoFobric] Dropped {} from {} - a failed mixin injection left it reading local {},"
+                            + " which its shortened descriptor {} no longer declares",
+                    method.name + method.desc, node.name.replace('/', '.'), lostParameter, method.desc);
+            iterator.remove();
+            dropped = true;
+        }
+        return dropped;
+    }
+
+    private static java.util.List<org.objectweb.asm.tree.AnnotationNode>[] fit(
+            java.util.List<org.objectweb.asm.tree.AnnotationNode>[] annotations, int count) {
+        if (annotations == null || annotations.length == count) {
+            return annotations;
+        }
+        @SuppressWarnings("unchecked")
+        var fitted = (java.util.List<org.objectweb.asm.tree.AnnotationNode>[]) new java.util.List<?>[count];
+        System.arraycopy(annotations, 0, fitted, 0, Math.min(annotations.length, count));
+        return fitted;
     }
 
     @Override
@@ -536,6 +797,15 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         // until that has happened, a config's target class would keep no mixins from it, silently. See
         // FabricBootstrapProcessor#forceMixinPreparationIfPending.
         FabricBootstrapProcessor.forceMixinPreparationIfPending();
+        // Mixin has already run on this node (this processor runs after it), so a handler a failed
+        // injection left stripped is visible here - see dropStrippedSugarHandlers.
+        boolean repairedMixins = dropStrippedSugarHandlers(context.node());
+        sanitizeParameterAnnotations(context.node());
+        // NeoForge re-shaped some vanilla static helpers (CropBlock#getGrowthSpeed now takes the crop's
+        // BlockState instead of its Block). A Fabric mod compiled against the vanilla shape calls the old
+        // descriptor and dies with NoSuchMethodError on the first tick that reaches it; the old shape is
+        // restored as an overload that adapts to the new one - see VANILLA_SHAPE_SHIMS.
+        boolean shimmedVanillaShapes = addVanillaShapeShims(context.node());
         // Guarded: this runs before every other decision, so anything it throws would abort the whole
         // transformation for this class - which is how a missing interface injection could look like
         // "handlesClass said yes but nothing happened".
@@ -569,11 +839,17 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
                 && !ENUM_EXTENSION_TARGETS.contains(context.node().name)
                 && !net.neoforged.fabricbridge.compbridlnk.OwoCompat.handlesClass(context.node().name)
                 && !isFabricClassTweakerTarget(context.node().name)) {
+            if (repairedMixins || shimmedVanillaShapes) {
+                context.audit("neofobric.class_tweaker",
+                        repairedMixins ? "dropped a mixin handler left stripped by a failed injection"
+                                : "restored a vanilla shape a Fabric mod still calls");
+                return ComputeFlags.COMPUTE_FRAMES;
+            }
             return ComputeFlags.NO_REWRITE;
         }
 
         var node = context.node();
-        var changed = transitiveChanged | oldConfigConstantsChanged;
+        var changed = transitiveChanged | oldConfigConstantsChanged | repairedMixins | shimmedVanillaShapes;
         // CompoundTag is defined before the Fabric mixin configs are prepared, so owo's mixin never sees it;
         // the tweaker adds the same MapCarrier methods while the class is still being transformed.
         if (net.neoforged.fabricbridge.compbridlnk.OwoCompat.handlesClass(node.name)) {

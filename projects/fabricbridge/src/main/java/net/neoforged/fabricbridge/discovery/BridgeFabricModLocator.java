@@ -865,6 +865,25 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                         path.getFileName());
                 FabricJarRegistry.markForeignModPath(path);
                 noteFmlSidePackages(path);
+                // A multi-loader jar can bundle Fabric mods of its own (Distant Horizons ships the Fabric API
+                // modules its code compiles against). FML's JarJar does not load a nested jar that only has a
+                // fabric.mod.json, so those modules were never on the Fabric side either - and the parent's
+                // own references to them died with NoClassDefFoundError. Take them into the composite the same
+                // way a Fabric parent's nested jars are taken.
+                if (metadata != null) {
+                    var foreignInfo = FabricModJsonParser.parse(metadata);
+                    if (foreignInfo != null) {
+                        for (var nestedJar : foreignInfo.nestedJarPaths()) {
+                            try {
+                                var extracted = extractNestedJar(path, foreignInfo, nestedJar);
+                                examineJar(extracted, fabricJars, depth + 1, foreignInfo.modId());
+                            } catch (Exception e) {
+                                LOGGER.error("[NeoFobric] Failed to process the nested jar {} of {}",
+                                        nestedJar, path.getFileName(), e);
+                            }
+                        }
+                    }
+                }
                 return;
             }
             // Below NeoForge sits Fabric. A Fabric build that also ships a stray legacy mods.toml is still a
@@ -2248,6 +2267,16 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                     Files.copy(in, temp, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 }
                 try (var inner = new java.util.zip.ZipFile(temp.toFile())) {
+                    // A nested jar that declares itself a Fabric mod is taken into the bridge's composite
+                    // module by examineJar, not left to FML's JarJar. Its packages therefore belong to the
+                    // Fabric side; counting them as FML-side content made the composite treat them as
+                    // platform-provided and filter them out, and the first game class that receives one of
+                    // those interfaces then died with NoClassDefFoundError (Distant Horizons ships the whole
+                    // Fabric API under META-INF/jars/, and that hid fabric-block-getter's FabricBlockGetter
+                    // from the composite while Fabric's BlockGetterMixin kept adding it to BlockGetter).
+                    if (inner.getEntry(FabricJarRegistry.FABRIC_MOD_JSON) != null) {
+                        continue;
+                    }
                     collectPackages(inner, depth + 1);
                 }
             } catch (Throwable t) {
@@ -2354,6 +2383,16 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             for (var candidate : modCopies.getValue()) {
                 if (compareModuleVersions(candidate.getValue().version(), winner.getValue().version()) > 0) {
                     winner = candidate;
+                } else if (compareModuleVersions(candidate.getValue().version(), winner.getValue().version()) == 0
+                        && compareBuildSuffix(candidate.getValue().version(), winner.getValue().version()) > 0) {
+                    // The base versions are equal and only the "+build" suffix differs - a mod that
+                    // bundles a whole older Fabric API (Distant Horizons ships 46 modules) duplicates
+                    // every module of the installed one. Leaving the winner to map order made it vary
+                    // per launch: when the old copy won, the newer copy's mixin configs were registered
+                    // while the classes came from the old jar, and every class it names was missing
+                    // (220 mixin classes, 1416 errors). The suffix is the only ordering left, and it is
+                    // the one the build actually differs in.
+                    winner = candidate;
                 }
             }
             for (var candidate : modCopies.getValue()) {
@@ -2401,6 +2440,23 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
      * takes part in the ordering, and are otherwise dotted numbers; anything that does not parse compares as
      * text, so an unusual version can only order wrongly, never throw.
      */
+    /**
+     * {@return how two "1.2.3+build" version strings compare by their build suffix}
+     *
+     * <p>Only the part after {@code +} is read, which is what tells two builds of the same module
+     * apart: {@code 2.0.9+3434d6d95d} must beat {@code 2.0.9+3434d6d902} when a mod bundles a whole
+     * older Fabric API and both copies declare the same base version. Text ordering is all that is
+     * available there - the suffix is a hash, not a number - and it is stable across launches, which
+     * is the property that matters: map iteration order is not.
+     */
+    private static int compareBuildSuffix(String first, String second) {
+        var firstPlus = first.indexOf('+');
+        var secondPlus = second.indexOf('+');
+        var firstSuffix = firstPlus < 0 ? "" : first.substring(firstPlus + 1);
+        var secondSuffix = secondPlus < 0 ? "" : second.substring(secondPlus + 1);
+        return firstSuffix.compareTo(secondSuffix);
+    }
+
     private static int compareModuleVersions(String first, String second) {
         // A placeholder version ("unspecified", as shipped by some dummy nested jars) must never
         // outrank a real one: the string fallback below sorts "unspecified" above "1.8.3", which hid

@@ -78,6 +78,7 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
     private static final String HOOKS_CLASS = "net/neoforged/fabricbridge/FabricBridgeHooks";
 
     private static final String MINECRAFT_CLASS = "net/minecraft/client/Minecraft";
+    private static final String BOOTSTRAP_CLASS = "net/minecraft/server/Bootstrap";
     private static final String MINECRAFT_SERVER_CLASS = "net/minecraft/server/MinecraftServer";
     private static final String BUILT_IN_REGISTRIES_CLASS = "net/minecraft/core/registries/BuiltInRegistries";
     private static final String CLIENT_BRAND_RETRIEVER_CLASS = "net/minecraft/client/ClientBrandRetriever";
@@ -113,6 +114,11 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
 
     @Override
     public void link(LinkContext context) {
+        // Mixin may prepare the registered configs the first time the platform asks it about any class,
+        // which happens while the module layer is still being assembled - at that moment FML's bytecode
+        // provider cannot answer for the bridge's composite game library, and Mixin drops every Fabric
+        // mixin class it asks about. Install the fallback before any config exists.
+        FabricMixinBytecodeFallback.install();
         // Register the bridged fabric launcher as early as possible: Minecraft's own early
         // hooks (registry-sync's server Main mixin) query fabric-loader's launcher long before
         // the full loader boot runs in CommonModLoader.
@@ -135,7 +141,7 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
             return false;
         }
         return switch (context.type().getInternalName()) {
-            case MINECRAFT_CLASS, MINECRAFT_SERVER_CLASS, BUILT_IN_REGISTRIES_CLASS, CLIENT_BRAND_RETRIEVER_CLASS, SERVER_MAIN_CLASS,
+            case MINECRAFT_CLASS, MINECRAFT_SERVER_CLASS, BUILT_IN_REGISTRIES_CLASS, BOOTSTRAP_CLASS, CLIENT_BRAND_RETRIEVER_CLASS, SERVER_MAIN_CLASS,
                     DEDICATED_SERVER_CLASS, NETWORK_REGISTRY_CLASS, SHARED_CONSTANTS_CLASS -> true;
             default -> false;
         };
@@ -153,10 +159,55 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
      * worse, not better: it never once succeeded in the whole debugging session.
      */
 
+    private static volatile boolean layerProbed;
+
+    /** TEMPORARY DIAGNOSTIC: logs which loaders/modules can see a Fabric mixin class right now. */
+    private static void probeLayerVisibility() {
+        var probeClass = "net.fabricmc.fabric.mixin.advancement.AdvancementBuilderMixin";
+        var loaders = new java.util.LinkedHashMap<String, ClassLoader>();
+        loaders.put("system", ClassLoader.getSystemClassLoader());
+        loaders.put("context", Thread.currentThread().getContextClassLoader());
+        loaders.put("bridge", FabricBootstrapProcessor.class.getClassLoader());
+        try {
+            loaders.put("fabricTarget", net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader());
+        } catch (Throwable t) {
+            LOGGER.info("[NeoFobric/Probe] no Fabric target loader: {}", t.toString());
+        }
+        for (var entry : loaders.entrySet()) {
+            if (entry.getValue() == null) {
+                continue;
+            }
+            try {
+                Class.forName(probeClass, false, entry.getValue());
+                LOGGER.info("[NeoFobric/Probe] {} sees {}", entry.getKey(), probeClass);
+            } catch (Throwable t) {
+                LOGGER.info("[NeoFobric/Probe] {} does NOT see {}: {}", entry.getKey(), probeClass, t);
+            }
+        }
+        var layer = ModuleLayer.boot();
+        var names = new java.util.ArrayList<String>();
+        for (var module : layer.modules()) {
+            if (module.getName().contains("fabric") || module.getName().contains("neoforge")) {
+                names.add(module.getName() + "(pkg=" + module.getPackages().size() + ")");
+            }
+        }
+        LOGGER.info("[NeoFobric/Probe] boot layer modules: {}", names);
+        var found = layer.findModule("neofobric.fabric.mods");
+        LOGGER.info("[NeoFobric/Probe] neofobric.fabric.mods in boot layer: {}", found.isPresent());
+        found.ifPresent(module -> LOGGER.info("[NeoFobric/Probe] composite lists advancement package: {}",
+                module.getPackages().contains("net.fabricmc.fabric.mixin.advancement")));
+    }
+
     @Override
     public ComputeFlags processClass(TransformationContext context) {
         if (Boolean.getBoolean("neofobric.noClassPatch")) {
             return ComputeFlags.NO_REWRITE;
+        }
+        // TEMPORARY DIAGNOSTIC (remove after use): -Dneofobric.layerProbe=true reports where a Fabric
+        // mixin class is visible from at the first game class, to attribute "specified mixin not found".
+        if (Boolean.getBoolean("neofobric.layerProbe") && !layerProbed) {
+            layerProbed = true;
+            probeLayerVisibility();
         }
         // The pipeline hands us game classes from here on, which is exactly when Mixin can be asked to
         // prepare the Fabric configs - and the last moment before the game's own class loading starts.
@@ -166,6 +217,7 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
             case MINECRAFT_CLASS -> injectClientGameInstanceHandoff(node) | injectClientTickHook(node);
             case MINECRAFT_SERVER_CLASS -> wrapBranding(node, "getServerModName");
             case BUILT_IN_REGISTRIES_CLASS -> injectBootstrapFreeze(node);
+            case BOOTSTRAP_CLASS -> injectFreezeAtBootstrapTail(node);
             case CLIENT_BRAND_RETRIEVER_CLASS -> wrapBranding(node, "getClientModName");
             case SERVER_MAIN_CLASS -> injectServerGameInstanceHandoff(node);
             case NETWORK_REGISTRY_CLASS -> injectFabricCodecFallback(node);
@@ -270,7 +322,44 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
      * registry-sync mixin's own deferred call. On the datagen and dedicated-server paths nothing is
      * armed (the window was never taken over) and the hook is a no-op.
      */
+    /**
+     * Appends the registry-window close to the end of { Bootstrap.bootStrap}, i.e. behind the
+     * datapack registry pass ({ validate}) that some Fabric mods' blocks are still registered from.
+     *
+     * <p>Closing it at the front of { BuiltInRegistries.bootStrap}'s freeze was one step too early for
+     * Create's Fabric build: its { HoneycombItem} mixin loads { AllBlocks} while
+     * { Bootstrap.validate} builds the datapack registries, and that registration then dies with
+     * { Registry is already frozen}. The close point only ever mattered for how long the window stays
+     * open, and every write it must let through happens before this method returns.
+     */
+    private static boolean injectFreezeAtBootstrapTail(ClassNode node) {
+        for (var method : node.methods) {
+            if (!"bootStrap".equals(method.name) || !"()V".equals(method.desc)) {
+                continue;
+            }
+            var changed = false;
+            for (var insn = method.instructions.getFirst(); insn != null; insn = insn.getNext()) {
+                if (insn.getOpcode() == Opcodes.RETURN) {
+                    method.instructions.insertBefore(insn, new MethodInsnNode(Opcodes.INVOKESTATIC,
+                            "net/neoforged/fabricbridge/FabricBridgeHooks",
+                            "freezeRegistriesAfterBootstrap",
+                            "()V",
+                            false));
+                    changed = true;
+                }
+            }
+            if (changed) {
+                LOGGER.info("[NeoFobric] Armed the registry-window close at the tail of Bootstrap.bootStrap");
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean injectBootstrapFreeze(ClassNode node) {
+        if (Boolean.getBoolean("neofobric.noFreezeHook")) {
+            return false;
+        }
         for (var method : node.methods) {
             if (!"bootStrap".equals(method.name) || !"()V".equals(method.desc)) {
                 continue;
@@ -281,12 +370,29 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
                         && "freeze".equals(call.name)
                         && "()V".equals(call.desc)
                         && node.name.equals(call.owner)) {
-                    method.instructions.insertBefore(insn, new MethodInsnNode(Opcodes.INVOKESTATIC,
+                    // Skip the vanilla freeze only while a Fabric client window is going to close the
+                    // registries later (the Minecraft constructor runs the entrypoints, the window closes at
+                    // the tail of Bootstrap.bootStrap behind the datapack registry pass). The vanilla call
+                    // still closed them during the FIRST bootstrap - long before that window - and then
+                    // BetterX/wover's freeze-time definition loaders built attribute suppliers against
+                    // NeoForge's not-yet-rebased attributes ("Trying to access unbound value:
+                    // neoforge:swim_speed"), while Create's Fabric build registered blocks into the frozen
+                    // registry. When no window is taken over (datagen, dedicated server) the original call
+                    // runs exactly as before.
+                    var runFreeze = new org.objectweb.asm.tree.LabelNode();
+                    var after = new org.objectweb.asm.tree.LabelNode();
+                    var list = new InsnList();
+                    list.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
                             "net/neoforged/fabricbridge/FabricBridgeHooks",
-                            "freezeRegistriesAfterBootstrap",
-                            "()V",
+                            "shouldDeferBuiltInRegistriesFreeze",
+                            "()Z",
                             false));
-                    LOGGER.info("[NeoFobric] Registry freeze armed behind the Fabric entrypoints now runs in front of BuiltInRegistries.bootStrap's own freeze");
+                    list.add(new JumpInsnNode(Opcodes.IFEQ, runFreeze));
+                    list.add(new JumpInsnNode(Opcodes.GOTO, after));
+                    list.add(runFreeze);
+                    method.instructions.insertBefore(insn, list);
+                    method.instructions.insert(insn, after);
+                    LOGGER.info("[NeoFobric] BuiltInRegistries.bootStrap's freeze now yields to the Fabric registry window");
                     return true;
                 }
             }
@@ -360,6 +466,10 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
             LOGGER.warn("[NeoFobric] FML's mixin service is not active ({}), Fabric mods will not have their mixins applied", mixinService);
             return;
         }
+        // Now that the service exists (it may not yet at link() time), put the Fabric-jar fallback in
+        // front of its bytecode provider - before the first config is registered, because Mixin may
+        // prepare them on the first class the platform transforms.
+        FabricMixinBytecodeFallback.install();
 
         var loader = FMLLoader.getCurrentOrNull();
         if (loader == null) {
@@ -658,7 +768,7 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
      * Fabric config is pinned to by {@link #pinMixinEnvironment}. Both the phase change and the select are
      * the same operations the platform performs on its phase transitions, only earlier.
      */
-    static void forceMixinPreparationIfPending() {
+    static synchronized void forceMixinPreparationIfPending() {
         if (mixinPrepared || Boolean.getBoolean("neofobric.noForcedMixinPreparation")) {
             return;
         }
@@ -706,6 +816,9 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
                 mixinPrepared = true;
                 LOGGER.info("[NeoFobric] Made Mixin prepare the Fabric mixin configs before the game started");
             } else {
+                if (pending == Mixins.getConfigs().size()) {
+                    LOGGER.info("[NeoFobric] Mixin kept {} Fabric mixin config(s) pending after select", pending);
+                }
                 LOGGER.debug("[NeoFobric] Mixin kept {} Fabric mixin config(s) pending, will retry", pending);
             }
         } catch (Throwable t) {
@@ -717,6 +830,11 @@ public final class FabricBootstrapProcessor implements ClassProcessor {
                 LOGGER.error("[NeoFobric] Mixin refused to prepare the Fabric configs {} times in a row - "
                         + "Fabric mixins stay unapplied unless this recovers. Report this with the log.", failures, t);
             } else {
+                if (failures == 1) {
+                    // TEMPORARY DIAGNOSTIC: the first refusal is worth one line at INFO - a run that keeps
+                    // failing leaves every Fabric mixin unapplied, and the cause (not the retry) is the point.
+                    LOGGER.info("[NeoFobric] First Mixin preparation attempt was refused", t);
+                }
                 LOGGER.debug("[NeoFobric] Mixin is not ready to prepare the Fabric configs yet, will retry", t);
             }
         }

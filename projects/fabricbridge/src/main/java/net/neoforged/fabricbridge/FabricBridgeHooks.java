@@ -117,6 +117,16 @@ public final class FabricBridgeHooks {
      * {@code Minecraft.getInstance()} in its class initialiser, and Fabric itself invokes both
      * entrypoint sets from inside the Minecraft constructor.
      */
+    /** Runs the main entrypoint set the way Fabric does - during loader initialisation, before the client. */
+    public static void runFabricMainEntrypoints() {
+        if (!bridgeActive()) {
+            return;
+        }
+        FabricBridge.bootIfNeeded();
+        net.neoforged.fabricbridge.transform.FabricBootstrapProcessor.prepareBeforeEntrypoints();
+        FabricBridge.invokeEntrypoints();
+    }
+
     public static void runFabricEntrypoints() {
         if (!bridgeActive()) {
             return;
@@ -887,6 +897,49 @@ public final class FabricBridgeHooks {
      * paths the window was never taken over (deferFabricWindow returned false and NeoForge ran both
      * steps inline), so there is nothing pending and this is a no-op.
      */
+    /**
+     * {@return whether a Fabric client window is going to close the built-in registries later}
+     *
+     * <p>Consulted by the guard injected in front of {@code BuiltInRegistries.bootStrap}'s own freeze.
+     */
+    public static boolean shouldDeferBuiltInRegistriesFreeze() {
+        if (!net.neoforged.fabricbridge.FabricBridge.hasFabricMods()) {
+            return false;
+        }
+        // The vanilla freeze runs before the platform's registration pass, and wover/BetterX's freeze-time
+        // definition loaders build attribute suppliers there - against NeoForge holders that are still
+        // unbound ("Trying to access unbound value: neoforge:swim_speed"). It also binds the bootstrapped
+        // (empty) tags, which every later freeze requires; the tags are bound here so skipping the freeze
+        // does not leave the registries with pending tags.
+        bindBootstrappedTagsToEmpty();
+        return true;
+    }
+
+    /** Binds the empty bootstrapped tags of every built-in registry, the step BuiltInRegistries.freeze does first. */
+    private static void bindBootstrappedTagsToEmpty() {
+        try {
+            var loader = Thread.currentThread().getContextClassLoader();
+            var registries = Class.forName("net.minecraft.core.registries.BuiltInRegistries", false, loader);
+            var rootRegistry = registries.getField("REGISTRY").get(null);
+            java.lang.reflect.Method bind = null;
+            for (var method : registries.getDeclaredMethods()) {
+                if ("bindBootstrappedTagsToEmpty".equals(method.getName()) && method.getParameterCount() == 1) {
+                    bind = method;
+                    break;
+                }
+            }
+            if (bind == null || !(rootRegistry instanceof Iterable<?> values)) {
+                return;
+            }
+            bind.setAccessible(true);
+            for (var registry : values) {
+                bind.invoke(null, registry);
+            }
+        } catch (Throwable t) {
+            org.slf4j.LoggerFactory.getLogger("NeoFobric").debug("[NeoFobric] Could not bind the bootstrapped tags before deferring the freeze", t);
+        }
+    }
+
     public static void freezeRegistriesAfterBootstrap() {
         // Before the window is dropped: the registry set is complete here, and Fabric's own checks read the
         // attribute when the server starts.
@@ -898,6 +951,17 @@ public final class FabricBridgeHooks {
         pendingFabricWindow = null;
         try {
             dropUnregisteredIntrusiveHolders();
+            // NeoForge's attribute pass runs directly behind the Fabric entrypoints, before the registries
+            // close: it copies the attribute map the entrypoints wrote into the vanilla holder set. BetterX's
+            // freeze-time definition loaders build attribute suppliers (LivingEntity's default set includes
+            // neoforge:swim_speed), and with the pass not yet run those holders are still unbound - every
+            // such supplier then dies with "Trying to access unbound value" during the freeze. It is a plain
+            // map copy and safe to run again.
+            try {
+                fabricWindow.rebaseAttributes().run();
+            } catch (Throwable t) {
+                LOGGER.error("[NeoFobric] Failed to rebase the attributes before the freeze", t);
+            }
             fabricWindow.freeze().run();
             LOGGER.info("[NeoFobric] Registries frozen after the second bootstrap");
             markBuiltInRegistriesSynced();

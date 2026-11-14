@@ -108,6 +108,15 @@ public final class MixinHandlerDescriptorFixer {
 
         var changed = false;
         for (var handler : node.methods) {
+            // A handler that declares MixinExtras sugar ({@Local}, {@Share}, ...) must not be reordered: the
+            // sugar engine strips those parameters from the descriptor and restores them around the
+            // injection, and a rewrite done here leaves its bookkeeping describing a different parameter
+            // list - the generated bridge then reads slots the stripped descriptor does not have, which is
+            // a VerifyError on the game class (fabric-resource-conditions' and Create's {@WrapOperation}
+            // handlers both died that way). Leave them to MixinExtras.
+            if (declaresSugar(handler)) {
+                continue;
+            }
             var injector = findPositionalInjector(handler);
             if (injector == null) {
                 continue;
@@ -161,6 +170,26 @@ public final class MixinHandlerDescriptorFixer {
      *
      * @return whether the handler descriptor was rewritten
      */
+    /** {@return whether the handler declares MixinExtras sugar parameters} */
+    private static boolean declaresSugar(MethodNode handler) {
+        for (var lists : java.util.Arrays.asList(handler.visibleParameterAnnotations, handler.invisibleParameterAnnotations)) {
+            if (lists == null) {
+                continue;
+            }
+            for (var annotations : lists) {
+                if (annotations == null) {
+                    continue;
+                }
+                for (var annotation : annotations) {
+                    if (annotation.desc != null && annotation.desc.startsWith("Lcom/llamalad7/mixinextras/sugar/")) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     private static boolean reorder(MethodNode handler, MethodNode target) {
         var handlerArgs = Type.getArgumentTypes(handler.desc);
         var targetArgs = Type.getArgumentTypes(target.desc);

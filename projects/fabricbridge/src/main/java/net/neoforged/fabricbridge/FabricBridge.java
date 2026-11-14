@@ -296,6 +296,17 @@ public final class FabricBridge {
         }
     }
 
+    /** Initialises a class on the Fabric side when the mod that owns it is installed. */
+    private static void preinitialiseIfPresent(String className) {
+        try {
+            Class.forName(className, true,
+                    net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader());
+            LOGGER.info("[NeoFobric] Pre-initialised {}", className);
+        } catch (Throwable t) {
+            LOGGER.info("[NeoFobric] No {} to pre-initialise: {}", className, t.toString());
+        }
+    }
+
     /**
      * Invokes every entrypoint of the given stage, isolating failures: one broken entrypoint is
      * logged and skipped instead of aborting the whole loading process. Fabric API modules with
@@ -303,6 +314,13 @@ public final class FabricBridge {
      * "feature unavailable" instead of taking the game down.
      */
     private static <T> void invokeIsolated(String key, Class<T> type, java.util.function.Consumer<? super T> invoker) {
+        if ("client".equals(key)) {
+            var ids = new java.util.ArrayList<String>();
+            for (var c : FabricLoaderImpl.INSTANCE.getEntrypointContainers(key, type)) {
+                ids.add(c.getProvider().getMetadata().getId());
+            }
+            LOGGER.info("[NeoFobric] Client entrypoint order: {}", ids);
+        }
         var containers = new java.util.ArrayList<>(FabricLoaderImpl.INSTANCE.getEntrypointContainers(key, type));
         net.neoforged.fabricbridge.compbridlnk.SodiumCompat.pinBeforeIndigo(containers);
         for (var container : containers) {

@@ -2603,6 +2603,7 @@ public final class MixinJarPatcher {
             handler.signature = null;
             handler.maxLocals += addedSlots;
             handler.desc = Type.getMethodDescriptor(Type.getReturnType(handler.desc), newArgs);
+            padParameterAnnotations(handler);
 
             if (annotationNeedsDesc) {
                 for (var i = 0; i + 1 < inject.values.size(); i += 2) {
@@ -3162,7 +3163,15 @@ public final class MixinJarPatcher {
             "net/fabricmc/fabric/mixin/resource/ServerConfigurationPacketListenerImplMixin",
             java.util.Map.of("startConfiguration", "runConfiguration"),
             "net/fabricmc/fabric/mixin/entity/event/ServerPlayerMixin",
-            java.util.Map.of("startSleepInBed", "lambda$startSleepInBed$0"));
+            java.util.Map.of("startSleepInBed", "lambda$startSleepInBed$0"),
+            // NeoForge moved the parse loop of SimpleJsonResourceReloadListener#prepare into the static
+            // scanDirectory helper; Fabric's resource-conditions WrapOperation stayed anchored on the
+            // prepare-time Codec.parse, found no callsite and left a MixinExtras bridge behind that read
+            // the sugar slot the target frame no longer had - VerifyError on the game class the moment it
+            // loaded (fabric-api alone reproduces it). scanDirectory carries the same call and the same
+            // "entry" local the handler captures.
+            "net/fabricmc/fabric/mixin/resource/conditions/SimpleJsonResourceReloadListenerMixin",
+            java.util.Map.of("prepare", "scanDirectory"));
 
     /**
      * The menu API's {@code openMenu} hook is <em>not</em> in the table above on purpose.
@@ -3182,6 +3191,138 @@ public final class MixinJarPatcher {
      *
      * @return the class bytes with the method names retargeted, or the original when nothing needed to change
      */
+    /**
+     * Removes injector handlers whose target method does not exist on the mixin's targets at all.
+     *
+     * <p>MixinExtras strips a handler's sugar parameters from its descriptor before the injector runs and
+     * restores them afterwards. A handler whose selector names a method this build does not have is never
+     * reached by the injector, so that restore never happens - and the bridge MixinExtras generated for it
+     * still reads the sugar slots, which the JVM rejects with {@code VerifyError: Bad local variable type}
+     * on the game class. Create's Fabric build targets {@code Hud.renderMainHud}, a method NeoForge's HUD
+     * patch replaced with per-layer {@code extract*} methods; every Fabric mixin that injects into it killed
+     * the client this way. Such a handler can never fire, so it is dropped here instead of being left for
+     * MixinExtras to half-apply. Targets that exist only on a superclass or interface are kept.
+     *
+     * @return the rewritten class bytes, or {@code null} when nothing matched
+     */
+    private static byte[] dropUnresolvableInjectorHandlers(byte[] classBytes, String entryName,
+            java.util.function.Function<String, byte[]> targetBytecode) {
+        if (Boolean.getBoolean("neofobric.noHandlerFix")) {
+            return null;
+        }
+        if (!entryName.endsWith(".class")) {
+            return null;
+        }
+        ClassNode node;
+        try {
+            node = new ClassNode();
+            new ClassReader(classBytes).accept(node, 0);
+        } catch (Throwable t) {
+            return null;
+        }
+        var targets = mixinTargets(node);
+        if (targets.isEmpty()) {
+            return null;
+        }
+        // Every method name reachable from the targets, with the descriptors in the same walk: a name-only
+        // selector accepts any descriptor, a selector with a descriptor must find that one.
+        var names = new java.util.HashSet<String>();
+        var descriptors = new java.util.HashSet<String>();
+        var seen = new java.util.HashSet<String>();
+        var queue = new java.util.ArrayDeque<String>(targets);
+        while (!queue.isEmpty()) {
+            var target = queue.poll();
+            if (!seen.add(target)) {
+                continue;
+            }
+            var bytes = targetBytecode.apply(target);
+            if (bytes == null) {
+                continue;
+            }
+            ClassNode targetNode;
+            try {
+                targetNode = new ClassNode();
+                new ClassReader(bytes).accept(targetNode, ClassReader.SKIP_FRAMES | ClassReader.SKIP_DEBUG);
+            } catch (Throwable t) {
+                continue;
+            }
+            for (var method : targetNode.methods) {
+                names.add(method.name);
+                descriptors.add(method.name + method.desc);
+            }
+            if (targetNode.superName != null) {
+                queue.add(targetNode.superName);
+            }
+            queue.addAll(targetNode.interfaces);
+        }
+        if (names.isEmpty()) {
+            return null;
+        }
+
+        var dropped = new java.util.ArrayList<String>();
+        var it = node.methods.iterator();
+        while (it.hasNext()) {
+            var handler = it.next();
+            if (handler.name.equals("<init>") || handler.name.equals("<clinit>")) {
+                continue;
+            }
+            var unresolvable = false;
+            for (var annotation : allAnnotationsOf(handler)) {
+                var selector = readStringValue(annotation, "method");
+                if (selector == null) {
+                    continue;
+                }
+                var name = selector;
+                var desc = "";
+                var open = selector.indexOf('(');
+                if (open >= 0) {
+                    name = selector.substring(0, open);
+                    desc = selector.substring(open);
+                }
+                var hash = name.indexOf('#');
+                if (hash >= 0) {
+                    name = name.substring(hash + 1);
+                }
+                var semi = name.indexOf(';');
+                if (semi >= 0) {
+                    name = name.substring(semi + 1);
+                }
+                // Constructors and static initialisers use wildcard selectors ("<clinit>*") and are never
+                // "missing": Mixin resolves them against the class itself. Fabric's default attribute map
+                // hook is exactly such a handler.
+                if (name.startsWith("<init>") || name.startsWith("<clinit>")) {
+                    continue;
+                }
+                // A synthetic lambda can be renumbered by the platform patches; its absence by name says
+                // nothing about whether the anchor moved or vanished, and the moved-anchor passes own that
+                // case. Dropping here would silently remove working injections (Fabric's default attribute
+                // map turn-into-mutable hook is one of them).
+                if (name.startsWith("lambda$")) {
+                    continue;
+                }
+                if (!desc.isEmpty()) {
+                    if (!descriptors.contains(name + desc)) {
+                        unresolvable = true;
+                        break;
+                    }
+                } else if (!names.contains(name)) {
+                    unresolvable = true;
+                    break;
+                }
+            }
+            if (unresolvable) {
+                dropped.add(handler.name + handler.desc);
+                it.remove();
+            }
+        }
+        if (dropped.isEmpty()) {
+            return null;
+        }
+        LOGGER.info("[NeoFobric] Dropped {} injector handler(s) whose target method does not exist in this build"
+                + " from {}: {}", dropped.size(), entryName.replace('/', '.'), dropped);
+        return writeClass(node);
+    }
+
     private static byte[] retargetInjectionMethods(byte[] classBytes, String entryName,
             java.util.function.Function<String, byte[]> targetBytecode) {
         if (!entryName.endsWith(".class")) {
@@ -3458,6 +3599,7 @@ public final class MixinJarPatcher {
         }
         handler.desc = newDesc;
         if (handler.localVariables != null) {
+        padParameterAnnotations(handler);
             var it = handler.localVariables.iterator();
             while (it.hasNext()) {
                 var local = it.next();
@@ -4704,6 +4846,7 @@ public final class MixinJarPatcher {
             handler.maxLocals += addedSlots;
             handler.desc = Type.getMethodDescriptor(Type.getReturnType(handler.desc), newArgs);
             // The array the handler passes to Operation.call is built with the old arity; grow it and hand
+            padParameterAnnotations(handler);
             // the appended parameters over at the end, where the wrapped method expects them.
             if (!extendOperationCallArray(handler, prefix.length, missing, isStatic, addedSlots)) {
                 // Put the method back the way it was: a handler whose call would still have the old arity
@@ -4889,6 +5032,34 @@ public final class MixinJarPatcher {
         return null;
     }
 
+    /**
+     * Pads a method's parameter-annotation arrays to its descriptor's parameter count.
+     *
+     * <p>ASM writes as many parameter-annotation entries as the descriptor has parameters and indexes the
+     * array for each of them; a pass that widens a method's descriptor without growing the arrays makes it
+     * throw {@code ArrayIndexOutOfBoundsException: Index 1 out of bounds for length 1} while serialising the
+     * class, which surfaces as an opaque crash while the game class loads.
+     */
+    static void padParameterAnnotations(MethodNode method) {
+        var count = Type.getArgumentTypes(method.desc).length;
+        method.visibleParameterAnnotations = pad(method.visibleParameterAnnotations, count);
+        method.invisibleParameterAnnotations = pad(method.invisibleParameterAnnotations, count);
+    }
+
+    private static java.util.List<org.objectweb.asm.tree.AnnotationNode>[] pad(
+            java.util.List<org.objectweb.asm.tree.AnnotationNode>[] annotations, int count) {
+        if (annotations == null) {
+            return null;
+        }
+        if (annotations.length == count) {
+            return annotations;
+        }
+        @SuppressWarnings("unchecked")
+        var padded = (java.util.List<org.objectweb.asm.tree.AnnotationNode>[]) new java.util.List<?>[count];
+        System.arraycopy(annotations, 0, padded, 0, Math.min(annotations.length, count));
+        return padded;
+    }
+
     private static void widenHandler(MethodNode handler, AnnotationNode inject, MethodNode delegatee, Type[] targetParams) {
         var oldArgs = Type.getArgumentTypes(handler.desc);
         var delegateeArgs = Type.getArgumentTypes(delegatee.desc);
@@ -4923,6 +5094,7 @@ public final class MixinJarPatcher {
         }
         handler.maxLocals += addedSlots;
         handler.desc = Type.getMethodDescriptor(Type.VOID_TYPE, newArgs);
+        padParameterAnnotations(handler);
 
         // Point the annotation at the method the handler was widened for, by descriptor. Constructors carry
         // "<init>" in front of theirs; a method carries its own name - writing "<init>" for a method produced
@@ -6608,6 +6780,11 @@ public final class MixinJarPatcher {
                 var movedAnchorsRetargeted = retargetMovedAnchors(versionMoved, entry.getName(), resolver);
                 if (movedAnchorsRetargeted != null) {
                     versionMoved = movedAnchorsRetargeted;
+                    patched.put(entry.getName(), versionMoved);
+                }
+                var unresolvableHandlersDropped = dropUnresolvableInjectorHandlers(versionMoved, entry.getName(), resolver);
+                if (unresolvableHandlersDropped != null) {
+                    versionMoved = unresolvableHandlersDropped;
                     patched.put(entry.getName(), versionMoved);
                 }
                 var wrapConditionOverloadRealigned = net.neoforged.fabricbridge.compbridlnk.ViaFabricPlusCompat.realignWrapConditionOverload(versionMoved, entry.getName());

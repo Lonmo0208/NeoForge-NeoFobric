@@ -51,6 +51,11 @@ public final class FabricJarRegistry {
         FOREIGN_MOD_PATHS.add(path);
     }
 
+    /** {@return the jars the bridge left to FML, as paths} */
+    public static java.util.Set<Path> foreignModPaths() {
+        return java.util.Set.copyOf(FOREIGN_MOD_PATHS);
+    }
+
     /** {@return whether this exact jar was left to FML} */
     public static boolean isForeignModPath(Path path) {
         return FOREIGN_MOD_PATHS.contains(path);
