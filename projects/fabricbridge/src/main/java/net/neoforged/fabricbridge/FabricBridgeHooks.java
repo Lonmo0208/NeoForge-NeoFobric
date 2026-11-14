@@ -154,6 +154,16 @@ public final class FabricBridgeHooks {
      * events: the bridge does not bundle Fabric API, and a minimal install may not have it.
      */
     public static void clientTick() {
+        // Safety net for the registry window: the freeze is normally closed by the tail hook on
+        // Bootstrap.bootStrap(), which Fabric API re-runs from its Minecraft-constructor mixin. A path
+        // that never takes that second bootstrap (the client gametest harness is one) used to leave the
+        // window open, so no frozen registry snapshot existed and quitting to the title screen died with
+        // "Cannot invoke Map.forEach(...) because snapshots is null" (RegistryManager.revertToFrozen).
+        // By the first tick every constructor is through, so closing here is always safe; once the window
+        // has been closed the check below keeps this off the tick path.
+        if (pendingFabricWindow != null) {
+            freezeRegistriesAfterBootstrap();
+        }
         net.neoforged.fabricbridge.compbridlnk.SodiumConfigApiLink.clientTick();
     }
 

@@ -52,13 +52,20 @@ public final class ConfigSync {
             configsToSync.put(connection, new LinkedHashMap<>());
         }
 
-        final Map<String, byte[]> configData = ModConfigs.getConfigSet(ModConfig.Type.SYNCED).stream().collect(Collectors.toMap(ModConfig::getFileName, mc -> {
-            try {
-                return Files.readAllBytes(mc.getFullPath());
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        }));
+        final Map<String, byte[]> configData = ModConfigs.getConfigSet(ModConfig.Type.SYNCED).stream()
+                // NeoFobric: a config can exist without a file behind it - the bridge creates the config
+                // objects a Fabric mod's screen expects, and a runtime-only config has no path. There is
+                // nothing to read or sync for those, and getFullPath() returning null used to turn the
+                // configuration phase of every connection into a "path.getFileSystem()" NPE (the client
+                // gametest suite's dedicated-server test died on it).
+                .filter(mc -> mc.getFullPath() != null)
+                .collect(Collectors.toMap(ModConfig::getFileName, mc -> {
+                    try {
+                        return Files.readAllBytes(mc.getFullPath());
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }));
 
         for (var entry : configData.entrySet()) {
             listener.send(new ConfigFilePayload(entry.getKey(), entry.getValue()));

@@ -3300,6 +3300,13 @@ public final class MixinJarPatcher {
                 if (name.startsWith("lambda$")) {
                     continue;
                 }
+                // A wildcard selector names no single method, so its absence from the target's method list
+                // proves nothing. Fabric's Enchantment.Builder hook uses "*" to mark the builder dirty after
+                // any setter; dropping it silently disabled every enchantment change made through
+                // EnchantmentEvents (the gametest suite's weird_impaling cases caught it).
+                if (name.indexOf('*') >= 0) {
+                    continue;
+                }
                 if (!desc.isEmpty()) {
                     if (!descriptors.contains(name + desc)) {
                         unresolvable = true;

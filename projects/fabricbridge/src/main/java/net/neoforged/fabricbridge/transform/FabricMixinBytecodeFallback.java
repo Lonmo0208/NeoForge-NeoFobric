@@ -97,11 +97,45 @@ public final class FabricMixinBytecodeFallback implements IClassBytecodeProvider
         }
         var bytes = fabricClassBytes(name);
         if (bytes == null) {
+            // The platform provider also refuses classes that are not ready through the module layer
+            // yet, even though a plain classloader can already hand out their bytes. Fabric API's
+            // tooltip-order scrape asks for ItemStack from its client entrypoint, which runs inside
+            // Minecraft's constructor; without this second attempt that lookup died with
+            // ClassNotFoundException and the class initialiser stayed broken for the whole run.
+            bytes = loaderClassBytes(name);
+        }
+        if (bytes == null) {
             throw new ClassNotFoundException(name);
         }
         var node = new ClassNode();
         new ClassReader(bytes).accept(node, readerFlags);
         return node;
+    }
+
+    /** {@return the class bytes from whichever class loader can reach them, or {@code null}} */
+    private static byte[] loaderClassBytes(String name) {
+        var resource = name.replace('.', '/') + ".class";
+        var loaders = new java.util.LinkedHashSet<ClassLoader>();
+        loaders.add(Thread.currentThread().getContextClassLoader());
+        try {
+            loaders.add(net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader());
+        } catch (Throwable ignored) {
+            // Fabric loader is not up yet.
+        }
+        loaders.add(FabricMixinBytecodeFallback.class.getClassLoader());
+        for (var loader : loaders) {
+            if (loader == null) {
+                continue;
+            }
+            try (var in = loader.getResourceAsStream(resource)) {
+                if (in != null) {
+                    return in.readAllBytes();
+                }
+            } catch (Throwable ignored) {
+                // Try the next loader.
+            }
+        }
+        return null;
     }
 
     /** {@return the class bytes from a discovered Fabric jar, or {@code null}} */
