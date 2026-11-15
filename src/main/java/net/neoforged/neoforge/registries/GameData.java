@@ -79,6 +79,17 @@ public class GameData {
     public static void freezeData() {
         LOGGER.debug(REGISTRIES, "Freezing registries");
         BuiltInRegistries.REGISTRY.stream().filter(r -> r instanceof MappedRegistry).forEach(r -> {
+            // NeoFobric: this freeze can be reached more than once. The bridge holds a Fabric registry
+            // window past NeoForge's own close point, and by the time that window closes the second
+            // bootstrap's BuiltInRegistries freeze - or Fabric's registry sync - may already have closed
+            // some registries. Re-binding their tags throws "Registry is already frozen" out of
+            // validateWrite *before* the snapshot below, which left the client with no frozen snapshot at
+            // all ("Cannot invoke Map.forEach(...) because snapshots is null" on the next disconnect).
+            // A registry that is closed already has nothing left to do here.
+            if (((MappedRegistry<?>) r).isFrozen()) {
+                return;
+            }
+
             // HolderSet.Named may be used for registry objects, vanilla binds these tags so freeze doesn't throw for unbound tags
             ((MappedRegistry<?>) r).bindAllTagsToEmpty();
             ((MappedRegistry<?>) r).freeze();

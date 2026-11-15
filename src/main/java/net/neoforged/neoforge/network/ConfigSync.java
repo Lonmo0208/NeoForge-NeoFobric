@@ -52,7 +52,12 @@ public final class ConfigSync {
             configsToSync.put(connection, new LinkedHashMap<>());
         }
 
-        final Map<String, byte[]> configData = ModConfigs.getConfigSet(ModConfig.Type.SERVER).stream().collect(Collectors.toMap(ModConfig::getFileName, mc -> {
+        // NeoFobric: a config can exist without a file. Fabric mods routinely register a config spec but
+        // never ship a file (it is created lazily, and some are purely in-memory); getFullPath() is null for
+        // those and readAllBytes threw an NPE, which aborted the whole server-config sync. Skipping them is
+        // what Fabric does - there is nothing to send.
+        final Map<String, byte[]> configData = ModConfigs.getConfigSet(ModConfig.Type.SERVER).stream()
+                .filter(mc -> mc.getFullPath() != null).collect(Collectors.toMap(ModConfig::getFileName, mc -> {
             try {
                 return Files.readAllBytes(mc.getFullPath());
             } catch (IOException e) {
