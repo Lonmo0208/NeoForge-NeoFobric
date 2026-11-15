@@ -1067,21 +1067,47 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                     continue;
                 }
                 var nested = zip.getInputStream(entry).readAllBytes();
-                var toml = readEntryTextFromZip(nested, "META-INF/neoforge.mods.toml");
-                if (toml == null) {
-                    continue;
-                }
                 var fabricModJson = readEntryTextFromZip(nested, "fabric.mod.json");
                 if (fabricModJson == null) {
                     continue;
                 }
                 var customInner = extractTopLevelCustomInner(fabricModJson);
+                var toml = readEntryTextFromZip(nested, "META-INF/neoforge.mods.toml");
                 if (customInner == null) {
+                    continue;
+                }
+                if (toml == null) {
+                    // A Fabric-only library nested in a platform mod. FML loads it as a game library, but
+                    // Fabric-side custom-value lookups (Tapestry reads every mod's "tapestry" block while
+                    // selecting its platform implementation) never see it: the loader's nested-mod pass
+                    // only runs for Fabric parents, and this parent is a platform shell. Expose it as its
+                    // own Fabric view mod so those lookups answer, which is what Camerapture needs.
+                    var idMatcher = java.util.regex.Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"").matcher(fabricModJson);
+                    if (!idMatcher.find()) {
+                        continue;
+                    }
+                    var id = idMatcher.group(1);
+                    if (id.isEmpty() || blocked.contains(id) || !MOD_ID.matcher(id).matches()) {
+                        continue;
+                    }
+                    var versionMatcher = java.util.regex.Pattern.compile("\"version\"\\s*:\\s*\"([^\"]+)\"")
+                            .matcher(fabricModJson);
+                    var version = versionMatcher.find() ? sanitizeFabricVersion(versionMatcher.group(1)) : "unspecified";
+                    var nameMatcher = java.util.regex.Pattern.compile("\"name\"\\s*:\\s*\"([^\"]+)\"").matcher(fabricModJson);
+                    var displayName = nameMatcher.find() ? nameMatcher.group(1) : id;
+                    writePlatformModJar(view.resolve("neofobric-platform-" + id + ".jar"), id, version,
+                            displayName, customInner, null, exposed);
                     continue;
                 }
                 for (var mod : parseForgeModsDotToml(toml)) {
                     var id = mod[0];
-                    if (id.isEmpty() || blocked.contains(id) || claimed.contains(id) || !MOD_ID.matcher(id).matches()) {
+                    // No "claimed" test here: the bridge's own discovery claims the nested Fabric jars of a
+                    // platform mod (they have to join the composite module), but fabric-loader never sees
+                    // them - the loader's nested-mod pass only runs for Fabric parents, and this parent is
+                    // a platform shell. Its custom values then stay invisible to Fabric-side lookups
+                    // (Tapestry inside Camerapture reads its own "tapestry" block that way), so the id being
+                    // claimed is exactly the situation this exposure exists for.
+                    if (id.isEmpty() || blocked.contains(id) || !MOD_ID.matcher(id).matches()) {
                         continue;
                     }
                     // Same flavour rule as the top-level jars: the toml's [modproperties] name the
@@ -2243,6 +2269,12 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
 
     private static void collectPackages(java.util.zip.ZipFile zip, int depth) throws IOException {
         var nested = new java.util.ArrayList<java.util.zip.ZipEntry>();
+        // Nested jars FML's JarJar loads into its own layer, whatever their own metadata says. They are
+        // FML-side content even when they carry a fabric.mod.json (Loom generates one into every library
+        // jar, so the bridge would otherwise also take them into the composite and the two modules then
+        // export the same package: "Modules tapestry and neofobric.fabric.mods export package
+        // me.chrr.tapestry.base.neoforge").
+        var fmlJarjar = fmlJarjarPaths(zip);
         var entries = zip.entries();
         while (entries.hasMoreElements()) {
             var entry = entries.nextElement();
@@ -2274,7 +2306,13 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                     // those interfaces then died with NoClassDefFoundError (Distant Horizons ships the whole
                     // Fabric API under META-INF/jars/, and that hid fabric-block-getter's FabricBlockGetter
                     // from the composite while Fabric's BlockGetterMixin kept adding it to BlockGetter).
-                    if (inner.getEntry(FabricJarRegistry.FABRIC_MOD_JSON) != null) {
+                    // The exception is a nested jar that declares an FML mod type: FML loads those into its
+                    // own layer as a game library even when they carry a fabric.mod.json, and their packages
+                    // then clash with the composite's copy of the same library
+                    // ("Modules neofobric.fabric.mods and parser export package org.redlance.mocha.parser.ast",
+                    // PlayerAnimationLibMerged nests the Loom-generated redlance libraries).
+                    if (inner.getEntry(FabricJarRegistry.FABRIC_MOD_JSON) != null
+                            && !declaresFmlModType(inner) && !fmlJarjar.contains(entry.getName())) {
                         continue;
                     }
                     collectPackages(inner, depth + 1);
@@ -2290,6 +2328,39 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                     }
                 }
             }
+        }
+    }
+
+    /** {@return whether the nested jar declares an FML mod type, so FML loads it into its own layer} */
+    private static boolean declaresFmlModType(java.util.zip.ZipFile inner) {
+        var manifest = inner.getEntry("META-INF/MANIFEST.MF");
+        if (manifest == null) {
+            return false;
+        }
+        try (var in = inner.getInputStream(manifest)) {
+            var text = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.ISO_8859_1);
+            return text.contains("FMLModType:");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** {@return the nested jar paths the jar's FML JarJar metadata declares} */
+    private static java.util.Set<String> fmlJarjarPaths(java.util.zip.ZipFile zip) {
+        var metadata = zip.getEntry("META-INF/jarjar/metadata.json");
+        if (metadata == null) {
+            return java.util.Set.of();
+        }
+        try (var in = zip.getInputStream(metadata)) {
+            var text = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            var paths = new java.util.LinkedHashSet<String>();
+            var matcher = java.util.regex.Pattern.compile("\"path\"\\s*:\\s*\"([^\"]+)\"").matcher(text);
+            while (matcher.find()) {
+                paths.add(matcher.group(1));
+            }
+            return paths;
+        } catch (Exception e) {
+            return java.util.Set.of();
         }
     }
 
