@@ -46,6 +46,14 @@ public abstract class CommonModLoader {
     protected static void begin(Runnable periodicTask, boolean datagen) {
         var syncExecutor = ModWorkManager.syncExecutor();
 
+        // NeoFobric: build fabric-loader's mod list before any mod is constructed. NeoForge mods can
+        // consult it from their own static initialisers - a mod bundling the Tapestry library reads
+        // every mod's "tapestry" custom block from FabricLoader.getAllMods() while registering content,
+        // and an unbooted loader made that list empty, which aborted the launch with "No entrypoints
+        // found for tapestry:platform_methods". Only the mod list and the class-tweaker rules move
+        // here; the Fabric entrypoints still run from the client window, where Fabric runs them.
+        net.neoforged.fabricbridge.FabricBridge.bootEarly();
+
         // NeoFobric: Fabric loader constructs mods on the calling thread. Some Fabric mods mutate
         // shared maps from their constructors without synchronisation - amecs' key-modifier layer
         // registers every KeyMapping in a plain HashMap - so NeoForge's parallel construction turns

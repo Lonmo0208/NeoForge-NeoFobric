@@ -28,6 +28,7 @@ public final class FabricBridge {
 
     private static final Object BOOT_LOCK = new Object();
     private static volatile boolean booted;
+    private static volatile boolean hooksInstalled;
     private static volatile boolean entrypointsInvoked;
     private static volatile boolean clientEntrypointsInvoked;
 
@@ -115,56 +116,87 @@ public final class FabricBridge {
         }
     }
 
-    public static void bootIfNeeded() {
+    /**
+     * Constructs and freezes fabric-loader's mod list before any mod is constructed.
+     *
+     * <p>This is not where the Fabric entrypoints run - those still run from the client window, where
+     * Fabric itself runs them. The mod list is needed earlier than that because NeoForge mods may ask
+     * fabric-loader about the installed mods from their own static initialisers: a mod bundling the
+     * Tapestry library reads every mod's {@code tapestry} custom block from
+     * {@code FabricLoader.getAllMods()} while NeoForge registers its content, and with the loader still
+     * unbooted that list was empty - Tapestry then threw "No entrypoints found for
+     * tapestry:platform_methods" and took the whole launch down (Camerapture). Booting here makes the
+     * mod list and the class-tweaker rules exist before the first mod constructs; the hooks that need
+     * the game classes stay in {@link #bootIfNeeded()}.
+     */
+    public static void bootEarly() {
         if (booted || !hasFabricMods()) {
             return;
         }
-
         synchronized (BOOT_LOCK) {
             if (booted) {
                 return;
             }
+            loadFabricMods();
+        }
+    }
 
-            var start = System.currentTimeMillis();
-            ensureLauncherRegistered();
+    public static void bootIfNeeded() {
+        if (!hasFabricMods()) {
+            return;
+        }
 
-            // Before the loader logs anything of its own: its builtin handler buffers instead of printing,
-            // so without this the "Loading N mod(s)" block stays invisible until the shutdown hook dumps it
-            // into fabricloader.log - the one line a Fabric user looks for, missing from console and
-            // latest.log. Log.init replays what the buffer already holds, so nothing logged before this
-            // point is lost.
-            BridgedLogHandler.install();
-
-            try {
-                FabricLoaderImpl.INSTANCE.load();
-                FabricLoaderImpl.INSTANCE.freeze();
-            } catch (net.fabricmc.loader.impl.FormattedException e) {
-                // The loader could not resolve the installed mods (a missing dependency being the everyday
-                // case). Fabric's own launcher would show its error window here; report it the same way
-                // and never continue with a half-booted loader.
-                reportFabricLoadFailure(e);
-                throw e;
+        synchronized (BOOT_LOCK) {
+            if (!booted) {
+                loadFabricMods();
             }
-            booted = true;
+            if (hooksInstalled) {
+                return;
+            }
+            hooksInstalled = true;
             installFabricChannelDecodeHook();
             installFabricRegistrySyncHook();
-
-            // Read every mod's access widener / class tweaker into Fabric's own ClassTweaker. Knot does
-            // this as part of its launch and nothing else does, so without this call the rules stay
-            // empty and any mod that widens or un-finals a game class fails later - iris declares
-            // "extendable class net/minecraft/client/OptionInstance" and dies defining its subclass
-            // with "cannot inherit from final class". NeoFobricClassTweakerProcessor applies the rules
-            // to the game classes as FML transforms them.
-            try {
-                FabricLoaderImpl.INSTANCE.loadClassTweakers();
-                registerEnumExtensionTargets();
-            } catch (Throwable t) {
-                LOGGER.error("[NeoFobric] Failed to read the Fabric access wideners; mods that widen game classes will misbehave", t);
-            }
-
-            LOGGER.info("[NeoFobric] Fabric Loader {} started with {} Fabric mod(s) in {} ms",
-                    FabricLoaderImpl.VERSION, FabricLoaderImpl.INSTANCE.getAllMods().size(), System.currentTimeMillis() - start);
         }
+    }
+
+    private static void loadFabricMods() {
+        var start = System.currentTimeMillis();
+        ensureLauncherRegistered();
+
+        // Before the loader logs anything of its own: its builtin handler buffers instead of printing,
+        // so without this the "Loading N mod(s)" block stays invisible until the shutdown hook dumps it
+        // into fabricloader.log - the one line a Fabric user looks for, missing from console and
+        // latest.log. Log.init replays what the buffer already holds, so nothing logged before this
+        // point is lost.
+        BridgedLogHandler.install();
+
+        try {
+            FabricLoaderImpl.INSTANCE.load();
+            FabricLoaderImpl.INSTANCE.freeze();
+        } catch (net.fabricmc.loader.impl.FormattedException e) {
+            // The loader could not resolve the installed mods (a missing dependency being the everyday
+            // case). Fabric's own launcher would show its error window here; report it the same way
+            // and never continue with a half-booted loader.
+            reportFabricLoadFailure(e);
+            throw e;
+        }
+        booted = true;
+
+        // Read every mod's access widener / class tweaker into Fabric's own ClassTweaker. Knot does
+        // this as part of its launch and nothing else does, so without this call the rules stay
+        // empty and any mod that widens or un-finals a game class fails later - iris declares
+        // "extendable class net/minecraft/client/OptionInstance" and dies defining its subclass
+        // with "cannot inherit from final class". NeoFobricClassTweakerProcessor applies the rules
+        // to the game classes as FML transforms them.
+        try {
+            FabricLoaderImpl.INSTANCE.loadClassTweakers();
+            registerEnumExtensionTargets();
+        } catch (Throwable t) {
+            LOGGER.error("[NeoFobric] Failed to read the Fabric access wideners; mods that widen game classes will misbehave", t);
+        }
+
+        LOGGER.info("[NeoFobric] Fabric Loader {} started with {} Fabric mod(s) in {} ms",
+                FabricLoaderImpl.VERSION, FabricLoaderImpl.INSTANCE.getAllMods().size(), System.currentTimeMillis() - start);
     }
 
     /**

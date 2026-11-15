@@ -537,6 +537,7 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
                 || InjectedInterfaceSource.get().containsKey(name)
                 || ENUM_EXTENSION_TARGETS.contains(name)
                 || net.neoforged.fabricbridge.compbridlnk.OwoCompat.handlesClass(name)
+                || VANILLA_SHAPE_SHIMS.containsKey(name)
                 || isFabricClassTweakerTarget(name)
                 // Any class may be a descendant of a transitive-inject-interface target; the hierarchy
                 // check in processClass is what decides, and it is cached per class name.
@@ -562,7 +563,12 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         // One more decision before the early out: a class that inherits from a transitive
         // inject-interface target gets the interface here even though none of the other checks match.
         boolean transitiveChanged = applyTransitiveInjectedInterfaces(context.node());
-        if (!transitiveChanged && !DUCK_FALLBACKS.containsKey(context.node().name) && !isResourceImpl
+        // NeoForge re-shaped some vanilla static helpers (CropBlock#getGrowthSpeed now takes the crop's
+        // BlockState instead of its Block). A Fabric mod compiled against the vanilla shape calls the old
+        // descriptor and dies with NoSuchMethodError on the first tick that reaches it; the old shape is
+        // restored as an overload that adapts to the new one - see VANILLA_SHAPE_SHIMS.
+        boolean shimmedVanillaShapes = addVanillaShapeShims(context.node());
+        if (!transitiveChanged && !shimmedVanillaShapes && !DUCK_FALLBACKS.containsKey(context.node().name) && !isResourceImpl
                 && !ACCESSOR_FIELDS.containsKey(context.node().name)
                 && !FABRIC_CHANNEL_CLASSES.contains(context.node().name)
                 && !FABRIC_NETWORKING_IMPL.equals(context.node().name)
@@ -582,7 +588,7 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         }
 
         var node = context.node();
-        var changed = transitiveChanged;
+        var changed = transitiveChanged | shimmedVanillaShapes;
         // CompoundTag is defined before the Fabric mixin configs are prepared, so owo's mixin never sees it;
         // the tweaker adds the same MapCarrier methods while the class is still being transformed.
         if (net.neoforged.fabricbridge.compbridlnk.OwoCompat.handlesClass(node.name)) {
@@ -1169,6 +1175,77 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
             }
         }
         return null;
+    }
+
+    /** A vanilla static helper NeoForge re-shaped, as the descriptor a Fabric build still calls. */
+    private record VanillaShapeShim(String name, String oldDesc, String newFirstArg, String blockStateGetter) {}
+
+    /**
+     * Vanilla static helpers whose first parameter NeoForge changed to the block state.
+     *
+     * <p>A Fabric mod compiled against the vanilla shape emits {@code invokestatic <subclass>.<helper>} with
+     * the old descriptor; the JVM resolves it up the superclass chain and finds nothing, so the first tick
+     * that reaches the call dies with {@code NoSuchMethodError} - FarmersDelight's Fabric build crashed the
+     * integrated server the moment a tomato ticked. Restoring the old shape as an overload that adapts to
+     * the new one keeps the mod working without knowing which mod it is.
+     */
+    private static final Map<String, List<VanillaShapeShim>> VANILLA_SHAPE_SHIMS = Map.of(
+            "net/minecraft/world/level/block/CropBlock", List.of(
+                    // 26w14a: getGrowthSpeed(Block, BlockGetter, BlockPos) -> (BlockState, ...).
+                    new VanillaShapeShim("getGrowthSpeed",
+                            "(Lnet/minecraft/world/level/block/Block;Lnet/minecraft/world/level/block/BlockGetter;"
+                                    + "Lnet/minecraft/core/BlockPos;)F",
+                            "Lnet/minecraft/world/level/block/state/BlockState;", "defaultBlockState")));
+
+    /**
+     * Adds the vanilla-shaped overloads of {@link #VANILLA_SHAPE_SHIMS} to the class that lost them.
+     *
+     * @return whether a method was added
+     */
+    private static boolean addVanillaShapeShims(ClassNode node) {
+        var shims = VANILLA_SHAPE_SHIMS.get(node.name);
+        if (shims == null) {
+            return false;
+        }
+        var added = false;
+        for (var shim : shims) {
+            if (findMethod(node, shim.name, shim.oldDesc) != null) {
+                continue;
+            }
+            MethodNode reshaped = null;
+            for (var candidate : node.methods) {
+                if (!candidate.name.equals(shim.name) || (candidate.access & Opcodes.ACC_STATIC) == 0) {
+                    continue;
+                }
+                var arguments = org.objectweb.asm.Type.getArgumentTypes(candidate.desc);
+                if (arguments.length != 3 || !arguments[0].getDescriptor().equals(shim.newFirstArg)) {
+                    continue;
+                }
+                reshaped = candidate;
+                break;
+            }
+            if (reshaped == null) {
+                continue;
+            }
+            var shimMethod = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, shim.name, shim.oldDesc, null, null);
+            shimMethod.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            shimMethod.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                    "net/minecraft/world/level/block/Block", shim.blockStateGetter,
+                    "()" + shim.newFirstArg, false));
+            shimMethod.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+            shimMethod.instructions.add(new VarInsnNode(Opcodes.ALOAD, 2));
+            shimMethod.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
+                    node.name, reshaped.name, reshaped.desc, false));
+            shimMethod.instructions.add(new InsnNode(
+                    returnOpcode(org.objectweb.asm.Type.getReturnType(shim.oldDesc).getDescriptor())));
+            shimMethod.maxStack = 3;
+            shimMethod.maxLocals = 3;
+            node.methods.add(shimMethod);
+            LOGGER.info("[NeoFobric] Restored {}.{}{} (delegates to the re-shaped {}) for Fabric callers",
+                    node.name.replace('/', '.'), shim.name, shim.oldDesc, reshaped.desc);
+            added = true;
+        }
+        return added;
     }
 
     private static int returnOpcode(String fieldDesc) {
