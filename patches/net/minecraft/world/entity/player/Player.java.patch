@@ -109,7 +109,19 @@
          float speed = this.inventory.getSelectedItem().getDestroySpeed(state);
          if (speed > 1.0F) {
              speed += (float)this.getAttributeValue(Attributes.MINING_EFFICIENCY);
-@@ -606,7 +_,7 @@
+@@ -596,17 +_,13 @@
+         }
+ 
+         if (this.hasEffect(MobEffects.MINING_FATIGUE)) {
+-            float scale = switch (this.getEffect(MobEffects.MINING_FATIGUE).getAmplifier()) {
+-                case 0 -> 0.3F;
+-                case 1 -> 0.09F;
+-                case 2 -> 0.0027F;
+-                default -> 8.1E-4F;
+-            };
++            int amplifier = this.getEffect(MobEffects.MINING_FATIGUE).getAmplifier();
++            float scale = (float)Math.pow(0.3, amplifier + 1);
+             speed *= scale;
          }
  
          speed *= (float)this.getAttributeValue(Attributes.BLOCK_BREAK_SPEED);
