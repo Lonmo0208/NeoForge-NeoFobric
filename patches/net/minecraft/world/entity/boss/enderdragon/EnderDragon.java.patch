@@ -20,6 +20,15 @@
          this.processFlappingMovement();
          if (this.level().isClientSide()) {
              this.setHealth(this.getHealth());
+@@ -222,7 +_,7 @@
+                             ydd = Mth.clamp(ydd / horizontalDist, -max, max);
+                         }
+ 
+-                        this.setDeltaMovement(this.getDeltaMovement().add(0.0, ydd * 0.01, 0.0));
++                        this.setDeltaMovement(this.getDeltaMovement().add(0.0, ydd * 0.1, 0.0));
+                         this.setYRot(Mth.wrapDegrees(this.getYRot()));
+                         Vec3 aim = targetLocation.subtract(this.getX(), this.getY(), this.getZ()).normalize();
+                         Vec3 dir = new Vec3(
 @@ -437,7 +_,7 @@
                      BlockPos blockPos = new BlockPos(x, y, z);
                      BlockState state = level.getBlockState(blockPos);
