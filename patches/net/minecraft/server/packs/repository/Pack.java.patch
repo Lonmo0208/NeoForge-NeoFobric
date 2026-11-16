@@ -52,7 +52,7 @@
          this.location = location;
          this.resources = resources;
          this.metadata = metadata;
-@@ -64,7 +_,14 @@
+@@ -64,11 +_,35 @@
                  PackCompatibility packCompatibility = PackCompatibility.forVersion(meta.supportedFormats(), currentPackVersion);
                  OverlayMetadataSection overlays = pack.getMetadataSection(OverlayMetadataSection.forPackType(type));
                  List<String> overlaySet = overlays != null ? overlays.overlaysForVersion(currentPackVersion) : List.of();
@@ -68,6 +68,27 @@
              }
  
              return var11;
+         } catch (Exception var15) {
++            // NeoFobric: the metadata read also runs listener code mixed into this method by other mods
++            // (pack-metadata hooks). An exception from such a listener says nothing about the pack
++            // itself, yet vanilla's "return null" drops the pack - and with it every resource the pack
++            // provides (for a Fabric mod pack that is the mod's whole client assets directory, shaders
++            // included, which leaves any render pipeline it registers without shader sources). Keep the
++            // pack registered with a default, compatible metadata instead. IOException and
++            // JsonParseException still mean the pack itself could not be read: those keep vanilla's drop.
++            if (var15 instanceof RuntimeException && !(var15 instanceof JsonParseException)) {
++                LOGGER.warn("Failed to read pack {} metadata ({}), keeping the pack with default metadata", location.id(), var15);
++                return new Pack.Metadata(
++                        location.title(),
++                        PackCompatibility.forVersion(new net.minecraft.util.InclusiveRange<>(currentPackVersion), currentPackVersion),
++                        FeatureFlagSet.of(),
++                        List.<String>of(),
++                        false
++                );
++            }
+             LOGGER.warn("Failed to read pack {} metadata", location.id(), var15);
+             return null;
+         }
 @@ -126,6 +_,38 @@
          return this.location.source();
      }
