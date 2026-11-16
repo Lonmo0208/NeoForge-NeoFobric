@@ -20,12 +20,16 @@ import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.tree.FrameNode;
 import org.objectweb.asm.tree.IincInsnNode;
+import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
+import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LocalVariableNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
@@ -6345,6 +6349,30 @@ public final class MixinJarPatcher {
                                 .collect(java.util.stream.Collectors.joining(", "))
                                 + (platformShading.size() > 4 ? ", ..." : ""));
             }
+            // Interfaces declared in this jar. Fabric mods cast objects to their own "access" (duck)
+            // interfaces inside mixin handlers, and whether that cast succeeds depends on a companion
+            // mixin having woven the interface onto its target - which is never a given here, see
+            // guardDuckInterfaceCasts.
+            var jarInterfaces = new java.util.HashSet<String>();
+            {
+                var scan = zip.entries();
+                while (scan.hasMoreElements()) {
+                    var scanned = scan.nextElement();
+                    if (scanned.isDirectory() || !scanned.getName().endsWith(".class")) {
+                        continue;
+                    }
+                    try {
+                        var parsed = new ClassNode();
+                        new ClassReader(zip.getInputStream(scanned).readAllBytes()).accept(parsed, 0);
+                        if ((parsed.access & Opcodes.ACC_INTERFACE) != 0) {
+                            jarInterfaces.add(parsed.name);
+                        }
+                    } catch (Exception ignored) {
+                        // A class that cannot be parsed here contributes no interface; the passes below
+                        // report their own, more specific errors for it.
+                    }
+                }
+            }
             var it = zip.entries();
             while (it.hasMoreElements()) {
                 var entry = it.nextElement();
@@ -6826,6 +6854,11 @@ public final class MixinJarPatcher {
                 if (trimmed != null) {
                     source = trimmed;
                 }
+                // Last, so the guards wrap the final handler bodies the widening passes produced.
+                var duckGuarded = guardDuckInterfaceCasts(source, entry.getName(), jarInterfaces);
+                if (duckGuarded != null) {
+                    source = duckGuarded;
+                }
 
                 // One result, one write: every pass above feeds the next, so what they produced together is
                 // what goes into the jar. The precedence list this replaces could write an intermediate
@@ -6834,7 +6867,8 @@ public final class MixinJarPatcher {
                 // descriptor (and, in production, a method descriptor past the end of its constant pool).
                 if (realigned != null || retargeted != null || mergedList != null || stripped != null
                         || handlerStripped != null || callSitesMoved != null || renamed != null || fixed != null
-                        || returnableWidened != null || extended != null || appended != null || wrapsWidened != null || trimmed != null) {
+                        || returnableWidened != null || extended != null || appended != null || wrapsWidened != null
+                        || trimmed != null || duckGuarded != null) {
                     patched.put(entry.getName(), source);
                 }
             }
@@ -6939,6 +6973,106 @@ public final class MixinJarPatcher {
         }
         writePatchCache(jarPath, stamp, true);
         return patchedPath;
+    }
+
+    /**
+     * Guards the duck-interface casts inside Fabric mixin handlers so a companion mixin that can never
+     * weave here degrades instead of crashing the client.
+     *
+     * <p>A Fabric mod pairs a handler that casts an object to its own access ("duck") interface with a
+     * companion mixin implementing the interface on the cast's target type. The cast only succeeds when
+     * the companion wove - and on FML that is not a given: the mixin transformer only sees classes in the
+     * TRANSFORMER layer, so a companion whose target lives outside it (authlib is loaded from the plain
+     * application classpath here, unnamed and untransformed) never applies, and the raw handler then dies
+     * with a ClassCastException on a path the game runs for every signed-in account (the legacy profile
+     * key is tracked while the launcher session fetches its key pair; offline/dev sessions never reach
+     * that code, which is why the crash only ever appeared in a production install). When the guard
+     * catches, the handler simply steps out - the exact state the mod would be in if its companion had
+     * failed to apply on real Fabric, which mods written this way already tolerate: the tracked value
+     * stays absent and only the pre-1.19.1 signature-compat feature goes quiet.
+     *
+     * <p>The guard wraps the body of every void handler (the {@code @Inject} shape) containing a
+     * checkcast to an interface declared in the same jar in a try/catch(ClassCastException) whose
+     * handler just returns. A per-cast instanceof branch would need to unwind the operand stack to a
+     * depth that differs from site to site, so the exception route is used instead: the JVM clears the
+     * operand stack before entering the catch handler, which makes the exit correct no matter how deep
+     * the cast sat. Non-void handlers (Redirect, WrapOperation) are left alone - skipping those needs a
+     * return value to invent. Side effects before the failing cast stay applied, matching what a
+     * half-woven companion would have done.
+     */
+    private static byte[] guardDuckInterfaceCasts(byte[] classBytes, String entryName, java.util.Set<String> jarInterfaces) {
+        if (jarInterfaces.isEmpty()) {
+            return null;
+        }
+        try {
+            var node = new ClassNode();
+            new ClassReader(classBytes).accept(node, 0);
+            var guarded = 0;
+            for (var method : node.methods) {
+                if (method.name.startsWith("<") || !Type.getReturnType(method.desc).equals(Type.VOID_TYPE)) {
+                    continue;
+                }
+                // The catch handler has to exit through the method's void return; a handler that always
+                // throws has no valid exit for a skipped invocation. ASM keeps labels and line numbers
+                // after the return, so the real instruction is found by skipping those.
+                AbstractInsnNode lastReal = null;
+                for (var cursor = method.instructions.getLast(); cursor != null; cursor = cursor.getPrevious()) {
+                    if (cursor instanceof LabelNode || cursor instanceof FrameNode
+                            || cursor instanceof org.objectweb.asm.tree.LineNumberNode) {
+                        continue;
+                    }
+                    lastReal = cursor;
+                    break;
+                }
+                if (!(lastReal instanceof InsnNode last) || last.getOpcode() != Opcodes.RETURN) {
+                    continue;
+                }
+                var hasDuckCast = false;
+                for (var insn : method.instructions) {
+                    if (insn instanceof TypeInsnNode cast && cast.getOpcode() == Opcodes.CHECKCAST
+                            && jarInterfaces.contains(cast.desc)) {
+                        hasDuckCast = true;
+                        break;
+                    }
+                }
+                if (!hasDuckCast) {
+                    continue;
+                }
+                var bodyStart = new LabelNode();
+                var bodyEnd = new LabelNode();
+                var catchEntry = new LabelNode();
+                method.instructions.insertBefore(method.instructions.getFirst(), bodyStart);
+                method.instructions.insertBefore(last, bodyEnd);
+                var catchPath = new InsnList();
+                catchPath.add(catchEntry);
+                // The handler is entered with the caught exception as the only stack operand.
+                catchPath.add(new InsnNode(Opcodes.POP));
+                catchPath.add(new InsnNode(Opcodes.RETURN));
+                method.instructions.insert(last, catchPath);
+                method.tryCatchBlocks.add(new org.objectweb.asm.tree.TryCatchBlockNode(
+                        bodyStart, bodyEnd, catchEntry, "java/lang/ClassCastException"));
+                guarded++;
+            }
+            if (guarded == 0) {
+                return null;
+            }
+            var writer = new ClassWriter(ClassWriter.COMPUTE_FRAMES) {
+                @Override
+                protected String getCommonSuperClass(String type1, String type2) {
+                    if (type1.equals(type2)) {
+                        return type1;
+                    }
+                    // Never load classes here: this runs on the bootstrap layer, outside the game layer.
+                    return "java/lang/Object";
+                }
+            };
+            node.accept(writer);
+            LOGGER.info("[NeoFobric] Gave {} handler(s) in {} a ClassCastException exit for companions that cannot weave", guarded, entryName);
+            return writer.toByteArray();
+        } catch (Throwable t) {
+            LOGGER.warn("[NeoFobric] Could not guard the duck-interface casts in {}", entryName, t);
+            return null;
+        }
     }
 
     /**
