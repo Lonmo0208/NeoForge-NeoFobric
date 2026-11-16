@@ -124,11 +124,24 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                 }
                 try (var zip = new java.util.zip.ZipFile(jarPath.toFile())) {
                     collectDeclaredMixinConfigs(zip, configs);
+                    // JarJar's metadata names the files it loads, and they can live outside
+                    // META-INF/jarjar/ (spell_power keeps its tiny-config build under META-INF/jars/).
+                    var jarJarDeclared = fmlJarjarPaths(zip);
                     var nested = zip.entries();
                     while (nested.hasMoreElements()) {
                         var entry = nested.nextElement();
                         var name = entry.getName();
-                        if (!name.startsWith("META-INF/jars/") || !name.endsWith(".jar")) {
+                        // FML's JarJar loads the jars it declares into its own layer, so their [[mixins]]
+                        // declarations are registered by FML too. Missing them here let the bridge
+                        // register the Fabric copy of the same config name as well, and FML's MixinFacade
+                        // then decorated an already decorated config: "Decoration with key 'fabric-modId'
+                        // already exists on config transition.mixins.json" (firstperson/skinlayers3d nest the
+                        // Fabric TRansition while entityculling/notenoughanimations nest the NeoForge build).
+                        if (!name.endsWith(".jar")) {
+                            continue;
+                        }
+                        if (!name.startsWith("META-INF/jars/") && !name.startsWith("META-INF/jarjar/")
+                                && !jarJarDeclared.contains(name)) {
                             continue;
                         }
                         var bytes = zip.getInputStream(entry).readAllBytes();
@@ -225,6 +238,14 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     private static final java.util.Set<String> fmlSidePackages = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
+     * The packages each FML-side jar contributed, so a jar whose nested jars are dropped later (requirement
+     * relaxation writes a copy without them) can have exactly those contributions withdrawn again - while
+     * packages its own top-level classes still provide stay.
+     */
+    private static final java.util.Map<java.nio.file.Path, java.util.Set<String>> fmlPackagesByJar =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
      * {@return the mod ids every NeoForge mod in the folder provides}
      *
      * <p>Read before the Fabric jars are examined, because a Fabric jar can only be skipped once it is known
@@ -260,6 +281,40 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             LOGGER.debug("[NeoFobric] Could not list the mods folder to collect NeoForge mod ids", e);
         }
         return ids;
+    }
+
+    /**
+     * Adds the mod ids the jar's FML JarJar nested jars declare.
+     *
+     * <p>The files JarJar loads are named by {@code META-INF/jarjar/metadata.json}, and they do not have
+     * to sit under {@code META-INF/jarjar/}: spell_power/gazebo/jewelry keep their {@code tiny-config}
+     * NeoForge build under {@code META-INF/jars/} while declaring it in the JarJar metadata. Following
+     * the declared paths (not the folder) is what tells the bridge that FML itself provides this id.
+     */
+    private static void collectJarJarModIds(Path jarPath, java.util.Set<String> ids) {
+        try (var zip = new java.util.zip.ZipFile(jarPath.toFile())) {
+            for (var path : fmlJarjarPaths(zip)) {
+                var entry = zip.getEntry(path);
+                if (entry == null) {
+                    continue;
+                }
+                var bytes = zip.getInputStream(entry).readAllBytes();
+                var toml = readEntryTextFromZip(bytes, "META-INF/neoforge.mods.toml");
+                if (toml == null) {
+                    toml = readEntryTextFromZip(bytes, "META-INF/mods.toml");
+                }
+                if (toml == null) {
+                    continue;
+                }
+                for (var mod : parseForgeModsDotToml(toml)) {
+                    if (!mod[0].isEmpty()) {
+                        ids.add(normalizeModId(mod[0]));
+                    }
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            LOGGER.debug("[NeoFobric] Could not read the JarJar metadata of {}", jarPath, e);
+        }
     }
 
     /**
@@ -333,6 +388,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         // "Modules neofobric.fabric.mods and sodium export package net.caffeinemc.mods.sodium.api.util").
         fmlProvidedJars.clear();
         fmlSidePackages.clear();
+        fmlPackagesByJar.clear();
         fmlProvidedModIds = readForgeModIds(modsDir);
         fmlDeclaredMixinConfigs = readForgeDeclaredMixinConfigs(modsDir);
 
@@ -592,7 +648,13 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         // dependency list resolved against a fabric side that is not installed. The mods folder it
         // scans is redirected to a view that links the Fabric jars only, which leaves exactly the same
         // set discoverable there as before minus the jars that belong to FML.
-        if (FabricJarRegistry.hasForeignMods()) {
+        //
+        // The redirect also lives there when no FML jar carries Fabric metadata at all: the view is what
+        // carries the platform-mod view jars (exposePlatformMods), and a Fabric mod may depend on a
+        // library only the NeoForge side provides - skyboxify/ijmtweaks/smoothskies need
+        // yet_another_config_lib_v3, whose NeoForge build is the one installed. Without the view the
+        // loader resolves against a folder without that mod and refuses the whole set.
+        if (!fabricJars.isEmpty()) {
             redirectFabricModsFolder(modsDir, fabricJars, realignedJars);
         }
 
@@ -860,7 +922,16 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             // classes in another module, and the Fabric parent cannot see them (NoClassDefFoundError:
             // dev/lambdaurora/spruceui/screen/SpruceScreen).
             byte[] metadata = jar.readFile(FabricJarRegistry.FABRIC_MOD_JSON);
-            if (jar.readFile("META-INF/neoforge.mods.toml") != null && (bundledBy.isEmpty() || metadata == null)) {
+            byte[] fmlToml = jar.readFile("META-INF/neoforge.mods.toml");
+            // A multiloader build can be published with an unfinished NeoForge metadata file: Glowing
+            // Torchflower's Fabric build ships "version = ${version}", a Gradle placeholder nobody expanded.
+            // FML refuses that version with InvalidModFileException, which aborts the whole discovery - no
+            // game at all. The same jar's fabric.mod.json is a complete, working build, so a jar whose only
+            // FML metadata is a build placeholder belongs to the Fabric side instead of FML.
+            if (fmlToml != null && metadata != null && bundledBy.isEmpty() && hasUnresolvedFmlVersion(fmlToml)) {
+                LOGGER.warn("[NeoFobric] {} ships an unfinished neoforge.mods.toml (its version is a build"
+                        + " placeholder) - loading its Fabric build instead of aborting the launch", path.getFileName());
+            } else if (fmlToml != null && (bundledBy.isEmpty() || metadata == null)) {
                 LOGGER.info("[NeoFobric] Leaving {} to FML - it declares META-INF/neoforge.mods.toml",
                         path.getFileName());
                 FabricJarRegistry.markForeignModPath(path);
@@ -1599,6 +1670,9 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                 }
                 context.addLocated(jarPath);
                 pipeline.addPath(copy, ModFileDiscoveryAttributes.DEFAULT, IncompatibleFileReporting.WARN_ALWAYS);
+                // The relaxed copy drops the nested jars, so FML no longer provides their packages: the
+                // composite has to be able to export them again (jei's nested mezz_config -> Fabric side).
+                dropNestedPackageContributions(jarPath);
                 for (var substitution : relaxed.substitutions()) {
                     LOGGER.info("[NeoFobric] {}: {} - the requirement is relaxed and the Fabric build answers "
                             + "for it at runtime", fileName, substitution);
@@ -1997,6 +2071,23 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         if (fabricJars.isEmpty()) {
             return;
         }
+        // A real FML mod that FML's JarJar loads from a nested jar already answers Architectury's
+        // event-bus lookup, and it brings the classes. Writing a class-less shell with the same id and
+        // version competed with that jar in JarJar's selection ("Attempted to select a dependency jar
+        // for JarJar which was passed in as source: tiny_config. Using jar(...neofobric-shell.jar)")
+        // and the real jar was never loaded: spell_power then died with
+        // NoClassDefFoundError: net/tiny_config/ConfigManager while bootstrap registered Attributes.
+        var jarJarProvidedIds = new java.util.HashSet<String>();
+        try (var jars = Files.list(modsDir)) {
+            for (var jarPath : (Iterable<Path>) jars::iterator) {
+                if (Files.isRegularFile(jarPath)
+                        && jarPath.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".jar")) {
+                    collectJarJarModIds(jarPath, jarJarProvidedIds);
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.debug("[NeoFobric] Could not list the mods folder to check the JarJar-provided mod ids", e);
+        }
         var cacheDir = modsDir.resolve(MixinJarPatcher.CACHE_DIR_NAME);
         var shellIds = new ArrayList<String>();
         var writtenShellIds = new java.util.HashSet<String>();
@@ -2006,6 +2097,9 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             var displayName = info.displayName() == null || info.displayName().isBlank()
                     ? info.modId() : info.displayName();
             if (!net.neoforged.fabricbridge.compbridlnk.ArchitecturyCompat.usesArchitectury(jarPath)) {
+                continue;
+            }
+            if (jarJarProvidedIds.contains(normalizeModId(info.modId()))) {
                 continue;
             }
             // Fabric allows hyphens in mod ids; FML does not. The shell only exists so FML can hand the
@@ -2242,13 +2336,56 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
      */
     private static void noteFmlSidePackages(Path jar) {
         try (var zip = new java.util.zip.ZipFile(jar.toFile())) {
-            collectPackages(zip, 0);
+            var packages = new java.util.HashSet<String>();
+            collectPackages(zip, 0, packages);
+            fmlPackagesByJar.put(jar, packages);
+            fmlSidePackages.addAll(packages);
         } catch (Throwable t) {
             LOGGER.debug("[NeoFobric] Could not index the packages of the FML-side jar {}", jar, t);
         }
     }
 
-    private static void collectPackages(java.util.zip.ZipFile zip, int depth) throws IOException {
+    /**
+     * Withdraws the nested-jar contributions of a jar whose FML copy was written without its nested jars.
+     *
+     * <p>Requirement relaxation writes a copy of the mods.toml and drops the nested jars on purpose, so
+     * the FML layer does not actually receive their classes. Keeping those packages in
+     * {@code fmlSidePackages} made the composite shadow the Fabric-side copies too - jei's relaxed copy
+     * has no nested mezz_config, and the composite then also refused to export {@code net.mezzdev.config},
+     * so jei died with {@code NoClassDefFoundError: net/mezzdev/config/api/Configs}. Only this jar's own
+     * top-level packages stay: they are what the relaxed copy still contains.
+     */
+    private static void dropNestedPackageContributions(Path jar) {
+        var packages = fmlPackagesByJar.get(jar);
+        if (packages == null || packages.isEmpty()) {
+            return;
+        }
+        try (var zip = new java.util.zip.ZipFile(jar.toFile())) {
+            var own = new java.util.HashSet<String>();
+            var entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                var entry = entries.nextElement();
+                if (entry.isDirectory()) {
+                    continue;
+                }
+                if (entry.getName().endsWith(".class")) {
+                    var packageName = packageOfEntry(entry.getName());
+                    if (packageName != null) {
+                        own.add(packageName);
+                    }
+                }
+            }
+            packages.retainAll(own);
+            fmlSidePackages.clear();
+            for (var contributed : fmlPackagesByJar.values()) {
+                fmlSidePackages.addAll(contributed);
+            }
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not drop the nested package contributions of {}", jar, t);
+        }
+    }
+
+    private static void collectPackages(java.util.zip.ZipFile zip, int depth, java.util.Set<String> out) throws IOException {
         var nested = new java.util.ArrayList<java.util.zip.ZipEntry>();
         // Nested jars FML's JarJar loads into its own layer, whatever their own metadata says. They are
         // FML-side content even when they carry a fabric.mod.json (Loom generates one into every library
@@ -2266,7 +2403,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             if (name.endsWith(".class")) {
                 var packageName = packageOfEntry(name);
                 if (packageName != null) {
-                    fmlSidePackages.add(packageName);
+                    out.add(packageName);
                 }
             } else if (depth < 2 && name.endsWith(".jar")) {
                 nested.add(entry);
@@ -2293,7 +2430,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                             && !declaresFmlModType(inner) && !fmlJarjar.contains(entry.getName())) {
                         continue;
                     }
-                    collectPackages(inner, depth + 1);
+                    collectPackages(inner, depth + 1, out);
                 }
             } catch (Throwable t) {
                 LOGGER.debug("[NeoFobric] Could not read the nested jar {} of an FML-side mod jar", entry.getName(), t);
@@ -2323,6 +2460,25 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         }
     }
 
+    /**
+     * {@return whether a mods.toml still carries a build placeholder in a mod version}
+     *
+     * <p>Multiloader builds are expected to expand {@code ${version}} at build time; a jar published with
+     * the placeholder left in its NeoForge metadata makes FML reject the file with
+     * {@code Illegal version number specified}, and that exception aborts discovery - not one mod, the
+     * whole launch. The same jar usually carries a complete fabric.mod.json, so its Fabric build can run.
+     */
+    private static boolean hasUnresolvedFmlVersion(byte[] toml) {
+        var text = new String(toml, java.nio.charset.StandardCharsets.UTF_8);
+        var matcher = java.util.regex.Pattern.compile("(?m)^\\s*version\\s*=\\s*\"([^\"]*)\"").matcher(text);
+        while (matcher.find()) {
+            if (matcher.group(1).contains("${")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** {@return the nested jar paths the jar's FML JarJar metadata declares} */
     private static java.util.Set<String> fmlJarjarPaths(java.util.zip.ZipFile zip) {
         var metadata = zip.getEntry("META-INF/jarjar/metadata.json");
@@ -2343,14 +2499,22 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     }
 
     /**
-     * {@return whether {@code packageName} belongs to the platform (FML, NeoForge, the boot launcher)}
-     * Those namespaces are provided by the game layer on every NeoForge install, so a Fabric jar that
-     * ships them must not merge them into the composite module - see
+     * {@return whether {@code packageName} belongs to the platform (FML, NeoForge, the game, the boot
+     * launcher)} Those namespaces are provided by the game layer on every NeoForge install, so a Fabric
+     * jar that ships them must not merge them into the composite module - see
      * {@link #platformProvidedPackages}.
      */
     static boolean isPlatformNamespace(String packageName) {
         return packageName.equals("net.neoforged") || packageName.startsWith("net.neoforged.")
-                || packageName.equals("cpw.mods") || packageName.startsWith("cpw.mods.");
+                || packageName.equals("cpw.mods") || packageName.startsWith("cpw.mods.")
+                // The game itself. NeoForge always loads net.minecraft from its own minecraft module, so a
+                // class in this namespace never belongs to a mod. It matters most for mixin frame types
+                // that name an intermediary class (EuphoriaPatcher's client mixins mention class_310, which
+                // exists in no jar on disk): the frame-stub writer must not invent a stub here, or the
+                // composite module starts exporting net.minecraft next to the minecraft module and JPMS
+                // refuses the layer ("Modules minecraft and neofobric.fabric.mods export package
+                // net.minecraft to module ixeris").
+                || packageName.equals("net.minecraft") || packageName.startsWith("net.minecraft.");
     }
 
     /**
