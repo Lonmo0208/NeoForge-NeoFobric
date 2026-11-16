@@ -27,6 +27,7 @@ public final class FabricBridge {
     private static final Logger LOGGER = LoggerFactory.getLogger(FabricBridge.class);
 
     private static final Object BOOT_LOCK = new Object();
+    private static volatile boolean modsLoaded;
     private static volatile boolean booted;
     private static volatile boolean hooksInstalled;
     private static volatile boolean entrypointsInvoked;
@@ -171,7 +172,20 @@ public final class FabricBridge {
         BridgedLogHandler.install();
 
         try {
-            FabricLoaderImpl.INSTANCE.load();
+            // Building the mod list and freezing it are separate steps, and only the second one needs
+            // the mods' classes: freeze() instantiates every declared language adapter through the
+            // launcher's target classloader. During discovery that loader does not contain the Fabric
+            // mods yet (they join the game layer while it is built), so a jar declaring the kotlin
+            // adapter (fabric-language-kotlin) made the early boot fail with
+            // "Failed to instantiate language adapter: kotlin" -> ClassNotFoundException. The mod list
+            // (which mixin config plugins ask for) is complete after load(); the freeze is retried
+            // from bootEarly(), where the game layer exists. Skipping load() on the retry matters too:
+            // fabric-loader does not clear its mod list, so a second load() would register every mod
+            // twice.
+            if (!modsLoaded) {
+                FabricLoaderImpl.INSTANCE.load();
+                modsLoaded = true;
+            }
             FabricLoaderImpl.INSTANCE.freeze();
         } catch (net.fabricmc.loader.impl.FormattedException e) {
             // The loader could not resolve the installed mods (a missing dependency being the everyday
