@@ -28,6 +28,35 @@
      }
  
      public boolean isColliding(BlockPos pos, BlockState state) {
+@@ -418,15 +_,26 @@
+     public SynchedEntityData getEntityData() {
+         return this.entityData;
+     }
+ 
+     @Override
+     public boolean equals(Object obj) {
+-        return obj instanceof Entity entity ? entity.getId() == this.getId() : false;
++        if (this == obj) {
++            return true;
++        }
++        // NeoFobric: an entity has no id until one is assigned, and equality must not throw for that
++        // window. InventoryProfilesNext's inventory hook compares the local player while the server
++        // places the joining player, i.e. between the login packet and the spawn packet - getId()
++        // turned that into "Tried to access entity ID before ID assignment" and kicked the player.
++        if (!(obj instanceof Entity entity) || this.id == 0 || entity.id == 0) {
++            return false;
++        }
++        return entity.getId() == this.getId();
+     }
+ 
+     @Override
+     public int hashCode() {
+-        return this.getId();
++        // NeoFobric: see equals - hash an id-less entity by identity instead of throwing.
++        return this.id == 0 ? System.identityHashCode(this) : this.getId();
+     }
+ 
+     public void remove(Entity.RemovalReason reason) {
 @@ -530,7 +_,7 @@
  
          this.wasInPowderSnow = this.isInPowderSnow;
