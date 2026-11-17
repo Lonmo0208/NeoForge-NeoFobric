@@ -1,10 +1,11 @@
 --- a/net/minecraft/world/item/enchantment/EnchantmentHelper.java
 +++ b/net/minecraft/world/item/enchantment/EnchantmentHelper.java
-@@ -47,7 +_,32 @@
+@@ -47,7 +_,30 @@
  import org.jspecify.annotations.Nullable;
  
- public class EnchantmentHelper {
+-public class EnchantmentHelper {
 -    public static int getItemEnchantmentLevel(Holder<Enchantment> enchantment, ItemInstance piece) {
++public class EnchantmentHelper extends net.neoforged.neoforge.common.EnchantmentHelperCompat {
 +    /**
 +     * @deprecated Neo: Use {@link #getTagEnchantmentLevel(Holder, ItemInstance)} for NBT enchantments, or {@link ItemStack#getEnchantmentLevel(Holder)} for gameplay.
 +     */
@@ -15,15 +16,13 @@
 +    }
 +
 +    /**
-+     * NeoFobric: the descriptor Curios' MixinApplyBonusCount anchors on. Neither the snapshot's nor
-+     * 26.1.2's getItemEnchantmentLevel actually has this shape - both take ItemInstance, a type that
-+     * exists on 26.1.2 too - so this overload is a superset of 26.1.2's API surface: the loot call
-+     * sites hold the tool in an ItemInstance local and are routed by instanceof (see ApplyBonusCount),
-+     * and the ItemStack overload gives the mod's @At(INVOKE_ASSIGN) a member that binds here even
-+     * though it silently fails on the 26.1.2 line itself.
++     * NeoFobric: the original method under its own name, because 26.1.2-era mixins inject into the
++     * bare "getItemEnchantmentLevel" name with an ItemInstance handler (ae2's
++     * EnchantmentHelperMixin). The ItemStack-shaped overload Curios anchors on lives in the
++     * superclass instead - see net.neoforged.neoforge.common.EnchantmentHelperCompat for why both
++     * cannot share one overload set.
 +     */
-+    @Deprecated
-+    public static int getItemEnchantmentLevel(Holder<Enchantment> enchantment, ItemStack piece) {
++    public static int getItemEnchantmentLevel(Holder<Enchantment> enchantment, ItemInstance piece) {
 +        return getItemEnchantmentLevelForInstance(enchantment, piece);
 +    }
 +
