@@ -54,7 +54,19 @@ public class RegistryManager {
         Objects.requireNonNull(registry);
 
         if (pendingModdedRegistries == null) {
-            throw new IllegalStateException("Attempting to instantiate registry with name " + registry + " after NewRegistryEvent was fired!");
+            // NeoFobric: Fabric-style mods may create their custom registries lazily at
+            // first use - legal on Fabric, but by the time their code first runs here the
+            // NewRegistryEvent window is long past. Refusing turned that first use into a
+            // hard client crash (a lazily created synced registry hit this from an
+            // inventory click). Let the creation through with a loud warning; the registry
+            // then works locally but stays outside the sync snapshots, so its numerical
+            // ids are not synced to clients.
+            LOGGER.warn(
+                REGISTRIES,
+                "Registry with name {} was instantiated after NewRegistryEvent was fired; it will work locally but is not part of registry sync. This usually comes from a Fabric-style lazily created registry.",
+                registry
+            );
+            return;
         }
 
         if (!pendingModdedRegistries.add(registry)) {
