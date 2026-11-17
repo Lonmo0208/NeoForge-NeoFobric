@@ -270,18 +270,24 @@
      }
  
      public @Nullable EnderDragonFight getDragonFight() {
-@@ -1920,8 +_,8 @@
+@@ -1920,8 +_,14 @@
                  ServerLevel.this.navigatingMobs.add(mob);
              }
  
 -            if (entity instanceof EnderDragon dragon) {
 -                for (EnderDragonPart subEntity : dragon.getSubEntities()) {
 +            if (entity.isMultipartEntity()) {
-+                for(net.neoforged.neoforge.entity.PartEntity<?> subEntity : entity.getParts()) {
++                // NeoFobric: a class can match isMultipartEntity() by name alone without providing the
++                // NeoForge PartEntity array (Fabric multipart implementations return their own type),
++                // in which case getParts() is the interface default - null. Do not assume the pair.
++                net.neoforged.neoforge.entity.PartEntity<?>[] parts = entity.getParts();
++                if (parts != null) {
++                    for(net.neoforged.neoforge.entity.PartEntity<?> subEntity : parts) {
                      ServerLevel.this.dragonParts.put(subEntity.getId(), subEntity);
                  }
++                }
              }
-@@ -1941,25 +_,70 @@
+@@ -1941,25 +_,75 @@
                  if (ServerLevel.this.isUpdatingNavigations) {
                      String message = "onTrackingStart called during navigation iteration";
                      Util.logAndPauseIfInIde(
@@ -296,9 +302,14 @@
 -            if (entity instanceof EnderDragon dragon) {
 -                for (EnderDragonPart subEntity : dragon.getSubEntities()) {
 +            if (entity.isMultipartEntity()) {
-+                for(net.neoforged.neoforge.entity.PartEntity<?> subEntity : entity.getParts()) {
++                // NeoFobric: see onTrackingStart - isMultipartEntity() can be matched by name without
++                // a NeoForge PartEntity array behind it, and getParts() then returns null.
++                net.neoforged.neoforge.entity.PartEntity<?>[] parts = entity.getParts();
++                if (parts != null) {
++                    for(net.neoforged.neoforge.entity.PartEntity<?> subEntity : parts) {
                      ServerLevel.this.dragonParts.remove(subEntity.getId());
                  }
++                }
              }
  
              entity.updateDynamicGameEventListener(DynamicGameEventListener::remove);
