@@ -162,22 +162,32 @@
              this.difficulty = difficulty;
          }
  
-@@ -1112,6 +_,9 @@
+@@ -1112,6 +_,14 @@
                      ClientLevel.this.dragonParts.addAll(Arrays.asList(dragon.getSubEntities()));
                      break;
                  default:
 +                    if (entity.isMultipartEntity()) {
-+                        ClientLevel.this.dragonParts.addAll(Arrays.asList(entity.getParts()));
++                        // NeoFobric: the name can be matched without a NeoForge PartEntity array behind it
++                        // (Fabric multipart implementations return their own type); getParts() is null then.
++                        net.neoforged.neoforge.entity.PartEntity<?>[] parts = entity.getParts();
++                        if (parts != null) {
++                            ClientLevel.this.dragonParts.addAll(Arrays.asList(parts));
++                        }
 +                    }
              }
          }
  
-@@ -1125,10 +_,26 @@
+@@ -1125,10 +_,31 @@
                      ClientLevel.this.dragonParts.removeAll(Arrays.asList(dragon.getSubEntities()));
                      break;
                  default:
 +                    if (entity.isMultipartEntity()) {
-+                        ClientLevel.this.dragonParts.removeAll(Arrays.asList(entity.getParts()));
++                        // NeoFobric: see onTrackingStart - the method can be matched by name without a
++                        // NeoForge PartEntity array behind it, and getParts() returns null then.
++                        net.neoforged.neoforge.entity.PartEntity<?>[] parts = entity.getParts();
++                        if (parts != null) {
++                            ClientLevel.this.dragonParts.removeAll(Arrays.asList(parts));
++                        }
 +                    }
              }
 +
