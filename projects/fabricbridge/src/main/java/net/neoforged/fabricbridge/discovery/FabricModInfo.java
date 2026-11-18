@@ -26,6 +26,7 @@ import java.util.List;
  * @param websiteUrl     the {@code contact.homepage} declaration, or null
  * @param issuesUrl      the {@code contact.issues} declaration, or null
  * @param iconPath       the {@code icon} declaration (a path relative to the mod root), or null
+ * @param depends        the mod ids declared under {@code depends} (this mod's hard dependencies)
  * @param bundledBy      the mod id of the mod whose jar carries this one (jar-in-jar), or an empty
  *                       string for a jar the player put in the mods folder themselves
  */
@@ -45,6 +46,7 @@ public record FabricModInfo(
         String websiteUrl,
         String issuesUrl,
         String iconPath,
+        List<String> depends,
         String bundledBy) {
 
     /**
@@ -53,7 +55,7 @@ public record FabricModInfo(
     public FabricModInfo withBundledBy(String parentModId) {
         return new FabricModInfo(modId, version, environment, commonMixins, clientMixins, serverMixins,
                 nestedJarPaths, accessWidener, displayName, description, authors, license, websiteUrl,
-                issuesUrl, iconPath, parentModId);
+                issuesUrl, iconPath, depends, parentModId);
     }
 
     /**

@@ -140,22 +140,19 @@ public class GameData {
     public static void postRegisterEventsForShellMods() {
         String shells = System.getProperty("neofobric.shellMods");
         if (shells == null || shells.isBlank()) {
+            BridgeLateRegistration.closeWindow();
             return;
         }
 
         RuntimeException aggregate = new RuntimeException();
-        for (Identifier rootRegistryName : GameData.getRegistrationOrder()) {
+        for (String modId : shells.split(",")) {
             try {
-                ResourceKey<? extends Registry<?>> registryKey = ResourceKey.createRegistryKey(rootRegistryName);
-                Registry<?> registry = BuiltInRegistries.REGISTRY.getValue(rootRegistryName);
-                if (registry == null) {
-                    continue;
-                }
-                RegisterEvent registerEvent = new RegisterEvent(registryKey, registry);
-                for (String modId : shells.split(",")) {
-                    ModList.get().getModContainerById(modId).map(ModContainer::getEventBus)
-                            .ifPresent(bus -> bus.post(registerEvent));
-                }
+                // BridgeLateRegistration unfreezes each registry for the call: by the time this pass
+                // runs, the client has already frozen the registry state once, and a plain post dies
+                // with "Registry is already frozen" for every entry (an attachment type, say) that is
+                // not in a datapack registry.
+                ModList.get().getModContainerById(modId).map(ModContainer::getEventBus)
+                        .ifPresent(BridgeLateRegistration::postForBus);
             } catch (Throwable t) {
                 aggregate.addSuppressed(t);
             }
@@ -166,6 +163,9 @@ public class GameData {
         } else {
             LOGGER.info("[NeoFobric] Register events re-posted for the bridged mods: {}", shells);
         }
+        // Listeners that arrive later - a bridged mod reaching a platform library's registry manager
+        // from gameplay - are replayed by BridgeLateRegistration, see the bus the bridge gives shells.
+        BridgeLateRegistration.closeWindow();
     }
 
     /**

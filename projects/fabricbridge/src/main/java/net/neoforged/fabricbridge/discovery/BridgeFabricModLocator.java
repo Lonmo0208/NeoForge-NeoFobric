@@ -2080,10 +2080,11 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     private static final String SHELL_SUFFIX = ".neofobric-shell.jar";
 
     /**
-     * NeoFobric: writes the shell FML mod for every Fabric mod that ships Architectury classes, so
-     * Architectury's NeoForge build can resolve an event bus for it (see the call site). The shell
-     * carries nothing but the mod metadata: same id and version as the Fabric mod, no classes, so it
-     * cannot conflict with the Fabric side's copy of the mod.
+     * NeoFobric: writes the shell FML mod for a bridged Fabric mod, so NeoForge-side code can resolve
+     * an event bus for it by id (see the call site). The shell carries nothing but the mod metadata:
+     * same id and version as the Fabric mod, no classes, so it cannot conflict with the Fabric side's
+     * copy of the mod. The loader it names is the bridge's own - its bus replays registrations that
+     * arrive after the platform's startup window closed.
      */
     private static void registerArchitecturyShellMods(IDiscoveryPipeline pipeline, Path modsDir,
             Map<Path, FabricModInfo> fabricJars) {
@@ -2110,12 +2111,31 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         var cacheDir = modsDir.resolve(MixinJarPatcher.CACHE_DIR_NAME);
         var shellIds = new ArrayList<String>();
         var writtenShellIds = new java.util.HashSet<String>();
+        // A shell is what makes FML answer `ModList.getModContainerById(<fabric id>)` with a container
+        // that has an event bus; Architectury's NeoForge hooks need exactly that lookup while the
+        // Fabric entrypoints run. Shells are not free: `ModList.isLoaded` starts reporting the Fabric
+        // mod, and a NeoForge mod's compat plugin that keys off it (IMBlocker turns on its ReplayMod
+        // mixin, which only exists in its own Fabric build) then loads classes that are not there. A
+        // mod that reaches a platform library's registry manager (puzzleslib's NeoForge build, the
+        // Item Interactions case) needs the bus too, but a shell alone does not make it work: its
+        // registries are created and its datapack registries are looked up after the platform's
+        // registration window, which NeoForge cannot serve - so that mod set is a flavour mismatch to
+        // fix in the set, not something a shell should paper over. `-Dneofobric.shellAllFabricMods=true`
+        // shells every bridged mod for diagnosis.
+        var allFabricMods = "true".equalsIgnoreCase(System.getProperty("neofobric.shellAllFabricMods", "false"));
+        // Which loader the shell jars name. The stock "javafml" gives FML's own container and a plain
+        // bus; the bridge's loader hands out a bus that replays registrations arriving after the
+        // platform's window closed. Kept switchable so a broken shell loader can be ruled out without
+        // a rebuild.
+        var shellLoader = System.getProperty("neofobric.shellLanguageLoader",
+                net.neoforged.fabricbridge.shell.BridgeShellLanguageLoader.NAME);
         for (var entry : fabricJars.entrySet()) {
             var jarPath = entry.getKey();
             var info = entry.getValue();
             var displayName = info.displayName() == null || info.displayName().isBlank()
                     ? info.modId() : info.displayName();
-            if (!net.neoforged.fabricbridge.compbridlnk.ArchitecturyCompat.usesArchitectury(jarPath)) {
+            if (!allFabricMods
+                    && !net.neoforged.fabricbridge.compbridlnk.ArchitecturyCompat.usesArchitectury(jarPath)) {
                 continue;
             }
             if (jarJarProvidedIds.contains(normalizeModId(info.modId()))) {
@@ -2130,13 +2150,13 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             var shell = cacheDir.resolve(jarPath.getFileName().toString() + SHELL_SUFFIX);
             try {
                 Files.createDirectories(cacheDir);
-                var toml = ("modLoader=\"javafml\"\n"
-                        + "loaderVersion=\"[3,)\"\n"
+                var toml = ("modLoader=\"" + shellLoader + "\"\n"
+                        + "loaderVersion=\"[1,)\"\n"
                         + "license=\"See the Fabric build of this mod\"\n"
                         + "\n"
                         + "[[mods]]\n"
                         + "modId=\"" + shellId + "\"\n"
-                        + "version=\"" + info.version() + "\"\n"
+                        + "version=\"" + fmlShellVersion(info.version()) + "\"\n"
                         + "displayName=\"" + displayName.replace("\"", "'") + " (Fabric, bridged)\"\n")
                         .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 try (var out = new java.util.zip.ZipOutputStream(Files.newOutputStream(shell,
@@ -2152,8 +2172,8 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             }
             pipeline.addPath(shell, ModFileDiscoveryAttributes.DEFAULT, IncompatibleFileReporting.WARN_ALWAYS);
             shellIds.add(shellId);
-            LOGGER.info("[NeoFobric] Registered the shell FML mod {} ({}) {} so the Fabric build's Architectury "
-                    + "registrations can resolve it", shellId, info.modId(), info.version());
+            LOGGER.info("[NeoFobric] Registered the shell FML mod {} ({}) {} through {} so the Fabric build's "
+                    + "NeoForge-side lookups resolve it", shellId, info.modId(), info.version(), shellLoader);
         }
         if (!shellIds.isEmpty()) {
             // The platform re-posts the RegisterEvent pass for these buses right behind the Fabric
@@ -2163,6 +2183,104 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         }
     }
 
+    /**
+     * {@return the FML-provided mod ids whose code resolves a mod's event bus by that mod's id}
+     *
+     * <p>Not wired in: a shell answers the bus lookup, but a Fabric mod that reaches a platform
+     * library's registry manager also creates its own registries (and looks up its datapack registries)
+     * after the platform's registration window, which a shell cannot serve. Kept next to the shell
+     * code because it is the scan such a bridge would start from once late datapack registries are
+     * supported.
+     *
+     * <p>A Fabric mod may reach a platform-flavoured library - puzzleslib is the everyday case - that
+     * kept its NeoForge implementation in the jar the pack installed. Through the library's common
+     * API the Fabric mod ends up asking that implementation for its own event bus, which FML can only
+     * answer when the bridge registered a container for it. Only libraries some Fabric mod actually
+     * declares in {@code depends} are scanned: reading every installed jar would cost seconds for a
+     * handful of lookups.
+     */
+    private static java.util.Set<String> fmlModsResolvingModEventBuses(Path modsDir,
+            Map<Path, FabricModInfo> fabricJars) {
+        var interesting = new java.util.HashSet<String>();
+        for (var info : fabricJars.values()) {
+            for (var dependency : info.depends()) {
+                var normalized = normalizeModId(dependency);
+                if (fmlProvidedModIds.contains(normalized)) {
+                    interesting.add(normalized);
+                }
+            }
+        }
+        if (interesting.isEmpty()) {
+            return java.util.Set.of();
+        }
+
+        var found = new java.util.HashSet<String>();
+        // Every spelling a library uses to ask FML for a mod's bus. The class names matter more than
+        // the methods: they are the entry points of the two APIs that do this on NeoForge.
+        var markers = new String[] { "getModEventBus", "getModContainerById", "EventBusesHooks",
+                "ModContainerHelper", "NeoForgeRegistryManager" };
+        try (var jars = Files.list(modsDir)) {
+            for (var jarPath : (Iterable<Path>) jars::iterator) {
+                if (!Files.isRegularFile(jarPath)
+                        || !jarPath.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".jar")) {
+                    continue;
+                }
+                var wanted = new java.util.ArrayList<String>();
+                for (var mod : readForgeModsDotToml(jarPath)) {
+                    var id = normalizeModId(mod[0]);
+                    if (interesting.contains(id)) {
+                        wanted.add(id);
+                    }
+                }
+                if (wanted.isEmpty()) {
+                    continue;
+                }
+                try (var zip = new java.util.zip.ZipFile(jarPath.toFile())) {
+                    var hit = false;
+                    var entries = zip.entries();
+                    while (!hit && entries.hasMoreElements()) {
+                        var entry = entries.nextElement();
+                        if (entry.isDirectory() || !entry.getName().endsWith(".class")) {
+                            continue;
+                        }
+                        var bytes = zip.getInputStream(entry).readAllBytes();
+                        for (var marker : markers) {
+                            if (containsAscii(bytes, marker)) {
+                                hit = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (hit) {
+                        found.addAll(wanted);
+                        LOGGER.info("[NeoFobric] {} resolves bridged mods' event buses by id, so the Fabric "
+                                + "mods depending on it get a shell container", wanted);
+                    }
+                } catch (Exception e) {
+                    LOGGER.debug("[NeoFobric] Could not scan {} for mod event bus lookups", jarPath, e);
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.debug("[NeoFobric] Could not list the mods folder to look for mod event bus lookups", e);
+        }
+        return found;
+    }
+
+    /** {@return whether the needle appears in the bytes} */
+    private static boolean containsAscii(byte[] haystack, String needle) {
+        var target = needle.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        outer:
+        for (int i = 0; i <= haystack.length - target.length; i++) {
+            for (int j = 0; j < target.length; j++) {
+                if (haystack[i + j] != target[j]) {
+                    continue outer;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
     /** {@return a mod id that passes FML's {@code ^[a-z][a-z0-9_]*$} check} */
     private static String fmlShellModId(String modId) {
         var id = modId.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
@@ -2170,6 +2288,25 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             id = "fabric_" + id;
         }
         return id;
+    }
+
+    /**
+     * {@return a version FML can parse for the shell} A Fabric mod may declare no version at all
+     * ({@code fabric.mod.json} without a version, or one built from a manifest placeholder that never
+     * got substituted - fabric-loader then reports {@code unspecified}), and FML refuses a mod whose
+     * version does not parse: "Illegal version number specified unspecified". The shell only carries
+     * the version so mod lists and dependency ranges see something sensible, so the first numeric
+     * group is used and {@code 1.0.0} stands in when there is none.
+     */
+    private static String fmlShellVersion(String fabricVersion) {
+        if (fabricVersion == null) {
+            return "1.0.0";
+        }
+        var matcher = java.util.regex.Pattern.compile("\\d+(?:\\.\\d+)*").matcher(fabricVersion);
+        if (!matcher.find()) {
+            return "1.0.0";
+        }
+        return matcher.group();
     }
 
     /**

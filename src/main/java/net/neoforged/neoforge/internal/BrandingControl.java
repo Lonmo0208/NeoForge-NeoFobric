@@ -38,7 +38,9 @@ public class BrandingControl {
             brd.add("Minecraft " + SharedConstants.getCurrentVersion().name());
 
             final String brandingName = BRANDING_NAME + ' ' + NeoForgeVersion.getVersion();
-            final int modCount = ModList.get().size();
+            // The bridge registers a class-less shell FML mod per bridged Fabric mod, so those must not
+            // be counted as NeoForge mods here - they are the same mods the Fabric count reports.
+            final int modCount = ModList.get().size() - BridgeShellMods.loadedShellCount();
             // When the Fabric bridge is active its mods run alongside FML's, but ModList only knows
             // FML's side - the count shown here would silently ignore every Fabric mod. The bridge
             // publishes its count as a system property, so the line can report the total and the

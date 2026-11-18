@@ -145,6 +145,11 @@ public class ModListScreen extends Screen {
         final Builder<ModRow> mods = ImmutableList.builder();
 
         for (ModContainer container : ModList.get().getSortedMods()) {
+            // Shells the bridge registered for its Fabric mods are bookkeeping, not installed mods:
+            // the same mod is shown by the contributed rows below, with its Fabric loader tag.
+            if (net.neoforged.neoforge.internal.BridgeShellMods.isShell(container.getModId())) {
+                continue;
+            }
             final ModDisplayInfo displayInfo;
             final String modId = container.getModId();
             if (!FMLEnvironment.isProduction() && modId.equals(Identifier.DEFAULT_NAMESPACE)) {
@@ -200,7 +205,9 @@ public class ModListScreen extends Screen {
         // mods a player expects to find here all the same. An id an FML mod already uses is skipped:
         // the bridge's row would be a duplicate of the same mod.
         for (var contributed : ModListContributions.contributions()) {
-            if (ModList.get().getModContainerById(contributed.info().id()).isEmpty()) {
+            if (ModList.get().getModContainerById(contributed.info().id())
+                    .filter(container -> !net.neoforged.neoforge.internal.BridgeShellMods.isShell(container.getModId()))
+                    .isEmpty()) {
                 mods.add(new ModRow(contributed.info(), LoaderTag.FABRIC,
                         contributed.bundledBy().isBlank() ? null : contributed.bundledBy()));
             }

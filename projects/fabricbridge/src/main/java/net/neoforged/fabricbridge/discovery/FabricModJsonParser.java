@@ -50,6 +50,7 @@ public final class FabricModJsonParser {
             String websiteUrl = null;
             String issuesUrl = null;
             String iconPath = null;
+            List<String> depends = List.of();
 
             reader.beginObject();
             while (reader.hasNext()) {
@@ -66,6 +67,7 @@ public final class FabricModJsonParser {
                     case "client" -> clientMixins = readStringArray(reader);
                     case "server" -> serverMixins = readStringArray(reader);
                     case "jars" -> nestedJars = readNestedJarPaths(reader);
+                    case "depends" -> depends = readDependencyIds(reader);
                     case "accessWidener" -> accessWidener = reader.nextString();
                     case "name" -> displayName = reader.nextString();
                     case "description" -> description = readStringOrSkip(reader);
@@ -91,7 +93,7 @@ public final class FabricModJsonParser {
                     nestedJars, accessWidener,
                     displayName != null && !displayName.isBlank() ? displayName.trim() : modId,
                     description == null ? "" : description.strip(),
-                    authors, license, websiteUrl, issuesUrl, iconPath,
+                    authors, license, websiteUrl, issuesUrl, iconPath, depends,
                     // Filled in by the locator when the jar turns out to be carried inside another
                     // mod's jar; fabric.mod.json itself does not say who bundles it.
                     "");
@@ -99,6 +101,21 @@ public final class FabricModJsonParser {
             LOGGER.debug("[NeoFobric] Failed to parse fabric.mod.json", e);
             return null;
         }
+    }
+
+    /**
+     * The {@code depends} object: its member names are the mod ids, its values are version predicates
+     * the bridge does not need here - fabric-loader enforces them itself.
+     */
+    private static List<String> readDependencyIds(JsonReader reader) throws IOException {
+        var ids = new java.util.ArrayList<String>();
+        reader.beginObject();
+        while (reader.hasNext()) {
+            ids.add(reader.nextName());
+            reader.skipValue();
+        }
+        reader.endObject();
+        return List.copyOf(ids);
     }
 
     private static String readVersion(JsonReader reader) throws IOException {
