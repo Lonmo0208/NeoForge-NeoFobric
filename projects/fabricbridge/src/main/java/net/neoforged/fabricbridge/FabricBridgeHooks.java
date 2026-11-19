@@ -140,8 +140,41 @@ public final class FabricBridgeHooks {
         // no-op whenever the mod it links to is absent.
         net.neoforged.fabricbridge.compbridlnk.SodiumConfigApiLink.linkSodiumConfigEntryPoints();
         net.neoforged.fabricbridge.compbridlnk.ModMenuConfigLink.linkModMenuConfigScreens();
+        // Fabric API's resource-conditions module registers its built-in condition types from its own
+        // `main` entrypoint (`fabric:all_mods_loaded` and friends). When that registration has not
+        // happened by now, every conditioned data file fails to parse later ("Unknown resource
+        // condition key: fabric:all_mods_loaded") and is skipped - a set that way lost 227 recipes, 35
+        // worldgen modifiers and the overworld dimension override. Running the initializer here makes
+        // the types exist regardless of how the entrypoint was dispatched.
+        ensureBuiltInResourceConditionTypes();
         runHooksTheGameReachesTooEarly();
         traceFabricPaths();
+    }
+
+    /**
+     * Registers Fabric API's built-in resource condition types when the module's own entrypoint did not.
+     *
+     * <p>Registration throws on a duplicate, so this only runs when a known built-in id does not resolve.
+     */
+    private static void ensureBuiltInResourceConditionTypes() {
+        try {
+            var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher()
+                    .getTargetClassLoader();
+            var identifier = Class.forName("net.minecraft.resources.Identifier", false, gameLoader);
+            var conditions = Class.forName(
+                    "net.fabricmc.fabric.api.resource.conditions.v1.ResourceConditions", false, gameLoader);
+            var probe = identifier.getMethod("parse", String.class).invoke(null, "fabric:all_mods_loaded");
+            if (conditions.getMethod("getConditionType", identifier).invoke(null, probe) != null) {
+                return;
+            }
+            var impl = Class.forName(
+                    "net.fabricmc.fabric.impl.resource.conditions.ResourceConditionsImpl", true, gameLoader);
+            impl.getMethod("onInitialize").invoke(impl.getConstructor().newInstance());
+            LOGGER.info("[NeoFobric] The resource-conditions module had not registered its built-in condition "
+                    + "types; ran its initializer so conditioned data files parse");
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not ensure the built-in resource condition types", t);
+        }
     }
 
     /**
@@ -2098,6 +2131,10 @@ public final class FabricBridgeHooks {
             }
             try {
                 var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
+                // Belt and braces: if a data file arrives before the entrypoint hand-off ran the
+                // module's initializer, register the built-in types first - the codec cannot resolve
+                // `fabric:all_mods_loaded` without them.
+                ensureBuiltInResourceConditionTypes();
                 var condition = Class.forName("net.fabricmc.fabric.api.resource.conditions.v1.ResourceCondition", false, gameLoader);
                 fabricConditionCodec = condition.getField("CONDITION_CODEC").get(null);
                 fabricConditionTest = condition.getMethod("test",
