@@ -90,7 +90,7 @@
      protected ResourceKey<? extends Registry<T>> registryKey() {
          return this.registry.key();
      }
-@@ -60,7 +_,13 @@
+@@ -60,7 +_,20 @@
              elements.forEach(
                  element -> element.value
                      .ifLeft(value -> this.registry.register(element.key, (T)value, element.registrationInfo))
@@ -98,14 +98,21 @@
 +                    .ifRight(error -> {
 +                        if (error == SKIPPED_CONDITIONAL_ELEMENT_MARKER) {
 +                            LOGGER.debug("Skipping loading registry entry {} as its conditions were not met", element.key);
-+                        } else if (error != SKIPPED_ELEMENT_MARKER) {
++                        } else if (error == SKIPPED_ELEMENT_MARKER) {
++                            // NeoFobric: a holder may already have been handed out for this key while
++                            // the elements were parsed (Fabric's registry sync asks for every one); a
++                            // skipped element would leave it unbound and freeze() rejects the registry.
++                            if (this.registry instanceof net.minecraft.core.MappedRegistry<T> mapped) {
++                                mapped.forgetUnregisteredHolder(element.key);
++                            }
++                        } else {
 +                            this.loadingErrors.put(element.key, error);
 +                        }
 +                    })
              );
              this.elementsRegistered = true;
          }
-@@ -99,7 +_,30 @@
+@@ -99,8 +_,41 @@
          ) {
              try (Reader reader = thunk.openAsReader()) {
                  JsonElement json = StrictJsonParser.parse(reader);
@@ -135,5 +142,16 @@
 +
 +                return Either.left(elementCandidate);
              } catch (Exception e) {
++                // NeoFobric: a Fabric mod's recipe may use Fabric's ingredient shapes ("fabric:any",
++                // "fabric:components"). Those are not parseable here yet, and one such recipe failed
++                // the whole load - the game then showed "current data packs contain errors" and
++                // refused to open the world. Recipes the bridge cannot decode are skipped with a
++                // warning instead, the way Fabric treats a mod's broken recipe.
++                if (elementKey.isFor(net.minecraft.core.registries.Registries.RECIPE)
++                        && net.neoforged.fabricbridge.FabricBridgeHooks.tolerateUnparseableRecipe(
++                                elementKey.identifier().toString(), e)) {
++                    return Either.right(SKIPPED_ELEMENT_MARKER);
++                }
                  return Either.right(
                      new IllegalStateException(String.format(Locale.ROOT, "Failed to parse %s from pack %s", elementKey.identifier(), thunk.sourcePackId()), e)
+                 );
