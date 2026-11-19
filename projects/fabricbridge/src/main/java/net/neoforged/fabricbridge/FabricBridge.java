@@ -98,6 +98,18 @@ public final class FabricBridge {
         }
     }
 
+    /** Hands the bridge's Fabric payload encoder to the platform, so Fabric channels encode with Fabric's codec. */
+    private static void installFabricPayloadEncodeHook() {
+        try {
+            var hooks = Class.forName(
+                    "net.neoforged.neoforge.network.registration.FabricChannelDecodeHooks");
+            hooks.getMethod("setFabricPayloadEncoder", java.util.function.BiPredicate.class)
+                    .invoke(null, (java.util.function.BiPredicate<Object, Object>) FabricBridgeHooks::encodeFabricPayload);
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not install the Fabric payload encode hook", t);
+        }
+    }
+
     /**
      * Hands the bridge's Fabric-mod namespace test to the platform's registry-sync warning hook.
      *
@@ -156,6 +168,7 @@ public final class FabricBridge {
             }
             hooksInstalled = true;
             installFabricChannelDecodeHook();
+            installFabricPayloadEncodeHook();
             installFabricRegistrySyncHook();
         }
     }

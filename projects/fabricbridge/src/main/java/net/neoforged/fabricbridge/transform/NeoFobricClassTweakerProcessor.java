@@ -306,6 +306,79 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
     /** Guards against re-entering the scan from a class load triggered while reading the jars. */
     private static boolean scanningTransitiveInterfaces;
 
+    /**
+     * The access half of the same rule files: which classes a mod widener makes extendable, and which
+     * members it makes mutable or extendable.
+     *
+     * <p>Fabric's own tweaker applies these too, but only once fabric-loader has read the mods. The
+     * game loads some classes before that point - {@code RegistryDataLoader}, whose
+     * {@code SYNCHRONIZED_REGISTRIES} fabric-api's registry sync assigns to from its own class, is
+     * loaded during the bootstrap - and a rule that arrives after the class was transformed never
+     * applies: the field stayed {@code static final} and the assignment died with
+     * {@code IllegalAccessError: Update to static final field ... attempted from a different class},
+     * which skipped the entrypoints of every mod that registers a synced dynamic registry (frozenlib,
+     * spell_engine, Twilight Forest). Reading the rules out of the jars here makes them independent of
+     * that ordering.
+     */
+    private record FabricAccessRules(Set<String> extendableClasses,
+            Map<String, Set<String>> mutableFields,
+            Map<String, Set<String>> extendableMethods) {
+        static final FabricAccessRules EMPTY = new FabricAccessRules(Set.of(), Map.of(), Map.of());
+
+        boolean touches(String internalName) {
+            return extendableClasses.contains(internalName) || mutableFields.containsKey(internalName)
+                    || extendableMethods.containsKey(internalName);
+        }
+    }
+
+    private static volatile FabricAccessRules fabricAccessRules;
+
+    private static FabricAccessRules fabricAccessRules() {
+        // The scan below fills both caches; run it once.
+        transitiveInterfaces();
+        var rules = fabricAccessRules;
+        return rules == null ? FabricAccessRules.EMPTY : rules;
+    }
+
+    /**
+     * Applies the rules read out of the mods' rule files to one class.
+     *
+     * @return whether the class changed
+     */
+    private static boolean applyFabricAccessRules(ClassNode node) {
+        var rules = fabricAccessRules;
+        if (rules == null || !rules.touches(node.name)) {
+            return false;
+        }
+        var changed = false;
+        if (rules.extendableClasses().contains(node.name) && (node.access & Opcodes.ACC_FINAL) != 0) {
+            node.access &= ~Opcodes.ACC_FINAL;
+            changed = true;
+        }
+        var mutableFields = rules.mutableFields().get(node.name);
+        if (mutableFields != null) {
+            for (var field : node.fields) {
+                if ((field.access & Opcodes.ACC_FINAL) != 0 && mutableFields.contains(field.name + field.desc)) {
+                    field.access &= ~Opcodes.ACC_FINAL;
+                    changed = true;
+                }
+            }
+        }
+        var extendableMethods = rules.extendableMethods().get(node.name);
+        if (extendableMethods != null) {
+            for (var method : node.methods) {
+                if ((method.access & Opcodes.ACC_FINAL) != 0 && extendableMethods.contains(method.name + method.desc)) {
+                    method.access &= ~Opcodes.ACC_FINAL;
+                    changed = true;
+                }
+            }
+        }
+        if (changed) {
+            LOGGER.debug("[NeoFobric] Applied the Fabric access rules to {}", node.name.replace('/', '.'));
+        }
+        return changed;
+    }
+
     private static Map<String, List<String>> transitiveInterfaces() {
         var pairs = transitiveInterfaces;
         if (pairs != null) {
@@ -323,6 +396,8 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
             scanningTransitiveInterfaces = true;
             try {
                 var collected = new java.util.HashMap<String, java.util.LinkedHashSet<String>>();
+                // Second accumulator for the access half of the same files.
+                var accessTweaker = net.fabricmc.loader.impl.lib.classtweaker.api.ClassTweaker.newInstance();
                 for (var path : FabricJarRegistry.getPaths()) {
                     try (var jar = JarContents.ofPath(path)) {
                         jar.visitContent((name, resource) -> {
@@ -330,16 +405,19 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
                                 return;
                             }
                             try (var in = resource.open()) {
+                                var bytes = in.readAllBytes();
                                 net.fabricmc.loader.impl.lib.classtweaker.api.ClassTweakerReader.create(
-                                        new net.fabricmc.loader.impl.lib.classtweaker.api.visitor.ClassTweakerVisitor() {
-                                        @Override
-                                        public void visitInjectedInterface(String target, String iface, boolean transitive) {
-                                            if (transitive) {
-                                                collected.computeIfAbsent(target, key -> new java.util.LinkedHashSet<>())
-                                                        .add(ClassTweakerHierarchy.rawInterfaceName(iface));
-                                            }
-                                        }
-                                        }).read(in.readAllBytes());
+                                        net.fabricmc.loader.impl.lib.classtweaker.api.visitor.ClassTweakerVisitor.forward(
+                                                accessTweaker,
+                                                new net.fabricmc.loader.impl.lib.classtweaker.api.visitor.ClassTweakerVisitor() {
+                                                    @Override
+                                                    public void visitInjectedInterface(String target, String iface, boolean transitive) {
+                                                        if (transitive) {
+                                                            collected.computeIfAbsent(target, key -> new java.util.LinkedHashSet<>())
+                                                                    .add(ClassTweakerHierarchy.rawInterfaceName(iface));
+                                                        }
+                                                    }
+                                                })).read(bytes);
                             } catch (Throwable t) {
                                 LOGGER.debug("[NeoFobric] Could not read the class tweaker {} of {}", name,
                                         path.getFileName(), t);
@@ -354,6 +432,42 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
                 transitiveInterfaces = Map.copyOf(frozen);
                 if (!frozen.isEmpty()) {
                     LOGGER.info("[NeoFobric] Transitive interface injections declared by the Fabric jars: {}", frozen);
+                }
+                // Flatten the access rules into the shapes the transform pass looks up.
+                var extendableClasses = new java.util.LinkedHashSet<String>();
+                var mutableFields = new java.util.HashMap<String, java.util.LinkedHashSet<String>>();
+                var extendableMethods = new java.util.HashMap<String, java.util.LinkedHashSet<String>>();
+                for (var widener : accessTweaker.getAllAccessWideners().values()) {
+                    widener.getAllFieldAccesses().forEach((triple, access) -> {
+                        if (access.isMutable()) {
+                            mutableFields.computeIfAbsent(triple.getOwner(), key -> new java.util.LinkedHashSet<>())
+                                    .add(triple.getName() + triple.getDesc());
+                        }
+                    });
+                    widener.getAllMethodAccesses().forEach((triple, access) -> {
+                        if (access.isExtendable()) {
+                            extendableMethods.computeIfAbsent(triple.getOwner(), key -> new java.util.LinkedHashSet<>())
+                                    .add(triple.getName() + triple.getDesc());
+                        }
+                    });
+                }
+                // Class-level rules come from the same map: the widener is keyed by its class.
+                accessTweaker.getAllAccessWideners().forEach((owner, widener) -> {
+                    var classAccess = widener.getClassAccess();
+                    if (classAccess != null && classAccess.isExtendable()) {
+                        extendableClasses.add(owner);
+                    }
+                });
+                var frozenFields = new java.util.HashMap<String, Set<String>>(mutableFields.size());
+                mutableFields.forEach((owner, members) -> frozenFields.put(owner, Set.copyOf(members)));
+                var frozenMethods = new java.util.HashMap<String, Set<String>>(extendableMethods.size());
+                extendableMethods.forEach((owner, members) -> frozenMethods.put(owner, Set.copyOf(members)));
+                fabricAccessRules = new FabricAccessRules(Set.copyOf(extendableClasses),
+                        Map.copyOf(frozenFields), Map.copyOf(frozenMethods));
+                if (!extendableClasses.isEmpty() || !frozenFields.isEmpty() || !frozenMethods.isEmpty()) {
+                    LOGGER.info("[NeoFobric] Access rules read from the Fabric jars: {} extendable class(es), "
+                            + "{} class(es) with mutable fields, {} class(es) with extendable methods",
+                            extendableClasses.size(), frozenFields.size(), frozenMethods.size());
                 }
                 return transitiveInterfaces;
             } finally {
@@ -564,7 +678,8 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
                 && !InjectedInterfaceSource.get().containsKey(context.node().name)
                 && !ENUM_EXTENSION_TARGETS.contains(context.node().name)
                 && !net.neoforged.fabricbridge.compbridlnk.OwoCompat.handlesClass(context.node().name)
-                && !isFabricClassTweakerTarget(context.node().name)) {
+                && !isFabricClassTweakerTarget(context.node().name)
+                && !fabricAccessRules().touches(context.node().name)) {
             return ComputeFlags.NO_REWRITE;
         }
 
@@ -588,7 +703,11 @@ public final class NeoFobricClassTweakerProcessor implements ClassProcessor {
         }
         // First: a mod's access widener can widen or un-final anything, and the rest of this method
         // (and Mixin, which runs later) should see the tweaked class.
-        if (isFabricClassTweakerTarget(node.name)) {
+        if (isFabricClassTweakerTarget(node.name) || fabricAccessRules().touches(node.name)) {
+            // Our own reading of the rules first: Fabric's tweaker only knows them once fabric-loader
+            // has read the mods, and a class the game loads before that point (RegistryDataLoader is
+            // one) would keep its `final` and reject the write Fabric's registry sync makes into it.
+            changed |= applyFabricAccessRules(node);
             changed |= applyFabricClassTweaker(node);
             // A widener that makes a private method accessible leaves it un-overridable - that is the
             // point for a private method, nobody was allowed to override it - and the visitor spells that out

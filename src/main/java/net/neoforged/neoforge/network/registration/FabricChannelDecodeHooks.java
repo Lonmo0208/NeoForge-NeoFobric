@@ -38,4 +38,29 @@ public final class FabricChannelDecodeHooks {
         var test = fabricChannelTest;
         return channel != null && test.test(channel);
     }
+
+    /**
+     * The encode-side mirror: a Fabric payload's codec lives in Fabric's own registry, and the
+     * platform's fallback codec would encode it as an "unknown channel" - which then dies with a cast
+     * when the payload is Fabric's own class. The bridge installs the encoder.
+     */
+    private static volatile java.util.function.BiPredicate<Object, Object> fabricPayloadEncoder =
+            (output, payload) -> false;
+
+    /** Installs the bridge's Fabric payload encoder. A null encoder restores the pass-through. */
+    public static void setFabricPayloadEncoder(java.util.function.BiPredicate<Object, Object> encoder) {
+        fabricPayloadEncoder = encoder == null ? (output, payload) -> false : encoder;
+    }
+
+    /**
+     * Encodes a payload with Fabric's own codec when the bridge knows the channel.
+     *
+     * @param output  the buffer the payload is being written to
+     * @param payload the payload
+     * @return whether the payload was encoded here, in which case the caller must not encode it again
+     */
+    public static boolean encodeViaFabric(Object output, Object payload) {
+        var encoder = fabricPayloadEncoder;
+        return encoder != null && encoder.test(output, payload);
+    }
 }

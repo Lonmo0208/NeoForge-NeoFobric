@@ -936,7 +936,6 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                         path.getFileName());
                 FabricJarRegistry.markForeignModPath(path);
                 noteFmlSidePackages(path);
-                return;
             }
             // Below NeoForge sits Fabric. A Fabric build that also ships a stray legacy mods.toml is still a
             // Fabric mod - Create: Ultimate Factory's carries one with modLoader="javafml" and
@@ -984,6 +983,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         LOGGER.info("[NeoFobric] Found Fabric mod {} {} ({})", info.modId(), info.version(), path);
 
         // Extract nested jars to the cache and examine them as well.
+        pruneNestedCache(info);
         for (var nestedJar : info.nestedJarPaths()) {
             try {
                 var extracted = extractNestedJar(path, info, nestedJar);
@@ -2091,12 +2091,22 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         var cacheDir = modsDir.resolve(MixinJarPatcher.CACHE_DIR_NAME);
         var shellIds = new ArrayList<String>();
         var writtenShellIds = new java.util.HashSet<String>();
+        // A shell is what makes FML answer `ModList.getModContainerById(<fabric id>)` with a container
+        // that has an event bus; Architectury's NeoForge hooks need exactly that lookup while the
+        // Fabric entrypoints run. `-Dneofobric.shellAllFabricMods=true` shells every bridged mod for
+        // diagnosis.
+        var allFabricMods = "true".equalsIgnoreCase(System.getProperty("neofobric.shellAllFabricMods", "false"));
+        // Which loader the shell jars name. The bridge's loader hands out a bus that replays
+        // registrations arriving after the platform's window closed.
+        var shellLoader = System.getProperty("neofobric.shellLanguageLoader",
+                net.neoforged.fabricbridge.shell.BridgeShellLanguageLoader.NAME);
         for (var entry : fabricJars.entrySet()) {
             var jarPath = entry.getKey();
             var info = entry.getValue();
             var displayName = info.displayName() == null || info.displayName().isBlank()
                     ? info.modId() : info.displayName();
-            if (!net.neoforged.fabricbridge.compbridlnk.ArchitecturyCompat.usesArchitectury(jarPath)) {
+            if (!allFabricMods
+                    && !net.neoforged.fabricbridge.compbridlnk.ArchitecturyCompat.usesArchitectury(jarPath)) {
                 continue;
             }
             if (jarJarProvidedIds.contains(normalizeModId(info.modId()))) {
@@ -2111,13 +2121,13 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             var shell = cacheDir.resolve(jarPath.getFileName().toString() + SHELL_SUFFIX);
             try {
                 Files.createDirectories(cacheDir);
-                var toml = ("modLoader=\"javafml\"\n"
-                        + "loaderVersion=\"[3,)\"\n"
+                var toml = ("modLoader=\"" + shellLoader + "\"\n"
+                        + "loaderVersion=\"[1,)\"\n"
                         + "license=\"See the Fabric build of this mod\"\n"
                         + "\n"
                         + "[[mods]]\n"
                         + "modId=\"" + shellId + "\"\n"
-                        + "version=\"" + info.version() + "\"\n"
+                        + "version=\"" + fmlShellVersion(info.version()) + "\"\n"
                         + "displayName=\"" + displayName.replace("\"", "'") + " (Fabric, bridged)\"\n")
                         .getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 try (var out = new java.util.zip.ZipOutputStream(Files.newOutputStream(shell,
@@ -2133,8 +2143,8 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             }
             pipeline.addPath(shell, ModFileDiscoveryAttributes.DEFAULT, IncompatibleFileReporting.WARN_ALWAYS);
             shellIds.add(shellId);
-            LOGGER.info("[NeoFobric] Registered the shell FML mod {} ({}) {} so the Fabric build's Architectury "
-                    + "registrations can resolve it", shellId, info.modId(), info.version());
+            LOGGER.info("[NeoFobric] Registered the shell FML mod {} ({}) {} through {} so the Fabric build's "
+                    + "NeoForge-side lookups resolve it", shellId, info.modId(), info.version(), shellLoader);
         }
         if (!shellIds.isEmpty()) {
             // The platform re-posts the RegisterEvent pass for these buses right behind the Fabric
@@ -2151,6 +2161,25 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             id = "fabric_" + id;
         }
         return id;
+    }
+
+    /**
+     * {@return a version FML can parse for the shell} A Fabric mod may declare no version at all
+     * ({@code fabric.mod.json} without a version, or one built from a manifest placeholder that never
+     * got substituted - fabric-loader then reports {@code unspecified}), and FML refuses a mod whose
+     * version does not parse: "Illegal version number specified unspecified". The shell only carries
+     * the version so mod lists and dependency ranges see something sensible, so the first numeric
+     * group is used and {@code 1.0.0} stands in when there is none.
+     */
+    private static String fmlShellVersion(String fabricVersion) {
+        if (fabricVersion == null) {
+            return "1.0.0";
+        }
+        var matcher = java.util.regex.Pattern.compile("\\d+(?:\\.\\d+)*").matcher(fabricVersion);
+        if (!matcher.find()) {
+            return "1.0.0";
+        }
+        return matcher.group();
     }
 
     /**
@@ -2209,6 +2238,59 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             LOGGER.debug("[NeoFobric] Could not delete {}", path, e);
         }
     }
+
+    /**
+     * Removes cached nested jars that the parent no longer ships.
+     *
+     * <p>Extraction only ever writes (a jar the parent still ships is replaced when the parent is
+     * newer), so a module the parent used to bundle stayed in the cache forever. After a mod update
+     * that dropped or bumped a nested library, both copies were found as mods: Distant Horizons' old
+     * Fabric API module was still extracted while the standalone Fabric API brought the newer one, and
+     * the duplicate registration split the resource-condition types from the copy that parses data
+     * files - every conditioned recipe and worldgen file was skipped with "Unknown resource condition
+     * key". The cache directory belongs to one parent, so anything in it that the current nested list
+     * does not name is a leftover.
+     */
+    private static void pruneNestedCache(FabricModInfo info) {
+        var cacheId = safeCacheId(info.modId());
+        if (cacheId == null || !NESTED_CACHE_PRUNED.add(cacheId)) {
+            return;
+        }
+        var dir = getCacheDirectory().resolve(cacheId);
+        if (!Files.isDirectory(dir)) {
+            return;
+        }
+        var wanted = new java.util.HashSet<String>();
+        for (var nestedJar : info.nestedJarPaths()) {
+            var name = safeNestedFileName(nestedJar);
+            if (name == null) {
+                continue;
+            }
+            wanted.add(name);
+            // The patcher writes its rewritten copy next to the extracted one.
+            wanted.add(name + ".neofobric-realigned.jar");
+            wanted.add(name + ".neofobric-realigned.jar.neofobric-stamp");
+        }
+        var removed = 0;
+        try (var files = Files.list(dir)) {
+            for (var file : (Iterable<Path>) files::iterator) {
+                if (!wanted.contains(file.getFileName().toString())) {
+                    deleteQuietly(file);
+                    removed++;
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.debug("[NeoFobric] Could not prune the nested jar cache of {}", info.modId(), e);
+        }
+        if (removed > 0) {
+            LOGGER.info("[NeoFobric] Removed {} cached nested jar(s) of {} that the mod no longer ships",
+                    removed, info.modId());
+        }
+    }
+
+    /** One prune per parent and launch; examineJar can reach the same parent more than once. */
+    private static final java.util.Set<String> NESTED_CACHE_PRUNED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private static Path extractNestedJar(Path parentPath, FabricModInfo parentInfo, String nestedJar) throws IOException {
         byte[] nestedBytes;

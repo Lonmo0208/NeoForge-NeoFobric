@@ -1,6 +1,6 @@
 --- a/net/minecraft/resources/RegistryLoadTask.java
 +++ b/net/minecraft/resources/RegistryLoadTask.java
-@@ -27,6 +_,9 @@
+@@ -27,20 +_,89 @@
  import net.minecraft.util.StrictJsonParser;
  
  public abstract class RegistryLoadTask<T> {
@@ -10,8 +10,11 @@
      private final Object registryWriteLock = new Object();
      protected final RegistryDataLoader.RegistryData<T> data;
      private final WritableRegistry<T> registry;
-@@ -35,12 +_,76 @@
+     protected final ConcurrentHolderGetter<T> concurrentRegistrationGetter;
+     protected final Map<ResourceKey<?>, Exception> loadingErrors;
      private volatile boolean elementsRegistered;
++    /** NeoFobric: keys whose element was skipped, so their holders can be dropped again before the freeze. */
++    private final java.util.Set<ResourceKey<T>> skippedKeys = java.util.concurrent.ConcurrentHashMap.newKeySet();
  
      protected RegistryLoadTask(RegistryDataLoader.RegistryData<T> data, Lifecycle lifecycle, Map<ResourceKey<?>, Exception> loadingErrors) {
 +        var registryBuilder = new net.neoforged.neoforge.registries.RegistryBuilder<>(data.key());
@@ -88,7 +91,7 @@
      protected ResourceKey<? extends Registry<T>> registryKey() {
          return this.registry.key();
      }
-@@ -64,7 +_,13 @@
+@@ -64,7 +_,20 @@
              elements.forEach(
                  element -> element.value
                      .ifLeft(value -> this.registry.register(element.key, (T)value, element.registrationInfo))
@@ -96,6 +99,13 @@
 +                    .ifRight(error -> {
 +                        if (error == SKIPPED_ELEMENT_MARKER) {
 +                            LOGGER.debug("Skipping loading registry entry {} as its conditions were not met", element.key);
++                            // NeoFobric: a holder may already have been handed out for this key while
++                            // the elements were parsed (Fabric's registry sync asks for every one); a
++                            // skipped element would leave it unbound and freeze() rejects the registry.
++                            this.skippedKeys.add(element.key);
++                            if (this.registry instanceof net.minecraft.core.MappedRegistry<T> mapped) {
++                                mapped.forgetUnregisteredHolder(element.key);
++                            }
 +                        } else {
 +                            this.loadingErrors.put(element.key, error);
 +                        }
@@ -103,7 +113,20 @@
              );
              this.elementsRegistered = true;
          }
-@@ -103,7 +_,15 @@
+@@ -78,6 +_,12 @@
+ 
+     public boolean freezeRegistry(Map<ResourceKey<?>, Exception> loadingErrors) {
+         try {
++            // NeoFobric: a skipped element may have had its holder created after it was dropped once -
++            // Fabric's registry sync snapshots every pending key while the elements are parsed - and an
++            // unbound holder fails the freeze ("Unbound values in registry ...") and with it the world load.
++            if (!this.skippedKeys.isEmpty() && this.registry instanceof net.minecraft.core.MappedRegistry<T> mapped) {
++                this.skippedKeys.forEach(mapped::forgetUnregisteredHolder);
++            }
+             this.registry.freeze();
+             return true;
+         } catch (Exception e) {
+@@ -103,8 +_,26 @@
          ) {
              try (Reader reader = thunk.openAsReader()) {
                  JsonElement json = StrictJsonParser.parse(reader);
@@ -118,5 +141,16 @@
 +                    return Either.right(SKIPPED_ELEMENT_MARKER);
 +                }
              } catch (Exception e) {
++                // NeoFobric: a Fabric mod's recipe may use Fabric's ingredient shapes ("fabric:any",
++                // "fabric:components"). Those are not parseable here yet, and one such recipe failed
++                // the whole load - the game then showed "current data packs contain errors" and
++                // refused to open the world. Recipes the bridge cannot decode are skipped with a
++                // warning instead, the way Fabric treats a mod's broken recipe.
++                if (elementKey.isFor(net.minecraft.core.registries.Registries.RECIPE)
++                        && net.neoforged.fabricbridge.FabricBridgeHooks.tolerateUnparseableRecipe(
++                                elementKey.identifier().toString(), e)) {
++                    return Either.right(SKIPPED_ELEMENT_MARKER);
++                }
                  return Either.right(
                      new IllegalStateException(String.format(Locale.ROOT, "Failed to parse %s from pack %s", elementKey.identifier(), thunk.sourcePackId()), e)
+                 );
