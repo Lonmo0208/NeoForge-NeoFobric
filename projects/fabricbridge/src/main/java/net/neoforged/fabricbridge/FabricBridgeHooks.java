@@ -130,8 +130,155 @@ public final class FabricBridgeHooks {
         // no-op whenever the mod it links to is absent.
         net.neoforged.fabricbridge.compbridlnk.SodiumConfigApiLink.linkSodiumConfigEntryPoints();
         net.neoforged.fabricbridge.compbridlnk.ModMenuConfigLink.linkModMenuConfigScreens();
+        // Fabric API's resource-conditions module registers its built-in condition types from its own
+        // `main` entrypoint (`fabric:all_mods_loaded` and friends). When that registration has not
+        // happened by now, every conditioned data file fails to parse later ("Unknown resource
+        // condition key: fabric:all_mods_loaded") and is skipped - a set that way lost 227 recipes, 35
+        // worldgen modifiers and the overworld dimension override. Running the initializer here makes
+        // the types exist regardless of how the entrypoint was dispatched.
+        ensureBuiltInResourceConditionTypes();
+        // The same check for Fabric's custom ingredient serializers: `fabric:any`/`fabric:components`
+        // are registered by the recipe API's main entrypoint, and when that registration is missing
+        // every Fabric-shaped recipe fails to parse and the world refuses to open ("current data packs
+        // contain errors").
+        ensureFabricCustomIngredientSerializersEarly();
+        // Fabric API's biome API registers `fabric:biome_modifier` as a synced dynamic registry from
+        // its own main entrypoint. Without it the integrated server dies while finalising worldgen:
+        // "Missing registry: minecraft:root / fabric:biome_modifier" - the world never starts.
+        ensureFabricBiomeModifierRegistry();
+        // Fabric's own channel-registration payload (`minecraft:fabric_register`) is registered by the
+        // networking module's main entrypoint. Without that registration the server encodes it with the
+        // platform's fallback "unknown channel" codec and the join dies with
+        // "RegistrationPayload cannot be cast to DiscardedPayload" while the client is kicked in the
+        // configuration phase.
+        ensureFabricNetworkingPayloads();
         runHooksTheGameReachesTooEarly();
         traceFabricPaths();
+    }
+
+    /**
+     * Registers Fabric networking's own payload types when its entrypoint did not.
+     *
+     * <p>Checks the configuration-phase registry first: registering twice throws.
+     */
+    private static void ensureFabricNetworkingPayloads() {
+        try {
+            var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher()
+                    .getTargetClassLoader();
+            var registryClass = Class.forName(
+                    "net.fabricmc.fabric.impl.networking.PayloadTypeRegistryImpl", true, gameLoader);
+            var configuration = registryClass.getField("CLIENTBOUND_CONFIGURATION").get(null);
+            var packetTypesField = registryClass.getDeclaredField("packetTypes");
+            packetTypesField.setAccessible(true);
+            var packetTypes = (java.util.Map<?, ?>) packetTypesField.get(configuration);
+            var identifier = Class.forName("net.minecraft.resources.Identifier", false, gameLoader);
+            var registerType = identifier.getMethod("parse", String.class).invoke(null, "minecraft:fabric_register");
+            if (packetTypes.containsKey(registerType)) {
+                return;
+            }
+            var networking = Class.forName(
+                    "net.fabricmc.fabric.impl.networking.NetworkingImpl", true, gameLoader);
+            networking.getMethod("init").invoke(null);
+            var commonPackets = Class.forName(
+                    "net.fabricmc.fabric.impl.networking.CommonPacketsImpl", true, gameLoader);
+            commonPackets.getMethod("init").invoke(null);
+            LOGGER.info("[NeoFobric] Fabric networking's payload types were not registered; ran its initializers");
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not ensure Fabric networking's payload types", t);
+        }
+    }
+
+    /**
+     * Registers Fabric's {@code fabric:biome_modifier} datapack registry when its entrypoint did not.
+     *
+     * <p>Checks the platform's synced-registry list first: registering twice throws.
+     */
+    private static void ensureFabricBiomeModifierRegistry() {
+        try {
+            var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher()
+                    .getTargetClassLoader();
+            var loaderClass = Class.forName("net.minecraft.resources.RegistryDataLoader", false, gameLoader);
+            var synced = (java.util.List<?>) loaderClass.getField("SYNCHRONIZED_REGISTRIES").get(null);
+            for (var data : synced) {
+                if (data != null && data.toString().contains("fabric:biome_modifier")) {
+                    return;
+                }
+            }
+            var impl = Class.forName(
+                    "net.fabricmc.fabric.impl.biome.modification.data.BiomeModifiersImpl", true, gameLoader);
+            impl.getMethod("onInitialize").invoke(impl.getConstructor().newInstance());
+            LOGGER.info("[NeoFobric] fabric:biome_modifier was not registered; ran the biome API's initializer");
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not ensure the fabric:biome_modifier registry", t);
+        }
+    }
+
+    /**
+     * Registers Fabric's built-in custom-ingredient serializers when their entrypoint did not.
+     *
+     * <p>Checks a known built-in id first: registering twice throws.
+     */
+    private static void ensureFabricCustomIngredientSerializersEarly() {
+        try {
+            var classes = fabricIngredientClasses();
+            if (classes == null) {
+                return;
+            }
+            var any = classes.identifierParse().invoke(null, "fabric:any");
+            if (classes.getSerializer().invoke(null, any) != null) {
+                return;
+            }
+            runCustomIngredientInitializer();
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not check the custom ingredient serializers", t);
+        }
+    }
+
+    /** Runs Fabric's custom-ingredient initializer once. */
+    private static void runCustomIngredientInitializer() {
+        synchronized (FabricBridgeHooks.class) {
+            if (fabricCustomIngredientInitRan) {
+                return;
+            }
+            fabricCustomIngredientInitRan = true;
+            try {
+                var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher()
+                        .getTargetClassLoader();
+                var init = Class.forName(
+                        "net.fabricmc.fabric.impl.recipe.ingredient.CustomIngredientInit", true, gameLoader);
+                init.getMethod("onInitialize").invoke(init.getConstructor().newInstance());
+                LOGGER.info("[NeoFobric] The custom ingredient serializers had not been registered; ran the "
+                        + "recipe API's initializer so Fabric-shaped ingredients parse");
+            } catch (Throwable t) {
+                LOGGER.debug("[NeoFobric] Could not run the custom ingredient initializer", t);
+            }
+        }
+    }
+
+    /**
+     * Registers Fabric API's built-in resource condition types when the module's own entrypoint did not.
+     *
+     * <p>Registration throws on a duplicate, so this only runs when a known built-in id does not resolve.
+     */
+    private static void ensureBuiltInResourceConditionTypes() {
+        try {
+            var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher()
+                    .getTargetClassLoader();
+            var identifier = Class.forName("net.minecraft.resources.Identifier", false, gameLoader);
+            var conditions = Class.forName(
+                    "net.fabricmc.fabric.api.resource.conditions.v1.ResourceConditions", false, gameLoader);
+            var probe = identifier.getMethod("parse", String.class).invoke(null, "fabric:all_mods_loaded");
+            if (conditions.getMethod("getConditionType", identifier).invoke(null, probe) != null) {
+                return;
+            }
+            var impl = Class.forName(
+                    "net.fabricmc.fabric.impl.resource.conditions.ResourceConditionsImpl", true, gameLoader);
+            impl.getMethod("onInitialize").invoke(impl.getConstructor().newInstance());
+            LOGGER.info("[NeoFobric] The resource-conditions module had not registered its built-in condition "
+                    + "types; ran its initializer so conditioned data files parse");
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not ensure the built-in resource condition types", t);
+        }
     }
 
     /**
@@ -1909,6 +2056,251 @@ public final class FabricBridgeHooks {
      * @param id   the resource id, for diagnostics
      * @param ops  the ops the loader parses with; a {@code RegistryOps} carries the registry lookup
      */
+    /**
+     * Parses a Fabric custom ingredient ({@code {"fabric:type": "fabric:any", ...}}) for the platform's
+     * ingredient codec.
+     *
+     * <p>Fabric's recipe API swaps {@code Ingredient.CODEC} for a codec that also understands its own
+     * types, but it does that from a mixin into {@code Ingredient}'s class initialiser - and a class
+     * loaded before the Fabric mixin configs are registered never sees it. That is the usual case for
+     * {@code Ingredient}: the platform's registry bootstrap touches it. The platform's codec then only
+     * knows NeoForge's own ingredient types and vanilla shapes, so every Fabric recipe using
+     * {@code fabric:any}/{@code fabric:components}/... failed to parse ("Unknown custom ingredient
+     * serializer: fabric:any") and the recipe was dropped - Twilight Forest's traveller's gear
+     * modifiers and a pile of compat recipes among them.
+     *
+     * <p>Called from {@code IngredientCodecs}, which cannot reference Fabric classes itself.
+     *
+     * @param ops  the ops the recipe is parsed with
+     * @param json the ingredient element
+     * @return the parsed {@code Ingredient}, or null when this is not a Fabric custom ingredient
+     */
+    public static Object decodeFabricIngredient(Object ops, Object json) {
+        if (!bridgeActive() || ops == null) {
+            return null;
+        }
+        String type;
+        if (json instanceof com.google.gson.JsonObject object) {
+            var typeElement = object.get("fabric:type");
+            if (typeElement == null || !typeElement.isJsonPrimitive()) {
+                return null;
+            }
+            type = typeElement.getAsString();
+        } else {
+            return null;
+        }
+        try {
+            var classes = fabricIngredientClasses();
+            if (classes == null) {
+                return null;
+            }
+            var identifier = classes.identifierParse().invoke(null, type);
+            var serializer = classes.getSerializer().invoke(null, identifier);
+            if (serializer == null) {
+                // The built-in serializers are registered by the module's own main entrypoint. When that
+                // registration is missing (the same class of failure as the resource condition types),
+                // run the module's initializer once and ask again.
+                runCustomIngredientInitializer();
+                serializer = classes.getSerializer().invoke(null, identifier);
+            }
+            if (serializer == null) {
+                // A Fabric build of a mod that is not installed: same as an unknown NeoForge type.
+                return null;
+            }
+            var mapCodec = classes.getCodec().invoke(serializer);
+            var parsed = (Object) classes.decode().invoke(mapCodec, ops, json);
+            var result = (java.util.Optional<?>) classes.dataResultResult().invoke(parsed);
+            if (result.isEmpty()) {
+                return null;
+            }
+            return classes.customIngredientConstructor().newInstance(result.get());
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not parse the Fabric custom ingredient of type {}", type, t);
+            return null;
+        }
+    }
+
+    /**
+     * Encodes an {@code Ingredient} that came from a Fabric custom ingredient back to JSON.
+     *
+     * @return the encoded element, or null when the ingredient is not a Fabric custom one
+     */
+    public static Object encodeFabricIngredient(Object ingredient, Object ops) {
+        if (!bridgeActive() || ingredient == null || ops == null) {
+            return null;
+        }
+        try {
+            var classes = fabricIngredientClasses();
+            if (classes == null || !classes.customIngredientImpl().isInstance(ingredient)) {
+                return null;
+            }
+            var custom = classes.getCustomIngredient().invoke(ingredient);
+            var serializer = classes.customIngredientGetSerializer().invoke(custom);
+            var mapCodec = classes.getCodec().invoke(serializer);
+            var encoded = (Object) classes.encode().invoke(mapCodec, custom, ops, classes.empty().invoke(ops));
+            var result = (java.util.Optional<?>) classes.dataResultResult().invoke(encoded);
+            return result.orElse(null);
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not encode a Fabric custom ingredient", t);
+            return null;
+        }
+    }
+
+    /** The reflective handles for Fabric's custom-ingredient classes, resolved once. */
+    private record FabricIngredientClasses(Class<?> customIngredientImpl, java.lang.reflect.Constructor<?> customIngredientConstructor,
+            java.lang.reflect.Method identifierParse, java.lang.reflect.Method getSerializer, java.lang.reflect.Method getCodec,
+            java.lang.reflect.Method decode, java.lang.reflect.Method encode, java.lang.reflect.Method empty,
+            java.lang.reflect.Method dataResultResult, java.lang.reflect.Method getCustomIngredient,
+            java.lang.reflect.Method customIngredientGetSerializer) {}
+
+    private static volatile FabricIngredientClasses fabricIngredientClasses;
+    private static volatile boolean fabricIngredientClassesResolved;
+
+    private static FabricIngredientClasses fabricIngredientClasses() {
+        if (fabricIngredientClassesResolved) {
+            return fabricIngredientClasses;
+        }
+        synchronized (FabricBridgeHooks.class) {
+            if (fabricIngredientClassesResolved) {
+                return fabricIngredientClasses;
+            }
+            try {
+                var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
+                var impl = Class.forName("net.fabricmc.fabric.impl.recipe.ingredient.CustomIngredientImpl", true, gameLoader);
+                var customIngredient = Class.forName(
+                        "net.fabricmc.fabric.api.recipe.v1.ingredient.CustomIngredient", true, gameLoader);
+                var serializer = Class.forName(
+                        "net.fabricmc.fabric.api.recipe.v1.ingredient.CustomIngredientSerializer", true, gameLoader);
+                var identifier = Class.forName("net.minecraft.resources.Identifier", true, gameLoader);
+                var mapCodec = Class.forName("com.mojang.serialization.MapCodec", false, gameLoader);
+                var dataResult = Class.forName("com.mojang.serialization.DataResult", false, gameLoader);
+                var dynamicOps = Class.forName("com.mojang.serialization.DynamicOps", false, gameLoader);
+                fabricIngredientClasses = new FabricIngredientClasses(
+                        impl,
+                        impl.getConstructor(customIngredient),
+                        identifier.getMethod("parse", String.class),
+                        impl.getMethod("getSerializer", identifier),
+                        serializer.getMethod("getCodec"),
+                        mapCodec.getMethod("decode", dynamicOps, Object.class),
+                        mapCodec.getMethod("encode", Object.class, dynamicOps, Object.class),
+                        dynamicOps.getMethod("empty"),
+                        dataResult.getMethod("result"),
+                        impl.getMethod("getCustomIngredient"),
+                        customIngredient.getMethod("getSerializer"));
+            } catch (Throwable t) {
+                LOGGER.debug("[NeoFobric] Fabric's custom ingredient API is not available; ingredient parsing "
+                        + "stays on the platform codec", t);
+                fabricIngredientClasses = null;
+            }
+            fabricIngredientClassesResolved = true;
+            return fabricIngredientClasses;
+        }
+    }
+
+    private static volatile boolean fabricCustomIngredientInitRan;
+
+    /**
+     * {@return whether a recipe that failed to parse may be skipped instead of failing the registry load}
+     *
+     * <p>A Fabric mod's recipe can be written in Fabric's ingredient shapes ({@code fabric:any},
+     * {@code fabric:components}, ...). The platform's ingredient codec does not understand them yet -
+     * Fabric replaces that codec from a mixin that a class loaded during the platform's bootstrap never
+     * sees - and one such recipe used to fail the whole {@code minecraft:recipe} registry load, which
+     * the game reports as "current data packs contain errors" before refusing to open the world. Fabric
+     * itself keeps loading when a mod ships a recipe it cannot parse, so the bridge does the same: the
+     * recipe is dropped with one warning and everything else loads.
+     */
+    /**
+     * Encodes a Fabric payload with the codec Fabric registered for its channel.
+     *
+     * <p>The platform's payload codec resolves a channel against its own registry and otherwise answers
+     * "unknown channel" with the discard codec. A payload Fabric's networking API sends - its own join
+     * channel registration first - then fails to encode ("RegistrationPayload cannot be cast to
+     * DiscardedPayload") and the client is kicked during the configuration phase. The bridge keeps
+     * Fabric's payload registries in reach, so it encodes those channels itself.
+     *
+     * @param output  the buffer being written
+     * @param payload the payload
+     * @return whether the payload was encoded here
+     */
+    public static boolean encodeFabricPayload(Object output, Object payload) {
+        if (payload == null || output == null || !payload.getClass().getName().startsWith("net.fabricmc.")) {
+            return false;
+        }
+        try {
+            var classes = fabricNetworkingPayloads();
+            if (classes == null) {
+                return false;
+            }
+            var type = payload.getClass().getMethod("type").invoke(payload);
+            var id = type.getClass().getMethod("id").invoke(type);
+            for (var registry : classes.registries()) {
+                var types = (java.util.Map<?, ?>) classes.packetTypes().get(registry);
+                if (types == null) {
+                    continue;
+                }
+                var typeAndCodec = types.get(id);
+                if (typeAndCodec == null) {
+                    continue;
+                }
+                var codec = typeAndCodec.getClass().getMethod("codec").invoke(typeAndCodec);
+                codec.getClass().getMethod("encode", Object.class, Object.class).invoke(codec, output, payload);
+                return true;
+            }
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not encode a Fabric payload with Fabric's own codec", t);
+        }
+        return false;
+    }
+
+    private record FabricNetworkingPayloads(java.lang.reflect.Field packetTypes, java.util.List<Object> registries) {}
+
+    private static FabricNetworkingPayloads fabricNetworkingPayloads() {
+        var cached = fabricNetworkingPayloads;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (FabricBridgeHooks.class) {
+            if (fabricNetworkingPayloads != null) {
+                return fabricNetworkingPayloads;
+            }
+            try {
+                var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher()
+                        .getTargetClassLoader();
+                var registryClass = Class.forName(
+                        "net.fabricmc.fabric.impl.networking.PayloadTypeRegistryImpl", true, gameLoader);
+                var packetTypes = registryClass.getDeclaredField("packetTypes");
+                packetTypes.setAccessible(true);
+                var registries = new java.util.ArrayList<Object>(4);
+                for (var name : new String[] { "CLIENTBOUND_CONFIGURATION", "CLIENTBOUND_PLAY",
+                        "SERVERBOUND_CONFIGURATION", "SERVERBOUND_PLAY" }) {
+                    registries.add(registryClass.getField(name).get(null));
+                }
+                fabricNetworkingPayloads = new FabricNetworkingPayloads(packetTypes, registries);
+            } catch (Throwable t) {
+                LOGGER.debug("[NeoFobric] Fabric's networking payload registries are not reachable", t);
+                fabricNetworkingPayloads = null;
+            }
+            return fabricNetworkingPayloads;
+        }
+    }
+
+    private static volatile FabricNetworkingPayloads fabricNetworkingPayloads;
+
+    public static boolean tolerateUnparseableRecipe(String id, Throwable error) {
+        if (!bridgeActive()) {
+            return false;
+        }
+        if (SKIPPED_RECIPES.add(id)) {
+            LOGGER.warn("[NeoFobric] Skipping the recipe {} - it could not be parsed here ({}); the rest of "
+                    + "the pack loads", id, error.toString());
+        }
+        return true;
+    }
+
+    private static final java.util.Set<String> SKIPPED_RECIPES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     public static boolean allowFabricResourceConditions(com.google.gson.JsonObject file, String type, String id, Object ops) {
         if (!bridgeActive() || !resolveFabricConditions()) {
             return true;
@@ -1965,6 +2357,10 @@ public final class FabricBridgeHooks {
             }
             try {
                 var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
+                // Belt and braces: if a data file arrives before the entrypoint hand-off ran the
+                // module's initializer, register the built-in types first - the codec cannot resolve
+                // `fabric:all_mods_loaded` without them.
+                ensureBuiltInResourceConditionTypes();
                 var condition = Class.forName("net.fabricmc.fabric.api.resource.conditions.v1.ResourceCondition", false, gameLoader);
                 fabricConditionCodec = condition.getField("CONDITION_CODEC").get(null);
                 fabricConditionTest = condition.getMethod("test",

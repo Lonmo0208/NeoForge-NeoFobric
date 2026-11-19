@@ -1,6 +1,6 @@
 --- a/net/minecraft/network/protocol/common/custom/CustomPacketPayload.java
 +++ b/net/minecraft/network/protocol/common/custom/CustomPacketPayload.java
-@@ -22,20 +_,46 @@
+@@ -22,20 +_,53 @@
      }
  
      static <B extends FriendlyByteBuf> StreamCodec<B, CustomPacketPayload> codec(
@@ -40,6 +40,13 @@
                  output.writeIdentifier(type.id());
                  StreamCodec<B, T> codec = (StreamCodec<B, T>)this.findCodec(type.id);
 +                try {
++                // NeoFobric: a channel a Fabric mod (or Fabric networking itself) registered has its codec
++                // in Fabric's own registry. The fallback would otherwise answer "unknown channel,
++                // DiscardedPayload" and the encode dies with a cast when the payload is Fabric's class.
++                if (net.neoforged.neoforge.network.registration.FabricChannelDecodeHooks
++                        .encodeViaFabric(output, payload)) {
++                    return;
++                }
                  codec.encode(output, (T)payload);
 +                } catch (RuntimeException e) {
 +                    throw new RuntimeException("Failed encoding custom payload " + type.id() + ": " + e, e); // Make it easier to debug which mod payload failed to be encoded

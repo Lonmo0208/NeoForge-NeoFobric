@@ -20,7 +20,7 @@ public class IngredientCodecs {
     public static Codec<Ingredient> codec(Codec<Ingredient> vanillaCodec) {
         var customIngredientCodec = NeoForgeRegistries.INGREDIENT_TYPES.byNameCodec().<ICustomIngredient>dispatch(
                 "neoforge:ingredient_type", ICustomIngredient::getType, IngredientType::codec);
-        return Codec.xor(customIngredientCodec, vanillaCodec)
+        var platformCodec = Codec.xor(customIngredientCodec, vanillaCodec)
                 .xmap(
                         either -> either.map(ICustomIngredient::toVanilla, i -> i),
                         ingredient -> {
@@ -30,6 +30,37 @@ public class IngredientCodecs {
                                 return Either.right(ingredient);
                             }
                         });
+        // NeoFobric: a bridge-loaded Fabric mod writes its recipes in Fabric's ingredient shape
+        // (`{"fabric:type": "fabric:any", ...}`). Fabric's recipe API replaces Ingredient#CODEC from a
+        // mixin into its class initialiser, but a class loaded before the Fabric mixin configs are
+        // registered never sees it - Ingredient is one of those, the platform's bootstrap touches it.
+        // Without this branch every such recipe failed to parse ("Unknown custom ingredient serializer:
+        // fabric:any") and was dropped. The bridge builds the codec out of Fabric's own serializers, so
+        // this is the same parse Fabric would have done.
+        return new Codec<>() {
+            @Override
+            public <T> com.mojang.serialization.DataResult<com.mojang.datafixers.util.Pair<Ingredient, T>> decode(
+                    com.mojang.serialization.DynamicOps<T> ops, T input) {
+                var fromFabric = net.neoforged.fabricbridge.FabricBridgeHooks.decodeFabricIngredient(ops, input);
+                if (fromFabric instanceof Ingredient ingredient) {
+                    return com.mojang.serialization.DataResult.success(
+                            com.mojang.datafixers.util.Pair.of(ingredient, ops.empty()));
+                }
+                return platformCodec.decode(ops, input);
+            }
+
+            @Override
+            public <T> com.mojang.serialization.DataResult<T> encode(Ingredient input,
+                    com.mojang.serialization.DynamicOps<T> ops, T prefix) {
+                var encoded = net.neoforged.fabricbridge.FabricBridgeHooks.encodeFabricIngredient(input, ops);
+                if (encoded != null) {
+                    @SuppressWarnings("unchecked")
+                    var value = (T) encoded;
+                    return com.mojang.serialization.DataResult.success(value);
+                }
+                return platformCodec.encode(input, ops, prefix);
+            }
+        };
     }
 
     private static final int CUSTOM_INGREDIENT_MARKER = -1000;

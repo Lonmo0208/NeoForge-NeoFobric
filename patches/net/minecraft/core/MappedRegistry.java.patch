@@ -96,7 +96,7 @@
          return getValueFromNullable(result);
      }
  
-@@ -269,13 +_,33 @@
+@@ -269,13 +_,54 @@
          return Objects.requireNonNull(this.componentLookup, "Registry not frozen yet");
      }
  
@@ -109,6 +109,27 @@
 +            this.allTags = MappedRegistry.TagSet.unbound();
 +        }
 +        this.frozen = false;
++    }
++
++    /**
++     * NeoFobric: drops the pending holder of a key whose element was skipped while loading.
++     *
++     * <p>Something that parsed an element can ask for the holder of a key that later has no value -
++     * Fabric's registry sync snapshots the datapack registries and asks for every holder while the
++     * elements are being parsed - and a skipped element then leaves that holder unbound, which
++     * {@link #freeze()} rejects ("Unbound values in registry ...") and the world refuses to load.
++     */
++    public void forgetUnregisteredHolder(ResourceKey<T> key) {
++        if (this.unregisteredIntrusiveHolders != null) {
++            this.unregisteredIntrusiveHolders.remove(key);
++        }
++        // A standalone holder created for the key sits in byKey from the moment it is handed out, and
++        // freeze() rejects every byKey entry that has no value - so the key has to leave both maps.
++        var holder = this.byKey.get(key);
++        if (holder != null && !holder.isBound()) {
++            this.byKey.remove(key);
++            this.byLocation.remove(key.identifier());
++        }
 +    }
 +
 +    /**
@@ -162,12 +183,10 @@
                  @Override
                  public void apply() {
                      pendingTags.forEach((id, tag) -> {
-@@ -463,6 +_,55 @@
-                 }
-             };
+@@ -465,6 +_,55 @@
          }
-+    }
-+
+     }
+ 
 +    @Override
 +    protected void clear(boolean full) {
 +        this.validateWrite();
@@ -215,6 +234,35 @@
 +    @Override
 +    public boolean containsValue(T value) {
 +        return byValue.containsKey(value);
-     }
- 
++    }
++
      private interface TagSet<T> {
+         static <T> MappedRegistry.TagSet<T> unbound() {
+             return new MappedRegistry.TagSet<T>() {
+@@ -475,17 +_,23 @@
+ 
+                 @Override
+                 public Optional<HolderSet.Named<T>> get(TagKey<T> id) {
+-                    throw new IllegalStateException("Tags not bound, trying to access " + id);
++                    // NeoFobric: fabric-loader's registry sync unfreezes the registries (with tag
++                    // clearing) while a resource reload runs, and a Fabric mod reading a block tag in
++                    // that window used to fail the whole client reload - "Tags not bound, trying to
++                    // access TagKey[...]" left the game on the title screen with "resource reload
++                    // failed". Fabric never guarantees bound tags there, so an absent tag reads as
++                    // empty instead of throwing.
++                    return Optional.empty();
+                 }
+ 
+                 @Override
+                 public void forEach(BiConsumer<? super TagKey<T>, ? super HolderSet.Named<T>> action) {
+-                    throw new IllegalStateException("Tags not bound");
++                    // No tags to visit before the first bind.
+                 }
+ 
+                 @Override
+                 public Stream<HolderSet.Named<T>> getTags() {
+-                    throw new IllegalStateException("Tags not bound");
++                    return Stream.empty();
+                 }
+             };
+         }
