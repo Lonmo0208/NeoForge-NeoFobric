@@ -944,6 +944,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                 if (metadata != null) {
                     var foreignInfo = FabricModJsonParser.parse(metadata);
                     if (foreignInfo != null) {
+                        pruneNestedCache(foreignInfo);
                         for (var nestedJar : foreignInfo.nestedJarPaths()) {
                             try {
                                 var extracted = extractNestedJar(path, foreignInfo, nestedJar);
@@ -1003,6 +1004,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         LOGGER.info("[NeoFobric] Found Fabric mod {} {} ({})", info.modId(), info.version(), path);
 
         // Extract nested jars to the cache and examine them as well.
+        pruneNestedCache(info);
         for (var nestedJar : info.nestedJarPaths()) {
             try {
                 var extracted = extractNestedJar(path, info, nestedJar);
@@ -2365,6 +2367,59 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
             LOGGER.debug("[NeoFobric] Could not delete {}", path, e);
         }
     }
+
+    /**
+     * Removes cached nested jars that the parent no longer ships.
+     *
+     * <p>Extraction only ever writes (a jar the parent still ships is replaced when the parent is
+     * newer), so a module the parent used to bundle stayed in the cache forever. After a mod update
+     * that dropped or bumped a nested library, both copies were found as mods: Distant Horizons' old
+     * Fabric API module was still extracted while the standalone Fabric API brought the newer one, and
+     * the duplicate registration split the resource-condition types from the copy that parses data
+     * files - every conditioned recipe and worldgen file was skipped with "Unknown resource condition
+     * key". The cache directory belongs to one parent, so anything in it that the current nested list
+     * does not name is a leftover.
+     */
+    private static void pruneNestedCache(FabricModInfo info) {
+        var cacheId = safeCacheId(info.modId());
+        if (cacheId == null || !NESTED_CACHE_PRUNED.add(cacheId)) {
+            return;
+        }
+        var dir = getCacheDirectory().resolve(cacheId);
+        if (!Files.isDirectory(dir)) {
+            return;
+        }
+        var wanted = new java.util.HashSet<String>();
+        for (var nestedJar : info.nestedJarPaths()) {
+            var name = safeNestedFileName(nestedJar);
+            if (name == null) {
+                continue;
+            }
+            wanted.add(name);
+            // The patcher writes its rewritten copy next to the extracted one.
+            wanted.add(name + ".neofobric-realigned.jar");
+            wanted.add(name + ".neofobric-realigned.jar.neofobric-stamp");
+        }
+        var removed = 0;
+        try (var files = Files.list(dir)) {
+            for (var file : (Iterable<Path>) files::iterator) {
+                if (!wanted.contains(file.getFileName().toString())) {
+                    deleteQuietly(file);
+                    removed++;
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.debug("[NeoFobric] Could not prune the nested jar cache of {}", info.modId(), e);
+        }
+        if (removed > 0) {
+            LOGGER.info("[NeoFobric] Removed {} cached nested jar(s) of {} that the mod no longer ships",
+                    removed, info.modId());
+        }
+    }
+
+    /** One prune per parent and launch; examineJar can reach the same parent more than once. */
+    private static final java.util.Set<String> NESTED_CACHE_PRUNED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private static Path extractNestedJar(Path parentPath, FabricModInfo parentInfo, String nestedJar) throws IOException {
         byte[] nestedBytes;
