@@ -112,6 +112,15 @@ public abstract class CreateLauncherProfile extends DefaultTask {
                 "-Djava.net.preferIPv6Addresses=system",
                 "-DlibraryDirectory=${library_directory}"));
 
+        // Java4Shell (CVE-2026-114938): OpenJDK's AVX-512 accelerated Base64 decoder is
+        // memory-unsafe. The diagnostic flag turns that intrinsic off and, unlike -XX:UseAVX=2,
+        // is accepted on every architecture (ARM JVMs reject UseAVX). Fabric's meta puts the same
+        // pair into the launcher profiles it serves; NeoForge launchers read the profile this task
+        // generates instead, so without these the mitigation never reaches an installed game.
+        jvmArguments.addAll(List.of(
+                "-XX:+UnlockDiagnosticVMOptions",
+                "-XX:-UseBASE64Intrinsics"));
+
         jvmArguments.addAll(List.of(
                 "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED",
                 "--add-exports", "jdk.naming.dns/com.sun.jndi.dns=java.naming"));

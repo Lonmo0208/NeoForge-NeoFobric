@@ -47,16 +47,28 @@ public final class ClientSessionData extends SessionData {
     static final String MULTIPLAYER_DIR = "neoforge/client_session_attachments"; // Relative to the game directory
 
     private final RegistryAccess registryAccess;
-    private final Path file;
+    // Null when the connection has no storage location (see #create): the data then stays in memory.
+    private final @Nullable Path file;
     private int ticksUntilSave = SAVE_INTERVAL_TICKS;
 
-    public ClientSessionData(RegistryAccess registryAccess, Path file) {
+    public ClientSessionData(RegistryAccess registryAccess, @Nullable Path file) {
         this.registryAccess = registryAccess;
         this.file = file;
     }
 
     public static ClientSessionData create(Minecraft minecraft, ClientPacketListener listener) {
-        Path file = resolveFile(minecraft.gameDirectory.toPath(), minecraft.getSingleplayerServer(), listener.getServerData());
+        // NeoFobric: a connection that is neither a real server nor singleplayer has no file to key
+        // session attachments by. ReplayMod plays a recording over a fake channel, so it has neither a
+        // server entry nor a singleplayer server, and failing here turned opening a replay into a
+        // "network protocol error" ("Connection has neither a singleplayer world nor server data").
+        // Session data is only a persistence detail, so such a connection keeps it in memory instead.
+        Path file;
+        try {
+            file = resolveFile(minecraft.gameDirectory.toPath(), minecraft.getSingleplayerServer(), listener.getServerData());
+        } catch (IllegalStateException e) {
+            LOGGER.debug("Connection has no session storage (neither singleplayer world nor server data); client session attachments stay in memory");
+            file = null;
+        }
         var data = new ClientSessionData(listener.registryAccess(), file);
         data.load();
         return data;
@@ -101,7 +113,7 @@ public final class ClientSessionData extends SessionData {
     }
 
     public void load() {
-        if (!Files.exists(file)) {
+        if (file == null || !Files.exists(file)) {
             return;
         }
         try (var reporter = new ProblemReporter.ScopedCollector(problemPath(), LOGGER)) {
@@ -113,6 +125,9 @@ public final class ClientSessionData extends SessionData {
     }
 
     public void save() {
+        if (file == null) {
+            return;
+        }
         try (var reporter = new ProblemReporter.ScopedCollector(problemPath(), LOGGER)) {
             TagValueOutput output = TagValueOutput.createWithContext(reporter, registryAccess);
             AttachmentInternals.serializeNonSyncedAttachments(this, output);
@@ -139,6 +154,6 @@ public final class ClientSessionData extends SessionData {
     }
 
     private ProblemReporter.PathElement problemPath() {
-        return () -> "client session attachments " + file;
+        return () -> "client session attachments " + (file == null ? "(in memory)" : file);
     }
 }
