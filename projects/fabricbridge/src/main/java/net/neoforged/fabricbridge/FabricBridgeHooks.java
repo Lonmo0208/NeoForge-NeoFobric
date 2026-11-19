@@ -156,8 +156,46 @@ public final class FabricBridgeHooks {
         // its own main entrypoint. Without it the integrated server dies while finalising worldgen:
         // "Missing registry: minecraft:root / fabric:biome_modifier" - the world never starts.
         ensureFabricBiomeModifierRegistry();
+        // Fabric's own channel-registration payload (`minecraft:fabric_register`) is registered by the
+        // networking module's main entrypoint. Without that registration the server encodes it with the
+        // platform's fallback "unknown channel" codec and the join dies with
+        // "RegistrationPayload cannot be cast to DiscardedPayload" while the client is kicked in the
+        // configuration phase.
+        ensureFabricNetworkingPayloads();
         runHooksTheGameReachesTooEarly();
         traceFabricPaths();
+    }
+
+    /**
+     * Registers Fabric networking's own payload types when its entrypoint did not.
+     *
+     * <p>Checks the configuration-phase registry first: registering twice throws.
+     */
+    private static void ensureFabricNetworkingPayloads() {
+        try {
+            var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher()
+                    .getTargetClassLoader();
+            var registryClass = Class.forName(
+                    "net.fabricmc.fabric.impl.networking.PayloadTypeRegistryImpl", true, gameLoader);
+            var configuration = registryClass.getField("CLIENTBOUND_CONFIGURATION").get(null);
+            var packetTypesField = registryClass.getDeclaredField("packetTypes");
+            packetTypesField.setAccessible(true);
+            var packetTypes = (java.util.Map<?, ?>) packetTypesField.get(configuration);
+            var identifier = Class.forName("net.minecraft.resources.Identifier", false, gameLoader);
+            var registerType = identifier.getMethod("parse", String.class).invoke(null, "minecraft:fabric_register");
+            if (packetTypes.containsKey(registerType)) {
+                return;
+            }
+            var networking = Class.forName(
+                    "net.fabricmc.fabric.impl.networking.NetworkingImpl", true, gameLoader);
+            networking.getMethod("init").invoke(null);
+            var commonPackets = Class.forName(
+                    "net.fabricmc.fabric.impl.networking.CommonPacketsImpl", true, gameLoader);
+            commonPackets.getMethod("init").invoke(null);
+            LOGGER.info("[NeoFobric] Fabric networking's payload types were not registered; ran its initializers");
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not ensure Fabric networking's payload types", t);
+        }
     }
 
     /**
@@ -2305,6 +2343,83 @@ public final class FabricBridgeHooks {
      * itself keeps loading when a mod ships a recipe it cannot parse, so the bridge does the same: the
      * recipe is dropped with one warning and everything else loads.
      */
+    /**
+     * Encodes a Fabric payload with the codec Fabric registered for its channel.
+     *
+     * <p>The platform's payload codec resolves a channel against its own registry and otherwise answers
+     * "unknown channel" with the discard codec. A payload Fabric's networking API sends - its own join
+     * channel registration first - then fails to encode ("RegistrationPayload cannot be cast to
+     * DiscardedPayload") and the client is kicked during the configuration phase. The bridge keeps
+     * Fabric's payload registries in reach, so it encodes those channels itself.
+     *
+     * @param output  the buffer being written
+     * @param payload the payload
+     * @return whether the payload was encoded here
+     */
+    public static boolean encodeFabricPayload(Object output, Object payload) {
+        if (payload == null || output == null || !payload.getClass().getName().startsWith("net.fabricmc.")) {
+            return false;
+        }
+        try {
+            var classes = fabricNetworkingPayloads();
+            if (classes == null) {
+                return false;
+            }
+            var type = payload.getClass().getMethod("type").invoke(payload);
+            var id = type.getClass().getMethod("id").invoke(type);
+            for (var registry : classes.registries()) {
+                var types = (java.util.Map<?, ?>) classes.packetTypes().get(registry);
+                if (types == null) {
+                    continue;
+                }
+                var typeAndCodec = types.get(id);
+                if (typeAndCodec == null) {
+                    continue;
+                }
+                var codec = typeAndCodec.getClass().getMethod("codec").invoke(typeAndCodec);
+                codec.getClass().getMethod("encode", Object.class, Object.class).invoke(codec, output, payload);
+                return true;
+            }
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not encode a Fabric payload with Fabric's own codec", t);
+        }
+        return false;
+    }
+
+    private record FabricNetworkingPayloads(java.lang.reflect.Field packetTypes, java.util.List<Object> registries) {}
+
+    private static FabricNetworkingPayloads fabricNetworkingPayloads() {
+        var cached = fabricNetworkingPayloads;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (FabricBridgeHooks.class) {
+            if (fabricNetworkingPayloads != null) {
+                return fabricNetworkingPayloads;
+            }
+            try {
+                var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher()
+                        .getTargetClassLoader();
+                var registryClass = Class.forName(
+                        "net.fabricmc.fabric.impl.networking.PayloadTypeRegistryImpl", true, gameLoader);
+                var packetTypes = registryClass.getDeclaredField("packetTypes");
+                packetTypes.setAccessible(true);
+                var registries = new java.util.ArrayList<Object>(4);
+                for (var name : new String[] { "CLIENTBOUND_CONFIGURATION", "CLIENTBOUND_PLAY",
+                        "SERVERBOUND_CONFIGURATION", "SERVERBOUND_PLAY" }) {
+                    registries.add(registryClass.getField(name).get(null));
+                }
+                fabricNetworkingPayloads = new FabricNetworkingPayloads(packetTypes, registries);
+            } catch (Throwable t) {
+                LOGGER.debug("[NeoFobric] Fabric's networking payload registries are not reachable", t);
+                fabricNetworkingPayloads = null;
+            }
+            return fabricNetworkingPayloads;
+        }
+    }
+
+    private static volatile FabricNetworkingPayloads fabricNetworkingPayloads;
+
     public static boolean tolerateUnparseableRecipe(String id, Throwable error) {
         if (!bridgeActive()) {
             return false;
