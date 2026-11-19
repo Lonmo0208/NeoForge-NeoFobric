@@ -1,6 +1,6 @@
 --- a/net/minecraft/resources/RegistryLoadTask.java
 +++ b/net/minecraft/resources/RegistryLoadTask.java
-@@ -27,6 +_,11 @@
+@@ -27,20 +_,91 @@
  import net.minecraft.util.StrictJsonParser;
  
  public abstract class RegistryLoadTask<T> {
@@ -12,8 +12,11 @@
      private final Object registryWriteLock = new Object();
      protected final RegistryDataLoader.RegistryData<T> data;
      final WritableRegistry<T> registry;
-@@ -35,12 +_,76 @@
+     protected final ConcurrentHolderGetter<T> concurrentRegistrationGetter;
+     protected final Map<ResourceKey<?>, Exception> loadingErrors;
      private volatile boolean elementsRegistered;
++    /** NeoFobric: keys whose element was skipped, so their holders can be dropped again before the freeze. */
++    private final java.util.Set<ResourceKey<T>> skippedKeys = java.util.concurrent.ConcurrentHashMap.newKeySet();
  
      protected RegistryLoadTask(RegistryDataLoader.RegistryData<T> data, Lifecycle lifecycle, Map<ResourceKey<?>, Exception> loadingErrors) {
 +        var registryBuilder = new net.neoforged.neoforge.registries.RegistryBuilder<>(data.key());
@@ -90,7 +93,7 @@
      protected ResourceKey<? extends Registry<T>> registryKey() {
          return this.registry.key();
      }
-@@ -60,7 +_,20 @@
+@@ -60,7 +_,21 @@
              elements.forEach(
                  element -> element.value
                      .ifLeft(value -> this.registry.register(element.key, (T)value, element.registrationInfo))
@@ -102,6 +105,7 @@
 +                            // NeoFobric: a holder may already have been handed out for this key while
 +                            // the elements were parsed (Fabric's registry sync asks for every one); a
 +                            // skipped element would leave it unbound and freeze() rejects the registry.
++                            this.skippedKeys.add(element.key);
 +                            if (this.registry instanceof net.minecraft.core.MappedRegistry<T> mapped) {
 +                                mapped.forgetUnregisteredHolder(element.key);
 +                            }
@@ -112,6 +116,20 @@
              );
              this.elementsRegistered = true;
          }
+@@ -74,6 +_,13 @@
+ 
+     public boolean freezeRegistry(Map<ResourceKey<?>, Exception> loadingErrors) {
+         try {
++            // NeoFobric: a skipped element may have had its holder created after it was dropped once -
++            // Fabric's registry sync snapshots every pending key while the elements are parsed - and an
++            // unbound holder fails the freeze ("Unbound values in registry ...") and with it the world
++            // load. Drop them again right before the registry closes.
++            if (!this.skippedKeys.isEmpty() && this.registry instanceof net.minecraft.core.MappedRegistry<T> mapped) {
++                this.skippedKeys.forEach(mapped::forgetUnregisteredHolder);
++            }
+             this.registry.freeze();
+             return true;
+         } catch (Exception e) {
 @@ -99,8 +_,41 @@
          ) {
              try (Reader reader = thunk.openAsReader()) {

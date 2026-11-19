@@ -152,8 +152,37 @@ public final class FabricBridgeHooks {
         // every Fabric-shaped recipe fails to parse and the world refuses to open ("current data packs
         // contain errors").
         ensureFabricCustomIngredientSerializersEarly();
+        // Fabric API's biome API registers `fabric:biome_modifier` as a synced dynamic registry from
+        // its own main entrypoint. Without it the integrated server dies while finalising worldgen:
+        // "Missing registry: minecraft:root / fabric:biome_modifier" - the world never starts.
+        ensureFabricBiomeModifierRegistry();
         runHooksTheGameReachesTooEarly();
         traceFabricPaths();
+    }
+
+    /**
+     * Registers Fabric's {@code fabric:biome_modifier} datapack registry when its entrypoint did not.
+     *
+     * <p>Checks the platform's synced-registry list first: registering twice throws.
+     */
+    private static void ensureFabricBiomeModifierRegistry() {
+        try {
+            var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher()
+                    .getTargetClassLoader();
+            var loaderClass = Class.forName("net.minecraft.resources.RegistryDataLoader", false, gameLoader);
+            var synced = (java.util.List<?>) loaderClass.getField("SYNCHRONIZED_REGISTRIES").get(null);
+            for (var data : synced) {
+                if (data != null && data.toString().contains("fabric:biome_modifier")) {
+                    return;
+                }
+            }
+            var impl = Class.forName(
+                    "net.fabricmc.fabric.impl.biome.modification.data.BiomeModifiersImpl", true, gameLoader);
+            impl.getMethod("onInitialize").invoke(impl.getConstructor().newInstance());
+            LOGGER.info("[NeoFobric] fabric:biome_modifier was not registered; ran the biome API's initializer");
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not ensure the fabric:biome_modifier registry", t);
+        }
     }
 
     /**

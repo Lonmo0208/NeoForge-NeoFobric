@@ -103,7 +103,7 @@
          return getValueFromNullable(result);
      }
  
-@@ -271,6 +_,31 @@
+@@ -271,6 +_,38 @@
          return Objects.requireNonNull(this.componentLookup, "Registry not frozen yet");
      }
  
@@ -129,6 +129,13 @@
 +    public void forgetUnregisteredHolder(ResourceKey<T> key) {
 +        if (this.unregisteredIntrusiveHolders != null) {
 +            this.unregisteredIntrusiveHolders.remove(key);
++        }
++        // A standalone holder created for the key sits in byKey from the moment it is handed out, and
++        // freeze() rejects every byKey entry that has no value - so the key has to leave both maps.
++        var holder = this.byKey.get(key);
++        if (holder != null && !holder.isBound()) {
++            this.byKey.remove(key);
++            this.byLocation.remove(key.identifier());
 +        }
 +    }
 +
