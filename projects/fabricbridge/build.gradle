@@ -74,6 +74,9 @@ dependencies {
     compileOnly("net.neoforged.fancymodloader:loader:${fancy_mod_loader_version}") {
         transitive = false
     }
+    // The event bus API: the bridge's shell mods hand a bridged Fabric mod a container whose bus
+    // replays registrations that arrive after the platform's registration window closed.
+    compileOnly("net.neoforged:bus:${eventbus_version}") { transitive = false }
     // Provides net.neoforged.api.distmarker.Dist on the bootstrap classpath.
     compileOnly("net.neoforged:mergetool:${mergetool_version}:api") { transitive = false }
     compileOnly("org.slf4j:slf4j-api:2.0.17")

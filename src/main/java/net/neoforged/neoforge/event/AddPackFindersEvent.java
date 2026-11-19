@@ -27,6 +27,7 @@ import net.neoforged.neoforgespi.language.IModInfo;
  * Fired on {@link PackRepository} creation to allow mods to add new pack finders.
  */
 public class AddPackFindersEvent extends Event implements IModBusEvent {
+    private static final org.slf4j.Logger LOGGER = com.mojang.logging.LogUtils.getLogger();
     private final PackType packType;
     private final Consumer<RepositorySource> sources;
     private final boolean trusted;
@@ -82,6 +83,17 @@ public class AddPackFindersEvent extends Event implements IModBusEvent {
                     new JarContentsPackResources.JarContentsResourcesSupplier(modInfo.getOwningFile().getFile().getContents(), prefix),
                     packType,
                     new PackSelectionConfig(alwaysActive, packPosition, false));
+
+            // NeoFobric: a Fabric mod's built-in pack can point at a folder whose pack.mcmeta the
+            // platform cannot read; readMetaAndCreate then answers null, and handing that to the
+            // repository left a null pack in the list - the next reload died with "Cannot invoke
+            // Pack.streamSelfAndChildren() because pack is null" and a new world never finished
+            // creating. A pack without metadata is not usable, so it is skipped loudly instead.
+            if (pack == null) {
+                LOGGER.warn("Skipping the pack {} of mod {} - it has no readable pack metadata", packLocation,
+                        modInfo.getModId());
+                return;
+            }
 
             addRepositorySource((packConsumer) -> packConsumer.accept(pack));
         }
