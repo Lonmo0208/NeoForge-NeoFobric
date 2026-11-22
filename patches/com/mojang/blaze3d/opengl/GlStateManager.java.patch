@@ -8,6 +8,39 @@
      private static final GlStateManager.ScissorState SCISSOR = new GlStateManager.ScissorState();
      private static int activeTexture;
      private static final int TEXTURE_COUNT = 12;
+@@ -44,6 +_,9 @@
+     private static int COLOR_MASK = 15;
+     private static int readFbo;
+     private static int writeFbo;
++    // NeoFobric: the program _glUseProgram last bound, so _glUniform1i can skip uploads that would
++    // address program 0 (see there).
++    private static int currentProgram;
+ 
+     public static void _disableScissorTest() {
+         RenderSystem.assertOnRenderThread();
+@@ -156,6 +_,7 @@
+ 
+     public static void _glUseProgram(int program) {
+         RenderSystem.assertOnRenderThread();
++        currentProgram = program;
+         GL20.glUseProgram(program);
+     }
+ 
+@@ -181,6 +_,14 @@
+ 
+     public static void _glUniform1i(int location, int v0) {
+         RenderSystem.assertOnRenderThread();
++        // NeoFobric: glUniform* with no program bound is a no-op that only sets GL_INVALID_OPERATION,
++        // but the AMD OpenGL driver dereferences the missing program instead and takes the client down.
++        // Iris uploads its phase uniforms while the void-sky pass has no program bound (reproduced in a
++        // space dimension: atio6axx.dll access violation from IntUniform.updateValue), so skip the call
++        // in exactly that state. With a program bound nothing changes.
++        if (currentProgram == 0) {
++            return;
++        }
+         GL20.glUniform1i(location, v0);
+     }
+ 
 @@ -589,4 +_,119 @@
      private static class TextureState {
          public int binding;
