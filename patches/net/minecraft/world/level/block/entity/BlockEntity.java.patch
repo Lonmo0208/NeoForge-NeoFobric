@@ -24,6 +24,22 @@
  
      public BlockEntity(BlockEntityType<?> type, BlockPos worldPosition, BlockState blockState) {
          this.type = type;
+@@ -59,7 +_,14 @@
+ 
+     private void validateBlockState(BlockState blockState) {
+         if (!this.isValidBlockState(blockState)) {
+-            throw new IllegalStateException("Invalid block entity " + this.getNameForReporting() + " state at " + this.worldPosition + ", got " + blockState);
++            // NeoFobric: a mod may construct its block entity before switching it to the type that
++            // covers the block - EasyMagic's enchanting-table container calls the vanilla super
++            // constructor (which carries the vanilla type) and only then assigns its own type - so the
++            // vanilla check aborted the whole client the moment such a block was placed. Crashing is
++            // not useful here: the caller repairs the type right after the constructor, so log the
++            // mismatch instead of throwing.
++            LOGGER.warn("Block entity {} was created for a block its type does not list: {} at {}",
++                    this.getClass().getName(), blockState, this.worldPosition);
+         }
+     }
+ 
 @@ -95,6 +_,8 @@
      }
  
