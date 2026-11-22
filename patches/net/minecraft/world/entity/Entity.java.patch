@@ -28,10 +28,21 @@
      }
  
      public boolean isColliding(BlockPos pos, BlockState state) {
-@@ -424,15 +_,26 @@
-     public SynchedEntityData getEntityData() {
-         return this.entityData;
-     }
+@@ -388,6 +_,13 @@
+     @Override
+     public int getId() {
+         if (this.id == 0) {
++            // NeoFobric: client-only entities never get a server id - ReplayMod's replay camera is
++            // created locally with id 0, and extracting its render state asks for the id to seed the
++            // item model (ItemModelResolver.updateForLiving), so the vanilla guard turned every replay
++            // into a crash. The guard still catches server-side use before the id is assigned.
++            if (this.level() != null && this.level().isClientSide()) {
++                return 0;
++            }
+             throw new IllegalStateException("Tried to access entity ID before ID assignment");
+         } else {
+             return this.id;
+@@ -427,12 +_,23 @@
  
      @Override
      public boolean equals(Object obj) {
