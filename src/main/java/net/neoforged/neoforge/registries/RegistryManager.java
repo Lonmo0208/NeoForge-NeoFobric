@@ -283,6 +283,14 @@ public class RegistryManager {
         if (!BuiltInRegistries.REGISTRY.containsKey((ResourceKey) registry.key())) {
             return false; // Dynamic registry
         }
+        // NeoFobric: a Fabric mod declares ID syncing through Fabric's RegistryAttribute.SYNCED, which
+        // the platform never sees. Honour it here so Fabric's id-based payloads (attachment sync and
+        // registry-entry codecs) stay encodable instead of failing with "Cannot use ID syncing for
+        // non-synced built-in registry" and dropping the connection - both sides run the same Fabric
+        // mods, so their ids match the way they do on Fabric.
+        if (net.neoforged.fabricbridge.FabricBridgeHooks.isFabricRegistrySynced(registry)) {
+            return false;
+        }
         return !registry.doesSync();
     }
 }
