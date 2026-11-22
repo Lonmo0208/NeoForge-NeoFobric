@@ -106,6 +106,70 @@ public final class FabricBridgeHooks {
     }
 
     /**
+     * {@return whether Fabric API flags the registry as {@code RegistryAttribute.SYNCED}}
+     *
+     * <p>Fabric mods declare ID syncing with Fabric's registry attributes, not with NeoForge's
+     * {@code RegistryBuilder.sync}. NeoForge's payload codecs refuse to encode a built-in registry by
+     * numeric id unless it is flagged synced, so a Fabric registry that is explicitly meant to be
+     * synced made the attachment sync payload fail with "Cannot use ID syncing for non-synced
+     * built-in registry" and took the connection down. Both sides run the same Fabric mods, so the
+     * numerical ids line up the way they do on Fabric.
+     */
+    public static boolean isFabricRegistrySynced(Object registry) {
+        if (registry == null || !bridgeActive()) {
+            return false;
+        }
+        try {
+            var attributes = fabricRegistryAttributes();
+            if (attributes == null) {
+                return false;
+            }
+            var holder = attributes.getHolder().invoke(null, registry);
+            return holder != null && (boolean) attributes.hasAttribute().invoke(holder, attributes.synced());
+        } catch (Throwable t) {
+            LOGGER.debug("[NeoFobric] Could not read Fabric's registry attributes", t);
+            return false;
+        }
+    }
+
+    /** The reflective handles for Fabric's registry attribute API, resolved once. */
+    private record FabricRegistryAttributes(java.lang.reflect.Method getHolder,
+            java.lang.reflect.Method hasAttribute, Object synced) {}
+
+    private static volatile FabricRegistryAttributes fabricRegistryAttributes;
+    private static volatile boolean fabricRegistryAttributesResolved;
+
+    private static FabricRegistryAttributes fabricRegistryAttributes() {
+        if (fabricRegistryAttributesResolved) {
+            return fabricRegistryAttributes;
+        }
+        synchronized (FabricBridgeHooks.class) {
+            if (fabricRegistryAttributesResolved) {
+                return fabricRegistryAttributes;
+            }
+            try {
+                var gameLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher()
+                        .getTargetClassLoader();
+                var holderClass = Class.forName("net.fabricmc.fabric.api.event.registry.RegistryAttributeHolder",
+                        true, gameLoader);
+                var attributeClass = Class.forName("net.fabricmc.fabric.api.event.registry.RegistryAttribute",
+                        true, gameLoader);
+                var registryClass = Class.forName("net.minecraft.core.Registry", true, gameLoader);
+                var synced = java.lang.Enum.valueOf(attributeClass.asSubclass(java.lang.Enum.class), "SYNCED");
+                fabricRegistryAttributes = new FabricRegistryAttributes(
+                        holderClass.getMethod("get", registryClass),
+                        holderClass.getMethod("hasAttribute", attributeClass),
+                        synced);
+            } catch (Throwable t) {
+                LOGGER.debug("[NeoFobric] Fabric's registry attributes are not reachable", t);
+                fabricRegistryAttributes = null;
+            }
+            fabricRegistryAttributesResolved = true;
+            return fabricRegistryAttributes;
+        }
+    }
+
+    /**
      * Boots the fabric-loader runtime (if needed) and invokes the Fabric entrypoints
      * ({@code preLaunch}, {@code main} and the side entrypoint), followed by the hooks that belong
      * directly behind them.
