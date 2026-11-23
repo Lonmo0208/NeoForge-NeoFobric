@@ -45,10 +45,24 @@ public final class FabricJarRegistry {
      */
     private static final Set<Path> FOREIGN_MOD_PATHS = ConcurrentHashMap.newKeySet();
 
+    /** {@link #foreignModFileNames()}, rebuilt only when another jar is left to FML. */
+    private static volatile Set<String> FOREIGN_MOD_FILE_NAMES;
+
+    /** Bumped whenever {@link #FOREIGN_MOD_PATHS} grows, so {@code BridgedLauncher} can drop its wrapper. */
+    private static final java.util.concurrent.atomic.AtomicLong FOREIGN_MOD_GENERATION = new java.util.concurrent.atomic.AtomicLong();
+
     private FabricJarRegistry() {}
 
     public static void markForeignModPath(Path path) {
-        FOREIGN_MOD_PATHS.add(path);
+        if (FOREIGN_MOD_PATHS.add(path)) {
+            FOREIGN_MOD_FILE_NAMES = null;
+            FOREIGN_MOD_GENERATION.incrementAndGet();
+        }
+    }
+
+    /** {@return a counter that changes whenever another jar is left to FML} */
+    public static long foreignModGeneration() {
+        return FOREIGN_MOD_GENERATION.get();
     }
 
     /** {@return whether this exact jar was left to FML} */
@@ -62,11 +76,20 @@ public final class FabricJarRegistry {
 
     /** {@return the file names of the jars left to FML} */
     public static Set<String> foreignModFileNames() {
-        var names = new java.util.HashSet<String>();
-        for (var path : FOREIGN_MOD_PATHS) {
-            names.add(path.getFileName().toString());
+        var names = FOREIGN_MOD_FILE_NAMES;
+        if (names != null) {
+            return names;
         }
-        return names;
+        synchronized (FabricJarRegistry.class) {
+            if (FOREIGN_MOD_FILE_NAMES == null) {
+                var built = new java.util.HashSet<String>(FOREIGN_MOD_PATHS.size());
+                for (var path : FOREIGN_MOD_PATHS) {
+                    built.add(path.getFileName().toString());
+                }
+                FOREIGN_MOD_FILE_NAMES = Set.copyOf(built);
+            }
+            return FOREIGN_MOD_FILE_NAMES;
+        }
     }
 
     public static boolean hasFabricMods() {
