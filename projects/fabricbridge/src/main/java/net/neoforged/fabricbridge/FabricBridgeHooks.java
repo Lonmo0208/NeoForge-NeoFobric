@@ -42,6 +42,13 @@ public final class FabricBridgeHooks {
      */
     private static volatile java.util.Map<Object, FabricFluidBehavior> fabricFluidBehaviors;
 
+    /**
+     * When the last non-final fluid-behaviour scan ran. An empty answer while the registered tags are
+     * not bound yet must be retried, but the worldgen path asks for a fluid type on every neighbour
+     * check, so retries are limited to one per second instead of one per query.
+     */
+    private static volatile long lastFabricFluidBehaviorScanNanos;
+
     private FabricBridgeHooks() {}
 
     /**
@@ -1273,18 +1280,30 @@ public final class FabricBridgeHooks {
     public static FabricFluidBehavior fabricFluidBehavior(Object fluid) {
         var resolved = fabricFluidBehaviors;
         if (resolved == null) {
-            resolved = collectFabricFluidBehaviors();
-            // An empty result is kept out of the cache: fluid tags are bound by the first data-pack load, and a
-            // lookup that ran before that (or while the registry was being filled) must not be remembered.
-            if (!resolved.isEmpty()) {
-                fabricFluidBehaviors = resolved;
+            long now = System.nanoTime();
+            if (now - lastFabricFluidBehaviorScanNanos < 1_000_000_000L) {
+                return null;
             }
+            lastFabricFluidBehaviorScanNanos = now;
+            var scan = collectFabricFluidBehaviors();
+            // An empty result is only trusted once the scan is final: fluid tags are bound by the first
+            // data-pack load, and a lookup that ran before that (or while the registry was being filled)
+            // must not be remembered. Retrying it per fluid query is far too expensive - the worldgen
+            // neighbour checks ask for a fluid type on every block state.
+            if (scan.finalResult()) {
+                fabricFluidBehaviors = scan.behaviors();
+            }
+            resolved = scan.behaviors();
         }
         return resolved.get(fluid);
     }
 
-    private static java.util.Map<Object, FabricFluidBehavior> collectFabricFluidBehaviors() {
+    /** One scan of Fabric's fluid-behaviour registry, and whether repeating it can change anything. */
+    private record FabricFluidBehaviorScan(java.util.Map<Object, FabricFluidBehavior> behaviors, boolean finalResult) {}
+
+    private static FabricFluidBehaviorScan collectFabricFluidBehaviors() {
         var byFluid = new java.util.IdentityHashMap<Object, FabricFluidBehavior>();
+        boolean trackedFluids = false;
         try {
             var modsLoader = net.fabricmc.loader.impl.launch.FabricLauncherBase.getLauncher().getTargetClassLoader();
             var registry = Class.forName("net.fabricmc.fabric.api.registry.fluid.EntityFluidInteractionRegistry", false, modsLoader);
@@ -1295,9 +1314,11 @@ public final class FabricBridgeHooks {
             var fluidRegistry = Class.forName("net.minecraft.core.registries.BuiltInRegistries", false, modsLoader)
                     .getField("FLUID").get(null);
             var getTagOrEmpty = fluidRegistry.getClass().getMethod("getTagOrEmpty", tagKey);
+            var getTags = fluidRegistry.getClass().getMethod("getTags");
             var holderValue = Class.forName("net.minecraft.core.Holder", false, modsLoader).getMethod("value");
 
             for (var tag : (Iterable<?>) registry.getMethod("getCustomInteractableFluids").invoke(null)) {
+                trackedFluids = true;
                 var behavior = getFluidBehavior.invoke(null, tag);
                 if (behavior == null) {
                     continue;
@@ -1311,12 +1332,27 @@ public final class FabricBridgeHooks {
                     byFluid.put(holderValue.invoke(holder), described);
                 }
             }
+
+            // No tracked fluids means no mod declared a behaviour: that registry is filled during mod
+            // initialisation, so the empty answer is final. With tracked fluids, an empty map is only
+            // final once the fluid tags have actually been bound (water and lava alone guarantee a
+            // non-empty tag stream once a data pack has loaded).
+            boolean tagsBound = false;
+            if (trackedFluids) {
+                try (var tags = (java.util.stream.Stream<?>) getTags.invoke(fluidRegistry)) {
+                    tagsBound = tags.findAny().isPresent();
+                }
+            }
+            return new FabricFluidBehaviorScan(byFluid, !trackedFluids || !byFluid.isEmpty() || tagsBound);
         } catch (ClassNotFoundException e) {
             // fabric-content-registries-v0 is not in this mod set
+            return new FabricFluidBehaviorScan(byFluid, true);
         } catch (ReflectiveOperationException e) {
+            // The API is present but not shaped the way this scan expects; retrying would only repeat
+            // the same failure, so remember the empty answer instead of burning CPU on every query.
             LOGGER.warn("[NeoFobric] Could not read Fabric's fluid behaviour registry", e);
+            return new FabricFluidBehaviorScan(byFluid, true);
         }
-        return byFluid;
     }
 
     private static FabricFluidBehavior describeFabricFluidBehavior(Object behavior, Object tag, boolean waterLike) {
