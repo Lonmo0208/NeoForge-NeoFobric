@@ -1,5 +1,14 @@
 --- a/com/mojang/renderpearl/backend/opengl/GlCommandEncoder.java
 +++ b/com/mojang/renderpearl/backend/opengl/GlCommandEncoder.java
+@@ -42,6 +_,8 @@
+     private static final Logger LOGGER = LogUtils.getLogger();
+     public static final int MAX_SUBMITS_IN_FLIGHT = 2;
+     private static final long NO_FENCE = 0L;
++    // NeoFobric: texture pairs that already reported a failed copy, so a per-frame failure logs once.
++    private static final java.util.Set<String> FAILED_TEXTURE_COPIES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+     private final GlDevice device;
+     private final GlTransientMemory transientMemory;
+     private final long[] fences = new long[2];
 @@ -273,6 +_,28 @@
          GlStateManager._glBindFramebuffer(36160, 0);
      }
@@ -29,7 +38,29 @@
      @Override
      public void writeToBuffer(GpuBufferSlice slice, ByteBuffer data) {
          GlBuffer buffer = (GlBuffer)slice.buffer();
-@@ -396,11 +_,23 @@
+@@ -378,6 +_,12 @@
+ 
+         GlStateManager._readPixels(x, y, width, height, GlConst.toGlExternalId(source.getFormat()), GlConst.toGlType(source.getFormat()), offset);
+         RenderSystem.queueFencedTask(callback);
++        if (isDepth) {
++            // NeoFobric: put the color read buffer back before leaving. Attaching another color
++            // texture to this shared framebuffer does not reset GL_READ_BUFFER, so the GL_NONE set
++            // above leaked into the next color blit and failed it with GL_INVALID_OPERATION.
++            GlStateManager._glReadBuffer(36064);
++        }
+         GlStateManager._glFramebufferTexture2D(36008, isDepth ? 36096 : 36064, 3553, 0, mipLevel);
+         GlStateManager._glBindFramebuffer(36008, 0);
+         GlStateManager._glBindBuffer(35051, 0);
+@@ -391,21 +_,69 @@
+     public void copyTextureToTexture(
+         GpuTexture source, GpuTexture destination, int mipLevel, int destX, int destY, int sourceX, int sourceY, int width, int height
+     ) {
++        if (width <= 0 || height <= 0) {
++            // NeoFobric: a zero-sized copy is a no-op, but some drivers answer it with GL_INVALID_VALUE.
++            return;
++        }
+         GlStateManager.clearGlErrors();
+         GlStateManager._disableScissorTest();
          boolean isDepth = source.getFormat().hasDepthAspect();
          int sourceId = ((GlTexture)source).glId();
          int destId = ((GlTexture)destination).glId();
@@ -49,10 +80,50 @@
 +        if (source.getFormat().hasStencilAspect()) {
 +            bufferMask |= GL33C.GL_STENCIL_BUFFER_BIT;
 +        }
++        if (source.getFormat().hasColorAspect()) {
++            // NeoFobric: attaching a color texture does not reset GL_READ_BUFFER, and a depth read that
++            // ran earlier on this shared framebuffer left it at GL_NONE. A color blit from that state
++            // fails (GL_INVALID_OPERATION, or GL_INVALID_VALUE from some drivers), so make the color
++            // read buffer explicit before the blit.
++            this.device.directStateAccess().framebufferReadBuffer(this.readFbo, GlConst.GL_COLOR_ATTACHMENT0);
++        }
++        // NeoFobric: width and height are sizes, so the blit rectangles end at sourceX/sourceY and
++        // destX/destY plus them - passing the size as the end coordinate only lines up for zero offsets.
          this.device
              .directStateAccess()
 -            .blitFrameBuffers(this.readFbo, this.drawFbo, sourceX, sourceY, width, height, destX, destY, width, height, isDepth ? 256 : 16384, 9728);
-+            .blitFrameBuffers(this.readFbo, this.drawFbo, sourceX, sourceY, width, height, destX, destY, width, height, bufferMask, 9728);
++            .blitFrameBuffers(
++                this.readFbo,
++                this.drawFbo,
++                sourceX,
++                sourceY,
++                sourceX + width,
++                sourceY + height,
++                destX,
++                destY,
++                destX + width,
++                destY + height,
++                bufferMask,
++                9728
++            );
          int error = GlStateManager._getError();
          if (error != 0) {
-             throw new IllegalStateException(
+-            throw new IllegalStateException(
+-                "Couldn't perform copyToTexture for texture " + source.getLabel() + " to " + destination.getLabel() + ": GL error " + error
+-            );
++            // NeoFobric: a failed copy only leaves the destination with its previous contents, which
++            // is what a caller (mod or vanilla) can live with for a frame - taking the client down is
++            // not worth it. ReGlass hits this every time it captures the main color target into its
++            // live-scene texture, and the AMD driver reports GL_INVALID_VALUE for blits it otherwise
++            // performs. Log once per texture pair so the problem stays visible without flooding.
++            if (FAILED_TEXTURE_COPIES.size() < 256 && FAILED_TEXTURE_COPIES.add(source.getLabel() + " -> " + destination.getLabel())) {
++                LOGGER.warn(
++                    "Couldn't perform copyToTexture for texture {} to {}: GL error {} (keeping the previous contents)",
++                    source.getLabel(),
++                    destination.getLabel(),
++                    error
++                );
++            }
+         }
+     }
+ 

@@ -19,6 +19,17 @@
  
      public void bindFrameBufferTextures(int fbo, int color, int depth, int mipLevel, int bindSlot) {
          this.bindFrameBufferTextures(fbo, new int[]{color}, new int[]{mipLevel}, depth, mipLevel, bindSlot);
+@@ -50,6 +_,10 @@
+         int source, int dest, int srcX0, int srcY0, int srcX1, int srcY1, int dstX0, int dstY0, int dstX1, int dstY1, int mask, int filter
+     );
+ 
++    /// NeoFobric: set the read buffer of the given framebuffer without binding it, so shared blit
++    /// framebuffers cannot inherit the read-buffer state of an earlier operation.
++    public abstract void framebufferReadBuffer(int fbo, int mode);
++
+     public abstract void flushMappedBufferRange(final int handle, final long offset, final long length, final @GpuBuffer.Usage int usage);
+ 
+     public abstract void copyBufferSubData(int source, int target, long sourceOffset, long targetOffset, long length);
 @@ -102,12 +_,14 @@
          }
  
@@ -35,6 +46,18 @@
              if (bindSlot != 0) {
                  GlStateManager._glBindFramebuffer(bindSlot, fbo);
              }
+@@ -121,6 +_,11 @@
+         }
+ 
+         @Override
++        public void framebufferReadBuffer(int fbo, int mode) {
++            ARBDirectStateAccess.glNamedFramebufferReadBuffer(fbo, mode);
++        }
++
++        @Override
+         public void flushMappedBufferRange(int handle, long offset, long length, @GpuBuffer.Usage int usage) {
+             ARBDirectStateAccess.glFlushMappedNamedBufferRange(handle, offset, length);
+         }
 @@ -217,7 +_,7 @@
          }
  
@@ -53,3 +76,18 @@
              if (bindSlot == 0) {
                  GlStateManager._glBindFramebuffer(tempBindSlot, oldFbo);
              }
+@@ -243,6 +_,14 @@
+             GlStateManager._glBlitFrameBuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+             GlStateManager._glBindFramebuffer(36008, oldRead);
+             GlStateManager._glBindFramebuffer(36009, oldDraw);
++        }
++
++        @Override
++        public void framebufferReadBuffer(int fbo, int mode) {
++            int oldRead = GlStateManager.getFrameBuffer(36008);
++            GlStateManager._glBindFramebuffer(36008, fbo);
++            GlStateManager._glReadBuffer(mode);
++            GlStateManager._glBindFramebuffer(36008, oldRead);
+         }
+     }
+ }
