@@ -111,6 +111,13 @@ final class BridgedLauncher implements FabricLauncher {
         return targetClassLoader().getResourceAsStream(name);
     }
 
+    // The foreign-mod wrapper was rebuilt on every call. That is harmless once, but the bridge resolves
+    // fluids and other values through getTargetClassLoader() on hot worldgen paths, and each wrapper
+    // copied the names of every jar left to FML. Cache it per game loader and per foreign-mod set.
+    private static volatile ClassLoader exposedTargetClassLoader;
+    private static volatile ClassLoader exposedTargetClassLoaderDelegate;
+    private static volatile long exposedTargetClassLoaderGeneration = -1L;
+
     @Override
     public ClassLoader getTargetClassLoader() {
         var loader = targetClassLoader();
@@ -118,7 +125,19 @@ final class BridgedLauncher implements FabricLauncher {
         // would pick up the NeoForge builds of Sodium and Iris - multi-loader jars that ship both
         // metadata files - as Fabric mods, and then resolve their Fabric dependencies against a fabric
         // side that is not installed. The wrapper hides exactly those entries and delegates the rest.
-        return FabricJarRegistry.hasForeignMods() ? new ForeignModHidingLoader(loader) : loader;
+        if (!FabricJarRegistry.hasForeignMods()) {
+            return loader;
+        }
+        var generation = FabricJarRegistry.foreignModGeneration();
+        var exposed = exposedTargetClassLoader;
+        if (exposed != null && exposedTargetClassLoaderDelegate == loader && exposedTargetClassLoaderGeneration == generation) {
+            return exposed;
+        }
+        exposed = new ForeignModHidingLoader(loader);
+        exposedTargetClassLoaderDelegate = loader;
+        exposedTargetClassLoaderGeneration = generation;
+        exposedTargetClassLoader = exposed;
+        return exposed;
     }
 
     /**
