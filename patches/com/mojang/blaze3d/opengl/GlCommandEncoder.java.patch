@@ -1,5 +1,14 @@
 --- a/com/mojang/blaze3d/opengl/GlCommandEncoder.java
 +++ b/com/mojang/blaze3d/opengl/GlCommandEncoder.java
+@@ -43,6 +_,8 @@
+ @OnlyIn(Dist.CLIENT)
+ class GlCommandEncoder implements CommandEncoderBackend {
+     private static final Logger LOGGER = LogUtils.getLogger();
++    // NeoFobric: texture pairs that already reported a failed copy, so a per-frame failure logs once.
++    private static final java.util.Set<String> FAILED_TEXTURE_COPIES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+     private final GlDevice device;
+     private final int readFbo;
+     private final int drawFbo;
 @@ -141,7 +_,8 @@
  
      @Override
@@ -28,7 +37,7 @@
      public void writeToBuffer(GpuBufferSlice slice, ByteBuffer data) {
          GlBuffer buffer = (GlBuffer)slice.buffer();
          if (buffer.closed) {
-@@ -269,16 +_,46 @@
+@@ -269,21 +_,79 @@
      public void copyTextureToTexture(
          GpuTexture source, GpuTexture destination, int mipLevel, int destX, int destY, int sourceX, int sourceY, int width, int height
      ) {
@@ -51,6 +60,11 @@
 +            );
 +        }
 +
++        if (width <= 0 || height <= 0) {
++            // NeoFobric: a zero-sized copy is a no-op, but some drivers answer it with GL_INVALID_VALUE.
++            return;
++        }
++
          GlStateManager.clearGlErrors();
          GlStateManager._disableScissorTest();
          boolean isDepth = source.getFormat().hasDepthAspect();
@@ -71,13 +85,44 @@
 +        if (source.getFormat().hasStencilAspect()) {
 +            bufferMask |= GL11.GL_STENCIL_BUFFER_BIT;
 +        }
++        // NeoFobric: width and height are sizes, so the blit rectangles end at sourceX/sourceY and
++        // destX/destY plus them - passing the size as the end coordinate only lines up for zero offsets.
          this.device
              .directStateAccess()
 -            .blitFrameBuffers(this.readFbo, this.drawFbo, sourceX, sourceY, width, height, destX, destY, width, height, isDepth ? 256 : 16384, 9728);
-+            .blitFrameBuffers(this.readFbo, this.drawFbo, sourceX, sourceY, width, height, destX, destY, width, height, bufferMask, 9728);
++            .blitFrameBuffers(
++                this.readFbo,
++                this.drawFbo,
++                sourceX,
++                sourceY,
++                sourceX + width,
++                sourceY + height,
++                destX,
++                destY,
++                destX + width,
++                destY + height,
++                bufferMask,
++                9728
++            );
          int error = GlStateManager._getError();
          if (error != 0) {
-             throw new IllegalStateException(
+-            throw new IllegalStateException(
+-                "Couldn't perform copyToTexture for texture " + source.getLabel() + " to " + destination.getLabel() + ": GL error " + error
+-            );
++            // NeoFobric: a failed copy only leaves the destination with its previous contents, which
++            // is what a caller (mod or vanilla) can live with for a frame - taking the client down is
++            // not worth it. Log once per texture pair so the problem stays visible without flooding.
++            if (FAILED_TEXTURE_COPIES.size() < 256 && FAILED_TEXTURE_COPIES.add(source.getLabel() + " -> " + destination.getLabel())) {
++                LOGGER.warn(
++                    "Couldn't perform copyToTexture for texture {} to {}: GL error {} (keeping the previous contents)",
++                    source.getLabel(),
++                    destination.getLabel(),
++                    error
++                );
++            }
+         }
+     }
+ 
 @@ -602,6 +_,26 @@
              GlStateManager._scissorBox(renderPass.getScissorX(), renderPass.getScissorY(), renderPass.getScissorWidth(), renderPass.getScissorHeight());
          } else {
