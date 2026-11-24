@@ -1,6 +1,6 @@
 --- a/net/minecraft/world/level/block/FlowerPotBlock.java
 +++ b/net/minecraft/world/level/block/FlowerPotBlock.java
-@@ -30,12 +_,43 @@
+@@ -30,12 +_,49 @@
  public class FlowerPotBlock extends Block {
      private static final Map<Block, Block> POTTED_BY_CONTENT = Maps.newHashMap();
      private static final VoxelShape SHAPE = Block.column(6.0, 0.0, 6.0);
@@ -15,9 +15,11 @@
 +    @Deprecated
      public FlowerPotBlock(Block potted, BlockBehaviour.Properties properties) {
          super(properties);
--        this.potted = potted;
++        // NeoFobric: keep the vanilla value as well. Fabric mods shadow this field directly
++        // (ViaFabricPlus, DynamicCrosshair), and the bridge widens it for them; the coremod redirects
++        // this class's own reads to getPotted(), but external readers must not see null either.
+         this.potted = potted;
 -        POTTED_BY_CONTENT.put(potted, this);
-+        this.potted = null; // Unused, redirected by coremod
 +        this.flowerDelegate = () -> potted;
 +        // If we're constructing the empty pot at Blocks.FLOWER_POT, then the field will be null
 +        this.emptyPot = Blocks.FLOWER_POT == null ? null : () -> (FlowerPotBlock) Blocks.FLOWER_POT;
@@ -32,7 +34,9 @@
 +    /// @param potted   The potted flower/plant
 +    public FlowerPotBlock(java.util.function.Supplier<FlowerPotBlock> emptyPot, java.util.function.Supplier<? extends Block> potted, BlockBehaviour.Properties properties) {
 +        super(properties);
-+        this.potted = null; // Neo: unused, redirected by coremod
++        // NeoFobric: the supplier may only resolve after registration, so the field stays null here;
++        // getPotted() (and therefore this class's own reads, via the coremod) always uses the supplier.
++        this.potted = null;
 +        this.flowerDelegate = java.util.Objects.requireNonNull(potted, "Use single-parameter constructor instead for empty pots");
 +        this.emptyPot = java.util.Objects.requireNonNull(emptyPot, "Use single-parameter constructor instead for empty pots");
 +    }
@@ -40,7 +44,8 @@
 +    /// Neo: Constructs an empty flower pot.
 +    public FlowerPotBlock(BlockBehaviour.Properties properties) {
 +        super(properties);
-+        this.potted = null; // Neo: unused, redirected by coremod
++        // NeoFobric: mirror the empty value into the field for Fabric mods that shadow it.
++        this.potted = Blocks.AIR;
 +        this.flowerDelegate = () -> Blocks.AIR;
 +        this.emptyPot = null;
      }
@@ -64,6 +69,17 @@
          level.gameEvent(player, GameEvent.BLOCK_CHANGE, pos);
          return InteractionResult.SUCCESS;
      }
+@@ -88,7 +_,9 @@
+     }
+ 
+     private boolean isEmpty() {
+-        return this.potted == Blocks.AIR;
++        // NeoFobric: the supplier-backed constructor leaves the backing field null; a null value must
++        // count as empty instead of letting useWithoutItem/getCloneItemStack build an ItemStack of null.
++        return this.potted == null || this.potted == Blocks.AIR;
+     }
+ 
+     @Override
 @@ -108,7 +_,33 @@
      }
  
