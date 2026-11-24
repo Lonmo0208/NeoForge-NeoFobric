@@ -242,6 +242,9 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
     /** The Fabric jars skipped because an FML mod provides the same id; claimed in {@code findCandidates}. */
     private static final java.util.List<Path> fmlProvidedJars = new java.util.concurrent.CopyOnWriteArrayList<>();
 
+    /** Number of top-level jars the scan left to FML; reset per scan, only used for the summary log line. */
+    private static int fmlSideJarCount;
+
     /**
      * Packages the FML side of the game layer will provide, so the Fabric composite module must not claim
      * them. Filled while the mods folder is scanned: every jar that is not a Fabric mod (an FML mod, or a
@@ -410,6 +413,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         // and into the Fabric one, and the JDK refuses to resolve that (Sodium and Iris both died with
         // "Modules neofobric.fabric.mods and sodium export package net.caffeinemc.mods.sodium.api.util").
         fmlProvidedJars.clear();
+        fmlSideJarCount = 0;
         fmlSidePackages.clear();
         fmlPackagesByJar.clear();
         fmlProvidedModIds = readForgeModIds(modsDir);
@@ -421,7 +425,7 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                     .sorted()
                     .forEach(path -> examineJar(path, fabricJars, 0));
             LOGGER.info("[NeoFobric] Scanned the mods folder in {} ms: {} Fabric jar(s), {} left to FML",
-                    (System.nanoTime() - listingStarted) / 1_000_000L, fabricJars.size(), fmlProvidedJars.size());
+                    (System.nanoTime() - listingStarted) / 1_000_000L, fabricJars.size(), fmlSideJarCount);
         } catch (IOException e) {
             LOGGER.error("[NeoFobric] Failed to list the mods folder", e);
             return;
@@ -928,6 +932,10 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         deleteQuietly(path.resolveSibling(path.getFileName() + MixinJarPatcher.PATCHED_SUFFIX));
 
         FabricModInfo info;
+        // True for the placeholder-version fallback below: the jar's own FML metadata names the Fabric
+        // id, but FML cannot load the file, so the Fabric build is the one that runs. The duplicate
+        // check must not read that self-reference as "another build already provides this id".
+        boolean selfDeclaredForFallback = false;
         try (var jar = JarContents.ofPath(path)) {
             // Which loader a jar belongs to follows its metadata, newest first: NeoForge, then Fabric, and
             // only then the Forge era.
@@ -959,6 +967,20 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                         path.getFileName());
                 FabricJarRegistry.markForeignModPath(path);
                 noteFmlSidePackages(path);
+                if (bundledBy.isEmpty()) {
+                    fmlSideJarCount++;
+                }
+                // Stop here: the jar belongs to FML, and the bridge must leave its path alone. Claiming it
+                // through ILaunchContext#addLocated (the duplicate handling below) marks the file as already
+                // located, so FML's own mods-folder locator skips it and the jar loads in neither loader -
+                // Better Combat's player_animation_library dependency resolved to nothing that way, and the
+                // same held for every multiloader jar whose FML and Fabric ids match. The Fabric metadata
+                // of such a jar must not put it on the Fabric side either: the same classes would be loaded
+                // twice, and its Fabric dependency list can abort the whole Fabric launch (Glowing
+                // Torchflower declares the Maven range "[26.1,26.2)", which Fabric's predicate parser does
+                // not understand). Nested Fabric-only jars of an FML mod stay FML's business; the view mods
+                // written for fabric-loader still expose the parent's metadata for isModLoaded probes.
+                return;
             }
             // Below NeoForge sits Fabric. A Fabric build that also ships a stray legacy mods.toml is still a
             // Fabric mod - Create: Ultimate Factory's carries one with modLoader="javafml" and
@@ -983,15 +1005,19 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
                 LOGGER.warn("[NeoFobric] {} carries a fabric.mod.json that could not be parsed - the jar is ignored", path.getFileName());
                 return;
             }
+            selfDeclaredForFallback = fmlToml != null && bundledBy.isEmpty() && declaresFmlModId(fmlToml, info.modId());
         } catch (Exception e) {
             LOGGER.warn("[NeoFobric] Could not read {} while checking for Fabric metadata - the jar is ignored", path, e);
             return;
         }
 
-        if (fmlProvidedModIds.contains(normalizeModId(info.modId()))) {
-            // NeoFobric: both loaders ship this mod, so only one build may be loaded. The Fabric one is the one
-            // to go: FML's dependencies and mixin gating are written against the NeoForge build, and skipping it
-            // here is what keeps the two module layers from exporting the same packages (Sodium).
+        // A Fabric-only build of a mod whose NeoForge build is installed: only one build may be loaded.
+        // The Fabric one is the one to go - FML's dependencies and mixin gating are written against the
+        // NeoForge build, and skipping it here is what keeps the two module layers from exporting the
+        // same packages. A top-level jar whose own metadata declares this id is not a duplicate of
+        // itself: the placeholder-version fallback above routes that jar to Fabric precisely because
+        // FML cannot load it, and its id is in the set because the set is read from the jar itself.
+        if (fmlProvidedModIds.contains(normalizeModId(info.modId())) && !selfDeclaredForFallback) {
             LOGGER.info("[NeoFobric] Skipping {} - the NeoForge mod {} provides the same mod id, and its build is the one loaded",
                     path.getFileName(), info.modId());
             FabricJarRegistry.markForeignModPath(path);
@@ -2565,6 +2591,22 @@ public final class BridgeFabricModLocator implements IModFileCandidateLocator {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * {@return whether the jar's own FML metadata declares {@code modId}}
+     *
+     * <p>Used to keep a jar that is routed to Fabric (the placeholder-version fallback) from being
+     * mistaken for a Fabric duplicate of the NeoForge build that the same file's metadata announces.
+     */
+    private static boolean declaresFmlModId(byte[] toml, String modId) {
+        var normalized = normalizeModId(modId);
+        for (var mod : parseForgeModsDotToml(new String(toml, java.nio.charset.StandardCharsets.UTF_8))) {
+            if (!mod[0].isEmpty() && normalizeModId(mod[0]).equals(normalized)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
