@@ -5,17 +5,16 @@
 
 package net.neoforged.neoforge.internal;
 
+import com.mojang.logging.LogUtils;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.common.NeoForgeMod;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @Mod(NeoForgeMod.MOD_ID)
 public class LogoFileWarningsHandler {
-    private static final Logger LOGGER = LoggerFactory.getLogger(LogoFileWarningsHandler.class);
-
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final boolean HIDE_WARNING_SCREEN = Boolean.getBoolean("neoforge.warnings.logofile.hide");
 
     public LogoFileWarningsHandler() {

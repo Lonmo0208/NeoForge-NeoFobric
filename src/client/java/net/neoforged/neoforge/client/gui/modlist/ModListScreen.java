@@ -1,0 +1,944 @@
+/*
+ * Copyright (c) NeoForged and contributors
+ * SPDX-License-Identifier: LGPL-2.1-only
+ */
+
+package net.neoforged.neoforge.client.gui.modlist;
+
+import static net.minecraft.network.chat.Component.translatable;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableList.Builder;
+import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.FilterMode;
+import com.mojang.logging.LogUtils;
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.nio.file.Path;
+import java.time.Month;
+import java.time.MonthDay;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Consumer;
+import java.util.function.UnaryOperator;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractStringWidget;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.CycleButton;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.FocusableTextWidget;
+import net.minecraft.client.gui.components.ImageWidget;
+import net.minecraft.client.gui.components.LogoRenderer;
+import net.minecraft.client.gui.components.MultiLineTextWidget;
+import net.minecraft.client.gui.components.ObjectSelectionList;
+import net.minecraft.client.gui.components.ScrollableLayout;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.layouts.EqualSpacingLayout;
+import net.minecraft.client.gui.layouts.FrameLayout;
+import net.minecraft.client.gui.layouts.GridLayout;
+import net.minecraft.client.gui.layouts.GridLayout.RowHelper;
+import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
+import net.minecraft.client.gui.layouts.LinearLayout;
+import net.minecraft.client.gui.layouts.LinearLayout.Orientation;
+import net.minecraft.client.gui.layouts.SpacerElement;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.client.renderer.texture.MissingTextureAtlasSprite;
+import net.minecraft.client.renderer.texture.TextureManager;
+import net.minecraft.locale.Language;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.Style;
+import net.minecraft.network.chat.contents.PlainTextContents;
+import net.minecraft.resources.Identifier;
+import net.minecraft.server.packs.resources.IoSupplier;
+import net.minecraft.util.CommonColors;
+import net.minecraft.util.CommonLinks;
+import net.minecraft.util.SpecialDates;
+import net.minecraft.util.Util;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.ModList;
+import net.neoforged.fml.VersionChecker;
+import net.neoforged.fml.loading.FMLConfig;
+import net.neoforged.fml.loading.FMLEnvironment;
+import net.neoforged.fml.loading.FMLPaths;
+import net.neoforged.neoforge.client.gui.widget.BackgroundWithPipingWidget;
+import net.neoforged.neoforge.client.gui.widget.ResizableTextureImageWidget;
+import net.neoforged.neoforge.client.gui.widget.SolidColorWidget;
+import net.neoforged.neoforge.common.NeoForgeMod;
+import net.neoforged.neoforge.internal.BridgeShellMods;
+import net.neoforged.neoforgespi.language.IModInfo;
+import org.jetbrains.annotations.ApiStatus;
+import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+
+@ApiStatus.Internal
+public class ModListScreen extends Screen {
+    private static final Logger LOGGER = LogUtils.getLogger();
+
+    private static final int SIDEBAR_CONTROLS_WIDTH = 150;
+    private static final int SIDEBAR_SORT_BUTTON_WIDTH = 50;
+    private static final int SIDEBAR_CONTROLS_HEIGHT = Button.DEFAULT_HEIGHT;
+    private static final int SIDEBAR_MODS_LIST_WIDTH = 150;
+    static final int INFO_PANEL_WIDTH = 250;
+    private static final int INFO_PANEL_FRAME_PADDING = 2;
+    static final int ICON_SIZE = 24;
+    static final int BANNER_HEIGHT = 50;
+
+    /// Indentation of a bundled mod's row under the mod that carries it.
+    static final int CHILD_INDENT = 10;
+
+    /// Which loader a mod list row comes from. Shown as a small chip next to the version.
+    enum LoaderTag {
+        NEOFORGE("NeoForge", 0xFFFFA033),
+        FABRIC("Fabric", 0xFFDBC1A4);
+
+        private final String label;
+        /// Brand colour, used for both the chip's border and its text.
+        private final int color;
+
+        LoaderTag(String label, int color) {
+            this.label = label;
+            this.color = color;
+        }
+    }
+
+    /// One mod as the screen lists it: what to show, which loader it came from, and - for a mod
+    /// carried inside another one's jar - the id of that mod.
+    record ModRow(ModDisplayInfo info, LoaderTag loader, @Nullable String parentId) {}
+
+    private final @Nullable Screen lastScreen;
+    private final ImmutableList<ModRow> mods;
+    private final Path modsFolder;
+    private final ConfigurationScreenFactory configFactory;
+    private final VersionCheckResultSupplier versionCheck;
+
+    /// The rows without a parent: always visible, each carrying its bundled mods.
+    private final List<ModsList.Entry> allEntries;
+    /// Every row, bundled ones included, for searches and for the child lists.
+    private final List<ModsList.Entry> everyEntry = new ArrayList<>();
+    private SortType currentSort = SortType.A_TO_Z;
+
+    @Nullable
+    private HeaderAndFooterLayout layout;
+    @Nullable
+    private EqualSpacingLayout fixedSidebarLayout;
+    @Nullable
+    private ModsList displayList;
+    private ModListScreen.@Nullable ModInfoPanel displayPanel;
+    @Nullable
+    private EditBox search;
+
+    public static ModListScreen create(@Nullable Screen lastScreen) {
+        final Builder<ModRow> mods = ImmutableList.builder();
+
+        for (ModContainer container : ModList.get().getSortedMods()) {
+            // Shells the bridge registered for its Fabric mods are bookkeeping, not installed mods:
+            // the same mod is shown by the contributed rows below, with its Fabric loader tag.
+            if (BridgeShellMods.isShell(container.getModId())) {
+                continue;
+            }
+            final ModDisplayInfo displayInfo;
+            final String modId = container.getModId();
+            if (!FMLEnvironment.isProduction() && modId.equals(Identifier.DEFAULT_NAMESPACE)) {
+                // This is a special case in development because the Minecraft mods.toml information is hardcoded in FML
+                // TODO: remove in the future once FML is updated to match
+                displayInfo = new DefaultModDisplayInfo(container) {
+                    @Override
+                    public ImageResource icon() {
+                        return ImageResource.packRoot("vanilla", "pack.png");
+                    }
+
+                    @Override
+                    public ImageResource banner() {
+                        return ImageResource.packAsset(LogoRenderer.MINECRAFT_LOGO);
+                    }
+
+                    @Override
+                    public Component authors() {
+                        return Component.literal("Mojang Studios");
+                    }
+
+                    @Override
+                    public Component license() {
+                        return Component.literal("Minecraft EULA").withStyle(style -> style
+                                .withUnderlined(true)
+                                .withClickEvent(new ClickEvent.OpenUrl(CommonLinks.EULA)));
+                    }
+
+                    @Override
+                    public URI displayUrl() {
+                        return URI.create("https://minecraft.net");
+                    }
+
+                    @Override
+                    public URI issuesUrl() {
+                        return URI.create("https://bugs.mojang.com");
+                    }
+
+                    @Override
+                    public Component description() {
+                        return Component.empty();
+                    }
+                };
+            } else {
+                displayInfo = container.getCustomExtension(ModDisplayInfo.class)
+                        .orElseGet(() -> new DefaultModDisplayInfo(container));
+            }
+            mods.add(new ModRow(displayInfo, LoaderTag.NEOFORGE, parentModIdOf(container.getModInfo())));
+        }
+
+        // Rows for mods from other loaders, contributed by a bridge (see ModListContributions). They
+        // have no FML container, so they can only come from outside ModList - but they are installed
+        // mods a player expects to find here all the same. An id an FML mod already uses is skipped:
+        // the bridge's row would be a duplicate of the same mod.
+        for (var contributed : ModListContributions.contributions()) {
+            if (ModList.get().getModContainerById(contributed.info().id())
+                    .filter(container -> !BridgeShellMods.isShell(container.getModId()))
+                    .isEmpty()) {
+                mods.add(new ModRow(contributed.info(), LoaderTag.FABRIC,
+                        contributed.bundledBy().isBlank() ? null : contributed.bundledBy()));
+            }
+        }
+
+        return new ModListScreen(lastScreen, mods.build(), FMLPaths.MODSDIR.get(), ConfigurationScreenFactory.DEFAULT, VersionCheckResultSupplier.DEFAULT);
+    }
+
+    /// {@return the mod whose jar carries this mod's jar (jar-in-jar), or {@code null}}
+    ///
+    /// The FML discovery attributes link a nested jar to its parent jar; the parent's mod is what the
+    /// player thinks of as the mod they installed, so its children are shown under it. A parent that
+    /// is not itself in the list (or an attribute set that cannot be read) leaves the mod top-level.
+    private static @Nullable String parentModIdOf(IModInfo info) {
+        try {
+            final var parent = info.getOwningFile().getFile().getDiscoveryAttributes().parent();
+            if (parent == null) {
+                return null;
+            }
+            final var parentMods = parent.getModInfos();
+            return parentMods.isEmpty() ? null : parentMods.getFirst().getModId();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private ModListScreen(@Nullable Screen lastScreen, ImmutableList<ModRow> mods, Path modsFolder, ConfigurationScreenFactory configFactory, VersionCheckResultSupplier versionCheck) {
+        super(translatable("neoforge.screen.mods.title"));
+        this.lastScreen = lastScreen;
+        this.mods = mods;
+        this.modsFolder = modsFolder;
+        this.allEntries = new ArrayList<>(mods.size());
+        this.configFactory = configFactory;
+        this.versionCheck = versionCheck;
+    }
+
+    @Override
+    protected void init() {
+        super.init();
+        this.layout = new HeaderAndFooterLayout(this, 8, 38);
+
+        // Footer
+        final LinearLayout footer = layout.addToFooter(new LinearLayout(0, 0, Orientation.HORIZONTAL));
+        footer.spacing(4).defaultCellSetting().paddingTop(5);
+
+        footer.addChild(Button.builder(Component.translatable("neoforge.screen.mods.button.open_old_screen"),
+                _ -> this.minecraft.setScreen(new net.neoforged.neoforge.client.gui.ModListScreen(this)))
+                .width(Button.SMALL_WIDTH)
+                .build());
+        footer.addChild(Button.builder(Component.translatable("neoforge.screen.mods.button.open_folder"),
+                _ -> Util.getPlatform().openPath(modsFolder))
+                .width(Button.SMALL_WIDTH)
+                .build());
+        footer.addChild(Button.builder(CommonComponents.GUI_BACK, _ -> ModListScreen.this.onClose())
+                .width(Button.SMALL_WIDTH)
+                .build());
+
+        // Content
+        final GridLayout contentBase = layout.addToContents(new GridLayout()).columnSpacing(-3);
+        contentBase.defaultCellSetting().alignVerticallyTop().alignHorizontallyCenter().padding(0);
+        final RowHelper contentBaseHelper = contentBase.createRowHelper(3);
+
+        final LinearLayout sidebar = contentBaseHelper.addChild(LinearLayout.vertical(), contentBaseHelper.newCellSettings().paddingVertical(-INFO_PANEL_FRAME_PADDING));
+        sidebar.spacing(6).defaultCellSetting().alignVerticallyTop();
+        final LinearLayout main = contentBaseHelper.addChild(LinearLayout.vertical(), 2);
+
+        this.fixedSidebarLayout = sidebar.addChild(new EqualSpacingLayout(SIDEBAR_CONTROLS_WIDTH, SIDEBAR_CONTROLS_HEIGHT, EqualSpacingLayout.Orientation.HORIZONTAL));
+
+        this.search = this.fixedSidebarLayout.addChild(new EditBox(this.font, SIDEBAR_CONTROLS_WIDTH - SIDEBAR_SORT_BUTTON_WIDTH - 4, SIDEBAR_CONTROLS_HEIGHT, Component.translatable("neoforge.screen.mods.search")));
+        this.search.setHint(Component.translatable("neoforge.screen.mods.search").withStyle(ChatFormatting.GRAY));
+        this.search.setFocused(false);
+        this.search.setCanLoseFocus(true);
+        this.search.setResponder(_ -> this.updateModsList());
+
+        this.fixedSidebarLayout.addChild(CycleButton.builder(SortType::getName, this.currentSort)
+                .displayOnlyValue()
+                .withValues(SortType.values())
+                .withTooltip(sort -> Tooltip.create(sort.getHover()))
+                // 20 is the default button height
+                .create(0, 0, SIDEBAR_SORT_BUTTON_WIDTH, SIDEBAR_CONTROLS_HEIGHT, translatable("neoforge.screen.mods.button.sort"), (_, newValue) -> {
+                    this.currentSort = newValue;
+                    this.updateModsList();
+                }));
+
+        this.fixedSidebarLayout.arrangeElements(); // Arrange to figure out the height
+        this.displayList = sidebar.addChild(new ModsList(this.layout.getContentHeight() - this.fixedSidebarLayout.getHeight() - 5));
+
+        this.displayPanel = new ModInfoPanel(INFO_PANEL_WIDTH, this.layout.getContentHeight());
+        main.addChild(this.displayPanel.getMainLayout());
+
+        this.allEntries.clear();
+        this.everyEntry.clear();
+        final Map<String, ModsList.Entry> byId = new java.util.HashMap<>();
+        final List<ModsList.Entry> all = new ArrayList<>(mods.size());
+        for (ModRow mod : mods) {
+            final var entry = this.displayList.new Entry(this.versionCheck.get(mod.info().id()), mod.info(), mod.loader());
+            all.add(entry);
+            byId.putIfAbsent(mod.info().id(), entry);
+        }
+        for (int i = 0; i < mods.size(); i++) {
+            final var entry = all.get(i);
+            final var parentId = mods.get(i).parentId();
+            final ModsList.Entry parent = parentId == null || parentId.equals(entry.displayInfo.id()) ? null : byId.get(parentId);
+            if (parent != null) {
+                // A bundled mod: shown under the mod whose jar carries it, until that row is expanded.
+                entry.parent = parent;
+                parent.children.add(entry);
+            } else {
+                this.allEntries.add(entry);
+            }
+        }
+        this.everyEntry.addAll(all);
+        this.updateModsList();
+
+        this.layout.visitWidgets(this::addRenderableWidget);
+        this.repositionElements();
+    }
+
+    @Override
+    protected void repositionElements() {
+        assert this.layout != null;
+        assert this.displayList != null;
+        assert this.displayPanel != null;
+        assert this.fixedSidebarLayout != null;
+        this.displayPanel.updateHeight(this.layout.getContentHeight());
+        this.displayList.updateSizeAndPosition(SIDEBAR_MODS_LIST_WIDTH, this.layout.getContentHeight() - this.fixedSidebarLayout.getHeight() - 5, 0);
+        this.displayPanel.getMainLayout().arrangeElements();
+        this.layout.arrangeElements();
+        this.displayList.setScrollAmount(this.displayList.scrollAmount());
+    }
+
+    @Override
+    public void onClose() {
+        final TextureManager textureManager = this.minecraft.getTextureManager();
+        for (ModsList.Entry entry : this.allEntries) {
+            if (entry.iconData != null) {
+                textureManager.release(entry.iconData.sprite);
+            }
+        }
+        assert this.displayPanel != null;
+        this.displayPanel.close();
+        this.minecraft.setScreen(this.lastScreen);
+    }
+
+    private void updateModsList() {
+        if (this.displayList == null) return;
+
+        assert this.search != null;
+        final String filter = this.search.getValue().toLowerCase(Locale.ROOT);
+        final ArrayList<ModsList.Entry> entries = new ArrayList<>();
+        if (filter.isEmpty()) {
+            // The tree: every top-level mod, with the mods bundled inside it listed directly under it
+            // once its row is expanded (and hidden while it is not).
+            final ArrayList<ModsList.Entry> roots = new ArrayList<>(this.allEntries);
+            this.currentSort.sort(roots);
+            for (ModsList.Entry root : roots) {
+                entries.add(root);
+                if (root.expanded && !root.children.isEmpty()) {
+                    final ArrayList<ModsList.Entry> children = new ArrayList<>(root.children);
+                    this.currentSort.sort(children);
+                    entries.addAll(children);
+                }
+            }
+        } else {
+            // A search looks through every row, bundled mods included: a player searching for a
+            // module should find it whether or not its parent happens to be expanded.
+            entries.addAll(this.everyEntry);
+            entries.removeIf(entry -> !entry.displayInfo.displayName().getString().toLowerCase(Locale.ROOT).contains(filter));
+            this.currentSort.sort(entries);
+        }
+        final ModsList.Entry selected = this.displayList.getSelected();
+        this.displayList.replaceEntries(entries);
+        if (entries.contains(selected)) {
+            // Reselect the previously-selected if possible
+            this.displayList.setSelected(selected);
+        } else if (entries.size() == 1) {
+            // If there is only one entry, select that
+            this.displayList.setSelected(entries.getFirst());
+        }
+    }
+
+    private record ImageData(Identifier sprite, int width, int height) {}
+
+    @Nullable
+    private ImageData loadImage(String type, String modId, ImageResource imageResource, boolean blurred) {
+        final IoSupplier<InputStream> resource = imageResource.get(this.minecraft.getResourceManager());
+
+        if (resource == null) {
+            LOGGER.warn("Failed to find {} resource {} for mod ID {} as it did not exist", type, imageResource, modId);
+            return null;
+        }
+
+        final NativeImage image;
+        try (InputStream imageStream = resource.get()) {
+            image = NativeImage.read(imageStream);
+        } catch (IOException e) {
+            LOGGER.warn("Failed to load {} resource {} for mod ID {}", type, imageResource, modId);
+            return null;
+        }
+
+        final TextureManager textureManager = this.minecraft.getTextureManager();
+        final Identifier sprite = Identifier.fromNamespaceAndPath(NeoForgeMod.MOD_ID, "mod/" + type + "/" + modId);
+        textureManager.register(sprite, new DynamicTexture(sprite::toString, image) {
+            @Override
+            public void upload() {
+                sampler = RenderSystem.getSamplerCache().getClampToEdge(blurred ? FilterMode.LINEAR : FilterMode.NEAREST);
+                super.upload();
+            }
+        });
+
+        return new ImageData(sprite, image.getWidth(), image.getHeight());
+    }
+
+    private class ModsList extends ObjectSelectionList<ModsList.Entry> {
+        public ModsList(int height) {
+            // minecraft, width, height, y, itemHeight
+            super(ModListScreen.this.minecraft, SIDEBAR_MODS_LIST_WIDTH, height, 0, ICON_SIZE + 4);
+            // 24 pixels for the icon, 4 pixels padding for top and bottom (2 pixels each)
+        }
+
+        @Override
+        public void clearEntries() {
+            super.clearEntries();
+            this.setSelected(null);
+        }
+
+        // Make the entries fit the container, and shrink if the scrollbar is present
+        @Override
+        public int getRowLeft() {
+            return this.getX() + 3;
+        }
+
+        @Override
+        public int getRowWidth() {
+            int rowWidth = this.getWidth() - 6;
+            if (this.scrollable()) {
+                // Shrink if scrollbar is present
+                rowWidth -= this.scrollbarWidth();
+            }
+            return rowWidth;
+        }
+
+        @Override
+        protected int scrollBarX() {
+            return this.getRight() - this.scrollbarWidth();
+        }
+
+        @Override
+        public void setSelected(ModsList.@Nullable Entry selectedEntry) {
+            super.setSelected(selectedEntry);
+            assert ModListScreen.this.displayPanel != null;
+            ModListScreen.this.displayPanel.updateSelected(selectedEntry);
+            this.refreshScrollAmount();
+        }
+
+        class Entry extends ObjectSelectionList.Entry<ModsList.Entry> {
+            private static final Identifier VERSION_CHECK_ICONS = Identifier.fromNamespaceAndPath(NeoForgeMod.MOD_ID, "textures/gui/version_check_icons.png");
+            /// Vanilla's locator-bar triangles: the closest thing the game ships to an expand/collapse
+            /// glyph (7x10). The down triangle invites expanding (the bundled mods are listed below),
+            /// the up one folding them away again.
+            private static final Identifier EXPAND_ICON = Identifier.withDefaultNamespace("hud/locator_bar_arrow_down");
+            private static final Identifier COLLAPSE_ICON = Identifier.withDefaultNamespace("hud/locator_bar_arrow_up");
+            private static final int EXPAND_ICON_WIDTH = 7;
+            private static final int EXPAND_ICON_HEIGHT = 10;
+            final VersionChecker.@Nullable CheckResult checkResult;
+            final ModDisplayInfo displayInfo;
+            final LoaderTag loader;
+            @Nullable
+            final ImageData iconData;
+            /// The mod whose jar carries this one; `null` for a mod the player installed directly.
+            ModsList.@Nullable Entry parent;
+            /// The mods carried inside this one's jar, listed beneath it while expanded.
+            final List<ModsList.Entry> children = new ArrayList<>();
+            /// Bundled mods are hidden until the player expands the row (they are also sorted into it).
+            boolean expanded;
+
+            Entry(VersionChecker.@Nullable CheckResult checkResult, ModDisplayInfo displayInfo, LoaderTag loader) {
+                this.checkResult = checkResult;
+                this.displayInfo = displayInfo;
+                this.loader = loader;
+                if (displayInfo.icon() != null) {
+                    this.iconData = ModListScreen.this.loadImage("icon", displayInfo.id(), Objects.requireNonNull(displayInfo.icon()), displayInfo.iconBlur());
+                } else {
+                    this.iconData = null;
+                }
+            }
+
+            int depth() {
+                return this.parent == null ? 0 : 1;
+            }
+
+            /// {@return the x of the expand/collapse icon, or -1 when there is nothing to expand}
+            private int expandIconX() {
+                return this.children.isEmpty() ? -1 : this.getContentRight() - EXPAND_ICON_WIDTH - 3;
+            }
+
+            private int expandIconY() {
+                return this.getContentYMiddle() - EXPAND_ICON_HEIGHT / 2;
+            }
+
+            @Override
+            public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+                final int iconX = expandIconX();
+                if (iconX >= 0
+                        && event.x() >= iconX - 2 && event.x() < iconX + EXPAND_ICON_WIDTH + 2
+                        && event.y() >= expandIconY() - 1 && event.y() < expandIconY() + EXPAND_ICON_HEIGHT + 1) {
+                    // Clicking the icon expands or collapses the bundled mods instead of selecting.
+                    this.expanded = !this.expanded;
+                    ModListScreen.this.updateModsList();
+                    return true;
+                }
+                return super.mouseClicked(event, doubleClick);
+            }
+
+            @Override
+            public Component getNarration() {
+                return Component.translatable("narrator.select", Component.translatable("neoforge.screen.mods.list.narration", displayInfo.displayName(), displayInfo.version()));
+            }
+
+            @Override
+            public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float a) {
+                int left = this.getContentX();
+                int top = this.getContentY();
+                // Bundled mods are indented so the hierarchy reads at a glance.
+                left += depth() * CHILD_INDENT;
+                int textLeft = left + 2;
+
+                if (iconData != null) {
+                    graphics.blit(iconData.sprite, left, top, left + ICON_SIZE, top + ICON_SIZE, 0.0F, 1.0F, 0.0F, 1.0F);
+                    textLeft += ICON_SIZE + 4;
+                }
+                int maxTextWidth = getRowWidth() - textLeft + this.getContentX() - 4;
+                if (expandIconX() >= 0) {
+                    maxTextWidth -= EXPAND_ICON_WIDTH + 4;
+                }
+                maxTextWidth -= 2 + ModListScreen.this.font.width(this.loader.label) + 5;
+
+                if (checkResult != null && checkResult.status().shouldDraw() && FMLConfig.getBoolConfigValue(FMLConfig.ConfigValue.VERSION_CHECK)) {
+                    graphics.blit(
+                            RenderPipelines.GUI_TEXTURED,
+                            VERSION_CHECK_ICONS,
+                            this.getContentRight() - 10,
+                            this.getContentYMiddle() - (8 / 2),
+                            checkResult.status().getSheetOffset() * 8,
+                            (checkResult.status().isAnimated() && ((System.currentTimeMillis() / 800 & 1) == 1)) ? 8 : 0,
+                            8,
+                            8,
+                            64,
+                            16);
+                    maxTextWidth -= 14;
+                }
+
+                top += 4; // padding
+
+                final Language language = Language.getInstance();
+                graphics.text(ModListScreen.this.font, language.getVisualOrder(ModListScreen.this.font.ellipsize(displayInfo.displayName(), maxTextWidth)), textLeft, top, 0xFFFFFFFF);
+                top += ModListScreen.this.font.lineHeight;
+                final Component version = Component.literal(displayInfo.version());
+                // The tag has to follow the text that is actually drawn, not the untruncated version: a
+                // long version is ellipsized, and measuring the full one placed the tag past the end of the
+                // row, where it then fell foul of its own "no room" guard and disappeared entirely.
+                final var versionLine = language.getVisualOrder(ModListScreen.this.font.ellipsize(version, maxTextWidth));
+                graphics.text(ModListScreen.this.font, versionLine, textLeft, top, CommonColors.GRAY);
+                drawLoaderTag(graphics, textLeft + ModListScreen.this.font.width(versionLine) + 5, top, this.loader);
+
+                final int iconX = expandIconX();
+                if (iconX >= 0 && (hovered || this.expanded)) {
+                    graphics.blitSprite(RenderPipelines.GUI_TEXTURED,
+                            this.expanded ? COLLAPSE_ICON : EXPAND_ICON,
+                            iconX, expandIconY(), EXPAND_ICON_WIDTH, EXPAND_ICON_HEIGHT);
+                }
+            }
+
+            /// The loader tag: a dark chip with a 1px brand-coloured border and brand-coloured text.
+            /// Drawn from primitives on purpose - vanilla ships no sprite for this.
+            private void drawLoaderTag(GuiGraphicsExtractor graphics, int x, int y, LoaderTag tag) {
+                final var font = ModListScreen.this.font;
+                final int width = font.width(tag.label);
+                final int left = x - 2;
+                final int top = y - 1;
+                final int right = x + width + 2;
+                final int bottom = y + font.lineHeight;
+                if (right > this.getContentRight()) {
+                    return; // Not enough room next to the version; the tag is decoration, not data.
+                }
+                graphics.fill(left, top, right, bottom, 0xC0181818);
+                graphics.fill(left, top, right, top + 1, tag.color);
+                graphics.fill(left, bottom - 1, right, bottom, tag.color);
+                graphics.fill(left, top, left + 1, bottom, tag.color);
+                graphics.fill(right - 1, top, right, bottom, tag.color);
+                graphics.text(font, tag.label, x, y, tag.color);
+            }
+        }
+    }
+
+    private class ModInfoPanel implements Closeable {
+        private static final MonthDay APRIL_FOOLS = MonthDay.of(Month.APRIL, 1);
+        private static final int MAIN_PADDING = 4; // Padding between sections
+
+        private final int width;
+        private final ResizableTextureImageWidget bannerWidget;
+        private final MultiLineTextWidget displayNameWidget;
+        private final MultiLineTextWidget idAndVersionWidget;
+        private final MultiLineTextWidget newerVersionWidget;
+        private final Button newerVersionButton;
+        private final MultiLineTextWidget licenseWidget;
+        private final MultiLineTextWidget authorsWidget;
+        private final MultiLineTextWidget creditsWidget;
+        private final SolidColorWidget separator;
+        private final Button homepageButton;
+        private final Button issuesButton;
+        private final Button configButton;
+        private final MultiLineTextWidget descriptionWidget;
+        private ModsList.@Nullable Entry selected;
+        @Nullable
+        private ImageData bannerData;
+        @Nullable
+        private UnaryOperator<Screen> configScreenFactory;
+
+        private static final int BUTTON_PANEL_HEIGHT = 26;
+
+        private final LinearLayout mainLayout;
+        private final FrameLayout contentFrame;
+        private final BackgroundWithPipingWidget backgroundWithPipingWidget;
+        private final ScrollableLayout scrollableContentContainer;
+
+        private final ImageWidget squirr;
+
+        public ModInfoPanel(int width, int height) {
+            this.mainLayout = LinearLayout.vertical();
+            this.mainLayout.defaultCellSetting().alignHorizontallyCenter();
+
+            this.contentFrame = this.mainLayout.addChild(new FrameLayout(width, height - BUTTON_PANEL_HEIGHT));
+
+            LinearLayout contentLayout = new LinearLayout(0, 0, Orientation.VERTICAL);
+            this.width = width;
+
+            // Ensure layout width fills the whole width
+            contentLayout.addChild(SpacerElement.width(width));
+
+            this.bannerWidget = contentLayout.addChild(
+                    new ResizableTextureImageWidget(0, 0, 0, 0, MissingTextureAtlasSprite.getLocation(), 0, 0),
+                    contentLayout.newCellSettings().paddingTop(INFO_PANEL_FRAME_PADDING).alignHorizontallyCenter());
+
+            contentLayout.addChild(SpacerElement.height(MAIN_PADDING));
+
+            this.displayNameWidget = buildTextWidget(contentLayout).setCentered(true);
+            this.displayNameWidget.setComponentClickHandler(null); // Disallow clicks for the display name
+            this.idAndVersionWidget = buildTextWidget(contentLayout).setCentered(true);
+
+            this.newerVersionWidget = contentLayout.addChild(FocusableTextWidget.builder(Component.empty(), font, 2)
+                    .alwaysShowBorder(false)
+                    .backgroundFill(FocusableTextWidget.BackgroundFill.NEVER)
+                    .maxWidth(width)
+                    .build()
+                    .setCentered(true),
+                    contentLayout.newCellSettings().paddingVertical(3));
+            this.newerVersionWidget.setComponentClickHandler(this::handleClickEvent);
+            this.newerVersionButton = contentLayout.addChild(Button.builder(translatable("neoforge.screen.mods.button.changelog"),
+                    _ -> {
+                        if (this.selected != null && this.selected.checkResult != null) {
+                            this.openChangelogScreen(this.selected.checkResult);
+                        }
+                    }).build(),
+                    contentLayout.newCellSettings().alignHorizontallyCenter());
+
+            contentLayout.addChild(SpacerElement.height(MAIN_PADDING));
+
+            this.licenseWidget = buildTextWidget(contentLayout);
+            this.authorsWidget = buildTextWidget(contentLayout);
+            this.creditsWidget = buildTextWidget(contentLayout);
+
+            this.separator = contentLayout.addChild(
+                    new SolidColorWidget(width - 8, 1).setColor(CommonColors.GRAY).calculateShadow(),
+                    contentLayout.newCellSettings().paddingVertical(MAIN_PADDING).alignHorizontallyCenter());
+
+            this.descriptionWidget = buildTextWidget(contentLayout);
+
+            this.backgroundWithPipingWidget = this.contentFrame.addChild(new BackgroundWithPipingWidget(
+                    ModListScreen.this.minecraft,
+                    0, 0,
+                    INFO_PANEL_WIDTH + INFO_PANEL_FRAME_PADDING * 2, height - BUTTON_PANEL_HEIGHT + INFO_PANEL_FRAME_PADDING * 2),
+                    this.contentFrame.newChildLayoutSettings().padding(-INFO_PANEL_FRAME_PADDING));
+
+            this.scrollableContentContainer = this.contentFrame.addChild(
+                    new ScrollableLayout(ModListScreen.this.minecraft, contentLayout, height - BUTTON_PANEL_HEIGHT),
+                    this.contentFrame.newChildLayoutSettings().alignVerticallyTop());
+
+            this.squirr = this.contentFrame.addChild(ImageWidget.texture(
+                    32, 30,
+                    Identifier.fromNamespaceAndPath(NeoForgeMod.MOD_ID, "textures/gui/bigsquirr.png"),
+                    32, 30), this.contentFrame.newChildLayoutSettings().alignVerticallyBottom().alignHorizontallyRight().paddingRight(16).paddingBottom(-1));
+
+            EqualSpacingLayout buttonsLayout = this.mainLayout.addChild(new EqualSpacingLayout(width, BUTTON_PANEL_HEIGHT, EqualSpacingLayout.Orientation.HORIZONTAL));
+            buttonsLayout.defaultChildLayoutSetting().alignVerticallyBottom().paddingHorizontal(-INFO_PANEL_FRAME_PADDING);
+
+            final int buttonSpacing = 3;
+            final int buttonWidth = width / 3 - (buttonSpacing / 2);
+            final int buttonHeight = Button.DEFAULT_HEIGHT;
+
+            this.homepageButton = buttonsLayout.addChild(Button.builder(Component.translatable("neoforge.screen.mods.button.homepage"),
+                    _ -> {
+                        if (displayInfo().displayUrl() != null) {
+                            ConfirmLinkScreen.confirmLinkNow(ModListScreen.this, Objects.requireNonNull(displayInfo().displayUrl()));
+                        }
+                    }).size(buttonWidth, buttonHeight).build());
+            this.issuesButton = buttonsLayout.addChild(Button.builder(Component.translatable("neoforge.screen.mods.button.issues"),
+                    _ -> {
+                        if (displayInfo().issuesUrl() != null) {
+                            ConfirmLinkScreen.confirmLinkNow(ModListScreen.this, Objects.requireNonNull(displayInfo().issuesUrl()));
+                        }
+                    }).size(buttonWidth, buttonHeight).build());
+            this.configButton = buttonsLayout.addChild(Button.builder(Component.translatable("neoforge.screen.mods.button.config"),
+                    _ -> {
+                        if (this.configScreenFactory != null) {
+                            ModListScreen.this.minecraft.setScreen(this.configScreenFactory.apply(ModListScreen.this));
+                        }
+                    }).size(buttonWidth, buttonHeight).build());
+
+            this.reset();
+        }
+
+        private MultiLineTextWidget buildTextWidget(LinearLayout layout) {
+            MultiLineTextWidget widget = layout.addChild(FocusableTextWidget.builder(Component.empty(), font, 2)
+                    .alwaysShowBorder(false)
+                    .backgroundFill(FocusableTextWidget.BackgroundFill.NEVER)
+                    .maxWidth(width)
+                    .build()
+                    .setCentered(false));
+            widget.setComponentClickHandler(this::handleClickEvent);
+            return widget;
+        }
+
+        private void handleClickEvent(Style style) {
+            ClickEvent event = style.getClickEvent();
+            if (event == null) return;
+            switch (event) {
+                case ClickEvent.OpenUrl(URI uri) -> ConfirmLinkScreen.confirmLinkNow(ModListScreen.this, uri);
+                case ClickEvent.OpenFile openFile -> Util.getPlatform().openFile(openFile.file());
+                case ClickEvent.CopyToClipboard(String value) -> minecraft.keyboardHandler.setClipboard(value);
+                default -> LOGGER.error("Unable to handle click event ‘{}’", event);
+            }
+        }
+
+        public LinearLayout getMainLayout() {
+            return mainLayout;
+        }
+
+        private ModDisplayInfo displayInfo() {
+            if (this.selected == null) return BlankModDisplayInfo.INSTANCE;
+            return this.selected.displayInfo;
+        }
+
+        public void updateHeight(int height) {
+            int infoHeight = height - BUTTON_PANEL_HEIGHT;
+            this.contentFrame.setMinHeight(infoHeight);
+            this.backgroundWithPipingWidget.setHeight(infoHeight);
+            this.scrollableContentContainer.setMaxHeight(infoHeight);
+        }
+
+        public void updateSelected(ModsList.@Nullable Entry newSelected) {
+            if (newSelected == this.selected) return; // No change in selection
+            this.selected = newSelected;
+            this.update();
+            assert ModListScreen.this.layout != null;
+            assert ModListScreen.this.displayPanel != null;
+            ModListScreen.this.displayPanel.getMainLayout().arrangeElements();
+            ModListScreen.this.layout.arrangeElements();
+            ModListScreen.this.repositionElements();
+        }
+
+        /// Resets layout to a blank state.
+        private void reset() {
+            if (this.bannerData != null) {
+                final TextureManager textureManager = ModListScreen.this.minecraft.getTextureManager();
+                textureManager.release(bannerData.sprite);
+                this.bannerData = null;
+            }
+            this.bannerWidget.updateResource(MissingTextureAtlasSprite.getLocation(), 0, 0);
+
+            hideTextWidget(this.displayNameWidget);
+            hideTextWidget(this.idAndVersionWidget);
+            hideTextWidget(this.newerVersionWidget);
+            this.newerVersionButton.visible = this.newerVersionButton.active = false;
+            this.newerVersionButton.setHeight(0);
+            hideTextWidget(this.licenseWidget);
+            hideTextWidget(this.authorsWidget);
+            hideTextWidget(this.creditsWidget);
+
+            this.homepageButton.active = false;
+            this.issuesButton.active = false;
+            this.configScreenFactory = null;
+            this.configButton.active = false;
+            this.separator.visible = false;
+            hideTextWidget(this.descriptionWidget);
+
+            this.squirr.visible = false;
+        }
+
+        private void hideTextWidget(AbstractStringWidget widget) {
+            widget.setMessage(Component.empty());
+            widget.visible = false;
+            widget.setHeight(0);
+        }
+
+        /// Updates the layout based on the selected info.
+        public void update() {
+            reset();
+            if (this.selected == null) return; // Do nothing if nothing is selected
+            ModDisplayInfo displayInfo = this.selected.displayInfo;
+
+            final ImageResource bannerResource = displayInfo.banner();
+            if (bannerResource != null) {
+                // Load new banner data
+                if (displayInfo.id().equals(Identifier.DEFAULT_NAMESPACE)) {
+                    // Special-case for the 'minecraft' mod: render the logo using LogoRenderer
+                    float scaleFactor = Math.min(1F, (float) width / LogoRenderer.LOGO_TEXTURE_WIDTH);
+                    int bannerWidth = (int) (LogoRenderer.LOGO_TEXTURE_WIDTH * scaleFactor);
+                    this.bannerWidget.useMinecraftLogo(bannerWidth);
+                } else {
+                    this.bannerData = loadImage("banner", displayInfo.id(), bannerResource, false);
+                    if (this.bannerData != null) {
+                        float widthScaleFactor = (float) this.width / this.bannerData.width();
+                        float heightScaleFactor = (float) BANNER_HEIGHT / this.bannerData.height();
+                        float scaleFactor = Math.min(widthScaleFactor, heightScaleFactor);
+                        int bannerWidth = (int) (this.bannerData.width() * scaleFactor);
+                        int bannerHeight = (int) (this.bannerData.height() * scaleFactor);
+                        this.bannerWidget.updateResource(this.bannerData.sprite(), bannerWidth, bannerHeight);
+                    }
+                }
+            }
+
+            this.displayNameWidget.setMessage(displayInfo.displayName());
+            this.displayNameWidget.visible = true;
+            this.idAndVersionWidget.setMessage(Component.translatable(
+                    "neoforge.screen.mods.info.subtitle",
+                    Component.literal(displayInfo.id()).withStyle(style -> style
+                            .withItalic(true)
+                            .withHoverEvent(new HoverEvent.ShowText(Component.translatable("neoforge.screen.mods.info.subtitle.modid.click")))
+                            .withClickEvent(new ClickEvent.CopyToClipboard(displayInfo.id()))),
+                    Component.literal(displayInfo.version()).withStyle(style -> style
+                            .withHoverEvent(new HoverEvent.ShowText(Component.translatable("neoforge.screen.mods.info.subtitle.version.click")))
+                            .withClickEvent(new ClickEvent.CopyToClipboard(displayInfo.version()))))
+                    .withStyle(ChatFormatting.GRAY));
+            this.idAndVersionWidget.visible = true;
+            VersionChecker.CheckResult checkResult = this.selected.checkResult;
+            if (checkResult != null) {
+                this.newerVersionWidget.setMessage(Component.translatable(
+                        "neoforge.screen.mods.info.update",
+                        Component.literal(checkResult.target().toString())
+                                .withStyle(style -> style.withItalic(false)))
+                        .withStyle(style -> style.withItalic(true)));
+                this.newerVersionWidget.visible = true;
+
+                this.newerVersionButton.setHeight(Button.DEFAULT_HEIGHT);
+                this.newerVersionButton.visible = this.newerVersionButton.active = true;
+            }
+
+            this.licenseWidget.setMessage(Component.translatable(
+                    "neoforge.screen.mods.info.license",
+                    displayInfo.license().copy().withStyle(ChatFormatting.WHITE).withStyle(style -> style.withBold(false))).withStyle(ChatFormatting.GRAY).withStyle(style -> style.withBold(true)));
+            this.licenseWidget.visible = true;
+            if (containsText(displayInfo.authors())) {
+                this.authorsWidget.setMessage(Component.translatable(
+                        "neoforge.screen.mods.info.authors",
+                        displayInfo.authors().copy().withStyle(ChatFormatting.WHITE).withStyle(style -> style.withBold(false))).withStyle(ChatFormatting.GRAY).withStyle(style -> style.withBold(true)));
+                this.authorsWidget.visible = true;
+            }
+            if (containsText(displayInfo.credits())) {
+                this.creditsWidget.setMessage(Component.translatable(
+                        "neoforge.screen.mods.info.credits",
+                        displayInfo.credits().copy().withStyle(ChatFormatting.WHITE).withStyle(style -> style.withBold(false))).withStyle(ChatFormatting.GRAY).withStyle(style -> style.withBold(true)));
+                this.creditsWidget.visible = true;
+            }
+
+            this.homepageButton.active = displayInfo.displayUrl() != null;
+            this.issuesButton.active = displayInfo.issuesUrl() != null;
+            this.configScreenFactory = ModListScreen.this.configFactory.create(displayInfo);
+            this.configButton.active = this.configScreenFactory != null;
+
+            // Hardcoded case from ModInfo
+            if (containsText(displayInfo.description()) && !displayInfo.description().getString().equals("MISSING DESCRIPTION")) {
+                this.separator.visible = true;
+                this.descriptionWidget.setMessage(displayInfo.description());
+                this.descriptionWidget.visible = true;
+            }
+
+            if (displayInfo.id().equals(NeoForgeMod.MOD_ID) && SpecialDates.dayNow().equals(APRIL_FOOLS)) {
+                this.squirr.visible = true;
+            }
+        }
+
+        private void openChangelogScreen(VersionChecker.CheckResult checkResult) {
+            ModListScreen.this.minecraft.setScreen(new ChangelogScreen(ModListScreen.this, displayInfo(), checkResult));
+        }
+
+        private static boolean containsText(Component component) {
+            return !component.getContents().equals(PlainTextContents.EMPTY) && !component.getString().isEmpty();
+        }
+
+        @Override
+        public void close() {
+            this.reset();
+        }
+    }
+
+    private static final Comparator<ModsList.Entry> COMPARATOR_BY_NAME = Comparator.comparing(c -> c.displayInfo.displayName().getString().toLowerCase(Locale.ROOT));
+
+    private enum SortType {
+        A_TO_Z("neoforge.screen.mods.sort.a_to_z", list -> list.sort(COMPARATOR_BY_NAME)),
+        Z_TO_A("neoforge.screen.mods.sort.z_to_a", list -> list.sort(COMPARATOR_BY_NAME.reversed()));
+
+        private final String translationKey;
+        private final Consumer<List<ModsList.Entry>> sorter;
+
+        SortType(String translationKey, Consumer<List<ModsList.Entry>> sorter) {
+            this.translationKey = translationKey;
+            this.sorter = sorter;
+        }
+
+        public Component getName() {
+            return Component.translatable(this.translationKey);
+        }
+
+        public Component getHover() {
+            return Component.translatable(this.translationKey + ".hover");
+        }
+
+        public void sort(List<ModsList.Entry> list) {
+            sorter.accept(list);
+        }
+    }
+}
