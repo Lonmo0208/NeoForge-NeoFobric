@@ -1,6 +1,6 @@
 --- a/net/minecraft/world/level/block/FlowerPotBlock.java
 +++ b/net/minecraft/world/level/block/FlowerPotBlock.java
-@@ -31,21 +_,54 @@
+@@ -31,21 +_,58 @@
  
  public class FlowerPotBlock extends Block {
      public static final MapCodec<FlowerPotBlock> CODEC = RecordCodecBuilder.mapCodec(
@@ -23,9 +23,11 @@
 +    @Deprecated
      public FlowerPotBlock(Block potted, BlockBehaviour.Properties properties) {
          super(properties);
--        this.potted = potted;
++        // NeoFobric: keep the vanilla value as well. Fabric mods shadow this field directly
++        // (ViaFabricPlus, DynamicCrosshair), and the bridge widens it for them; this class reads
++        // getPotted(), but external readers must not see null either.
+         this.potted = potted;
 -        POTTED_BY_CONTENT.put(potted, this);
-+        this.potted = null; // Unused, redirected by coremod
 +        this.flowerDelegate = () -> potted;
 +        // If we're constructing the empty pot at Blocks.FLOWER_POT, then the field will be null
 +        this.emptyPot = Blocks.FLOWER_POT == null ? null : () -> (FlowerPotBlock) Blocks.FLOWER_POT;
@@ -52,7 +54,8 @@
 +    /// Neo: Constructs an empty flower pot.
 +    public FlowerPotBlock(BlockBehaviour.Properties properties) {
 +        super(properties);
-+        this.potted = null; // Unused, redirected by coremod
++        // NeoFobric: mirror the empty value into the field for Fabric mods that shadow it.
++        this.potted = Blocks.AIR;
 +        this.flowerDelegate = () -> Blocks.AIR;
 +        this.emptyPot = null;
      }

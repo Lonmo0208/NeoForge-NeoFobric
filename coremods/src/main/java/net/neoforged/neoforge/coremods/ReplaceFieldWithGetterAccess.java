@@ -68,11 +68,12 @@ public class ReplaceFieldWithGetterAccess extends SimpleClassProcessor {
         }
 
         if (!Modifier.isPrivate(foundField.access)) {
-            // NeoFobric: the field may already have been widened to public by the Fabric bridge's
-            // class tweaker (Fabric mods access it directly). In that case there is nothing to
-            // encapsulate, so skip the getter redirection instead of failing.
-            LOG.info("Field {} in {} is not private (already widened), skipping getter redirection", fieldName, classNode.name);
-            return;
+            // NeoFobric: the Fabric bridge's class tweaker widens fields that Fabric mods read
+            // directly. The redirection still has to run: NeoForge keeps the backing field null and
+            // serves the value from the getter, so unredirected reads inside the class see null
+            // (FlowerPotBlock#potted made an empty pot throw when used or shown in a tooltip).
+            LOG.debug("Field {} in {} was widened before encapsulation; redirecting internal accesses to the getter anyway",
+                    fieldName, classNode.name);
         }
 
         String methodDescriptor = "()" + foundField.desc;
