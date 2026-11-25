@@ -626,6 +626,8 @@ Fabric API 自身的适配不在此列 —— 那是宿主 API 的一部分，�
 
 **26.3 光影 / Iris / Voxy**：26.3 改了透明与粒子管线，**旧光影包**会被 Iris 标记为 `Outdated`，缺少 `opaque_particle` / `translucent_particle` 程序时粒子会渲染成灰色大碎片 —— 请用 26.3 版本的光影包（例如 Complementary **r5.9.3**）。Iris **1.11.x** 在 26.3 上仍有这个粒子管线 bug，**Iris 1.12 快照已修**；但 **Voxy 0.2.20-beta 声明与 Iris 1.12+ 不兼容**（`breaks iris >=1.12-`），两者目前只能二选一。
 
+**ImmediatelyFast 的地图图集（`map_atlas_generation`）会破坏自定义地图数据**：自带一份 `MapItemSavedData` 的自定义地图实现（429 模组集里的暮色森林魔法地图）会被画进 ImmediatelyFast 的 2048×2048 地图图集时裁错子矩形 —— 整幅地图的地形被压进地图左上角，而地标/玩家/结构图标仍在正确位置。把 `config/immediatelyfast.json` 里的 `"map_atlas_generation"` 改成 `false` 即可（ImmediatelyFast 其余优化保留，仅关掉地图打包）；2026-11-26 实测：关掉图集后，存档地图像素的包围盒和玩家在暮色地图网格里的实际位置一致，渲染正确。
+
 ## 怎么装 / 怎么构建
 
 **从源码构建**（安装器不再预构建进仓库）：
@@ -1256,6 +1258,8 @@ PS: this is a just-for-fun experimental test — if things break, we take no res
 **FFAPI (Forgified Fabric API) cannot be installed alongside this** — it is a NeoForge mod carrying the **same packages** (`net.fabricmc.fabric.*`) as the real Fabric API the bridge bundles, so two modules in one layer export the same package and the JDK refuses to boot. Pick one. **Sinytra Connector cannot be installed alongside this either** — it fights for the same job (bringing Fabric mods into NeoForge). Also note: **running side by side is not the same as seeing each other** — the two mod sets run fine in parallel, but a Fabric mod depending directly on a NeoForge mod's API (or the reverse) is **not guaranteed**. And there is that **self-contradicting** upstream tag assertion mentioned above.
 
 **26.3 shaders / Iris / Voxy**: 26.3 changed the transparency and particle pipelines, so **older shader packs** are marked `Outdated` by Iris; without an `opaque_particle` / `translucent_particle` program, particles render as huge grey quads. Use a **26.3 shader pack** (e.g. Complementary **r5.9.3**). Iris **1.11.x** still has this particle-pipeline bug on 26.3, **the Iris 1.12 snapshot fixes it**, but **Voxy 0.2.20-beta declares itself incompatible with Iris 1.12+** (`breaks iris >=1.12-`) — currently either/or. Stripping that line from the jar only gets it to launch: **under Iris 1.12 Voxy's LODs render pure white**, because its shader integration only understands Iris 1.11.x.
+
+**ImmediatelyFast's map atlas (`map_atlas_generation`) breaks custom map data**: a custom map implementation that keeps its own `MapItemSavedData` (Twilight Forest's magic map being the one in the 429-mod set) is rendered into ImmediatelyFast's 2048×2048 map atlas with the wrong sub-rectangle, so the whole terrain of the map gets squashed into the map's top-left corner while the decoration icons stay at their correct positions. Turn it off in `config/immediatelyfast.json` (`"map_atlas_generation": false`) to keep the rest of ImmediatelyFast's optimisations; the vanilla map renderer then draws the map data correctly (verified 2026-11-26: with the atlas disabled, the stored map pixels' bounding box matches the player's actual position in the TF map grid).
 
 ## Install & Build
 
