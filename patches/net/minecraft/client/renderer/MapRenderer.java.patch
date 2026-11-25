@@ -11,7 +11,11 @@
                  poseStack.pushPose();
                  poseStack.translate(decoration.x / 2.0F + 64.0F, decoration.y / 2.0F + 64.0F, -0.02F);
                  poseStack.rotateDegrees(Axis.ZP, decoration.rot * 360 / 16.0F);
-@@ -84,13 +_,16 @@
+@@ -84,13 +_,20 @@
++        // NeoFobric: a custom map implementation can keep its own map data and sync it over its own
++        // channel. If that first message was missed while the ordinary map channel delivered the same
++        // map, the custom data stays colour-less; fill its gaps from the level's map data first.
++        net.neoforged.neoforge.client.renderstate.MapColourSync.reconcile(mapId, mapData);
          mapRenderState.texture = this.mapTextureManager.prepareMapTexture(mapId, mapData);
          mapRenderState.decorations.clear();
  
