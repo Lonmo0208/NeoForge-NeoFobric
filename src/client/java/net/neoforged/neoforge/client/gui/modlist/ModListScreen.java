@@ -645,8 +645,8 @@ public class ModListScreen extends Screen {
                 // Load new banner data
                 if (displayInfo.id().equals(Identifier.DEFAULT_NAMESPACE)) {
                     // Special-case for the 'minecraft' mod: render the logo using LogoRenderer
-                    float scaleFactor = Math.min(1F, (float) width / LogoRenderer.LOGO_TEXTURE_WIDTH);
-                    int bannerWidth = (int) (LogoRenderer.LOGO_TEXTURE_WIDTH * scaleFactor);
+                    float scaleFactor = Math.min(1F, (float) width / LogoRenderer.MINECRAFT_LOGO_WIDTH);
+                    int bannerWidth = (int) (LogoRenderer.MINECRAFT_LOGO_WIDTH * scaleFactor);
                     this.bannerWidget.useMinecraftLogo(bannerWidth);
                 } else {
                     this.bannerData = loadImage("banner", displayInfo.id(), bannerResource, false);
