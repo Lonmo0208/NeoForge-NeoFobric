@@ -11,14 +11,21 @@
 
 ## 这是什么
 
-**在 NeoForge 加载器里搭了一座桥，让 Fabric 能一起跑。** 底座是 NeoForge（本仓库是 **NeoForge 26.3** 的 fork，当前版本 **`26.3.0.116`**）：FML 依旧是宿主 —— 它启动、它拥有游戏本体、它管模块层和它自己的模组。桥负责把 **fabric-loader 本体**（由本仓库的 `fabric-loader` 子模块现场编译）拉进同一个进程，Fabric 模组按 Fabric 自己那套规矩加载：`fabric.mod.json`、入口点、嵌套 jar、access widener / class tweaker、Fabric mixin 配置，一样不少。这里**没有 Forge** —— 已经"似"掉的那个旧 Forge 不参与任何环节。**不装任何 Fabric 模组时，它就是完完全全的 NeoForge。** 装模组时**优先选 NeoForge 版**，只有 NeoForge 版不存在时再用 Fabric 版：桥接的兼容性是"能跑"级别的，不是"保证"级别的。
+**在 NeoForge 加载器里搭了一座桥，让 Fabric 能一起跑。** 底座是 NeoForge（本仓库是 **NeoForge 26.3** 的 fork，当前版本 **`26.3.0.117`**）：FML 依旧是宿主 —— 它启动、它拥有游戏本体、它管模块层和它自己的模组。桥负责把 **fabric-loader 本体**（由本仓库的 `fabric-loader` 子模块现场编译）拉进同一个进程，Fabric 模组按 Fabric 自己那套规矩加载：`fabric.mod.json`、入口点、嵌套 jar、access widener / class tweaker、Fabric mixin 配置，一样不少。这里**没有 Forge** —— 已经"似"掉的那个旧 Forge 不参与任何环节。**不装任何 Fabric 模组时，它就是完完全全的 NeoForge。** 装模组时**优先选 NeoForge 版**，只有 NeoForge 版不存在时再用 Fabric 版：桥接的兼容性是"能跑"级别的，不是"保证"级别的。
 
 ## 现状：请当作「能玩但别当真」的测试版
 
 bug 可能还有很多，兼容性也可能还不够好，**甚至无法和 FFAPI（Forgified Fabric API）一起用**（见下）。**服务端可以用** ✓ —— 进程内专服与生产安装出来的专服都实测过：能起到 `Done`，模组正常加载；**带上 bclib/wover 全系的专服**也起来了（这曾撞上一个注册表冻结窗口问题，已修）。**其他设备理论都能装**：凡是能装 NeoForge 26.3 + Fabric 的环境（Windows / Linux / macOS，各种启动器）理论上都可以 —— **但我们只在开发机上验证过，没有做多设备验证**，请你自己试。**机械动力·飞跃版（Create Fly）的部分特性可以正常使用**，但肯定还有我们不知道的 bug；**voxy（含 voxy-extra）可玩**，**「Fabric 钠 + NeoForge Iris」与「NeoForge 钠 + Fabric Iris」两种混搭也都实测可进世界**；**其他 Fabric 模组同理**：能进游戏 ≠ 每个功能都对；**NeoForge 模组也可能被连锁效应波及**（桥改的是两边共用的那一层）。
 
-### 26.3（`26.3.0.116`，2026-11-22）
+### 26.3（`26.3.0.117`，2026-11-25）
 
+- **26.3.0.117（2026-11-25）**：.116 之后的热修与上游合并。
+  - **新世界不再卡在 Selecting global world spawn**：Fabric 的流体行为查询（每次都扫描全部 Fabric 模组、失败结果不缓存）改为按模组集缓存，并复用 foreign-mod 类加载器 —— 用户的 427 件实例集新建世界从「卡在 spawn 选择」降到约 21 秒进世界。
+  - **ReGlass 液体玻璃渲染崩溃**：`copyTextureToTexture` 的深度回读把 `GL_READ_BUFFER` 留在 `GL_NONE`、blit 矩形把尺寸当终点；现在回读后恢复读缓冲，矩形按「起点+尺寸」计算，单次拷贝失败只告警、不再崩游戏。
+  - **花盆右键 / Jade 提示 NPE**：核心模组对 `FlowerPotBlock#potted` 这类被桥加宽的字段始终改走 getter 重定向，并让后备字段保持有效值。
+  - **上游 26.3.x**：FancyModLoader **12.0.17**（#3759）；手动测试模组迁到 game tests（#3752）。
+  - 另带 .116 后的四处守卫：识别 Fabric `RegistryAttribute.SYNCED`、实体 id 为 0 时 `equals/hashCode` 按身份处理、方块实体类型滞后于方块状态时告警而不抛错、无程序绑定时跳过 GL uniform 上传。
+  - 其余三支已回移适用的修复并同日 +1 发布（26.2.0.144 / 26.1.2.136 / 26.1.26w14a.135）；26.1.2 另含上游模组列表重做与桥的 FML 侧 jar 归属修复。
 - **26.3.0.116（2026-11-22）**：并入上游 **26.3.x**（FancyModLoader **12.0.16**、Mixin **0.17.5**；液体方块**放置时**的交互检查 #3751、RTL 语言下进度界面箭头方向 #3735），并带上 .111 之后的全部桥修复：
   - **Fabric 形状的配方不再拖垮数据包**：解析不了的 Fabric 配方（`fabric:any` / `fabric:components` 等）改为跳过并告警；跳过项的 holder 在注册表 freeze 前再次丢弃、未绑定 tag 读作空 —— 不再出现"当前数据包有错误"进不去世界。
   - **启动期数据完整性**：桥自行应用 Fabric 的 class tweaker 访问规则（frozenlib / spell_engine / 暮色森林的入口点不再被跳过）；清理 `processedMods` 里父模组已不再携带的陈旧嵌套 jar；Fabric API 入口点没跑时补注册内置资源条件类型、自定义配料序列化器、`fabric:biome_modifier` 注册表与网络载荷类型（修掉 290 个数据文件被跳过的连锁）。
@@ -660,14 +667,21 @@ cd NeoFobric
 
 ## What this is
 
-**A bridge built inside the NeoForge loader so Fabric can run alongside it.** The base is NeoForge (**this repository is a fork of NeoForge 26.3**, current version **`26.3.0.116`**): FML stays the host — it boots, it owns the game, the module layer and its own mods. The bridge pulls the **real fabric-loader** (compiled from this repository's `fabric-loader` submodule) into the same process, and Fabric mods load the Fabric way: `fabric.mod.json`, entrypoints, nested jars, access wideners / class tweakers, Fabric mixin configs. **There is no Forge here** — the dead old Forge is not part of any step. **With no Fabric mods installed it is a plain NeoForge loader.** When picking mods, **prefer the NeoForge build**; use a Fabric build only when there is no NeoForge one. Compatibility here means "it runs", not "it is guaranteed".
+**A bridge built inside the NeoForge loader so Fabric can run alongside it.** The base is NeoForge (**this repository is a fork of NeoForge 26.3**, current version **`26.3.0.117`**): FML stays the host — it boots, it owns the game, the module layer and its own mods. The bridge pulls the **real fabric-loader** (compiled from this repository's `fabric-loader` submodule) into the same process, and Fabric mods load the Fabric way: `fabric.mod.json`, entrypoints, nested jars, access wideners / class tweakers, Fabric mixin configs. **There is no Forge here** — the dead old Forge is not part of any step. **With no Fabric mods installed it is a plain NeoForge loader.** When picking mods, **prefer the NeoForge build**; use a Fabric build only when there is no NeoForge one. Compatibility here means "it runs", not "it is guaranteed".
 
 ## Current state: a playable-but-don't-trust-it beta
 
 There are probably still plenty of bugs, compatibility may still be rough, and it **cannot be installed together with FFAPI (Forgified Fabric API)** (see below). **The server side works** ✓ — both an in-process dedicated server and a production-installed one reach `Done` with mods loaded; a **dedicated server carrying the whole bclib/wover family** boots too (it used to hit a registry freeze window — fixed). **Other machines should work in theory** — anything that can run NeoForge 26.3 + Fabric (Windows / Linux / macOS, any launcher) ought to be fine, **but we only ever verified on the development machine; there is no multi-device testing**, so please try it yourself. **Parts of Create Fly work correctly**, but there are certainly bugs we do not know about; **voxy (including voxy-extra) is playable**, and **both mixed pairs — Fabric Sodium + NeoForge Iris and NeoForge Sodium + Fabric Iris — reach the world**; **the same goes for other Fabric mods**: launching is not the same as every feature working; **NeoForge mods can be hit by knock-on effects too** (the bridge touches the layer both loaders share).
 
-### 26.3 (`26.3.0.116`, 2026-11-22)
+### 26.3 (`26.3.0.117`, 2026-11-25)
 
+- **26.3.0.117 (2026-11-25)**: hotfixes since .116 plus an upstream merge.
+  - **A new world no longer hangs at "Selecting global world spawn"**: Fabric's fluid-behaviour lookup scanned every Fabric mod on every query and never cached a failed result. It is now cached per mod set and reuses the foreign-mod class loader — the user's 427-mod instance went from hanging at spawn selection to entering the world in about 21 seconds.
+  - **ReGlass liquid-glass rendering crash**: the depth readback in `copyTextureToTexture` left `GL_READ_BUFFER` at `GL_NONE`, and the blit rectangle used the size where the end coordinate belongs. The read buffer is restored after the readback, the rectangle is computed as origin + size, and a failed copy now warns instead of crashing the game.
+  - **Right-clicking a flower pot / Jade tooltip NPE**: the coremod now always redirects reads of fields the bridge widened (`FlowerPotBlock#potted` and friends) through the getter, and the backing field keeps a valid value.
+  - **Upstream 26.3.x**: FancyModLoader **12.0.17** (#3759); the manual test mods moved to game tests (#3752).
+  - Also carries the four guards from after .116: honour Fabric's `RegistryAttribute.SYNCED`, treat an entity with id 0 as identity in `equals/hashCode`, warn instead of throwing when a block entity's type lags its block state, and skip GL uniform uploads while no program is bound.
+  - The other three branches received the applicable fixes and were released the same day with a +1 version (26.2.0.144 / 26.1.2.136 / 26.1.26w14a.135); 26.1.2 additionally carries the upstream mod-list overhaul and the bridge's FML-side jar ownership fix.
 - **26.3.0.116 (2026-11-22)**: merges upstream **26.3.x** (FancyModLoader **12.0.16**, Mixin **0.17.5**; the liquid block's interaction check **on place** #3751, RTL advancement-arrow direction #3735) and carries every bridge fix since .111:
   - **Fabric-shaped recipes no longer take the data pack down**: a recipe that cannot be parsed (`fabric:any` / `fabric:components` and friends) is skipped with a warning, the skipped key's holder is dropped again before the registry freezes, and an unbound tag set reads as empty — the "current data packs contain errors" refusal to open a world is gone.
   - **Startup data completeness**: the bridge applies Fabric's own class-tweaker access rules (frozenlib / spell_engine / Twilight Forest entrypoints are no longer skipped), prunes stale nested jars the parent mod no longer ships from `processedMods`, and registers Fabric API's built-in resource-condition types, custom-ingredient serializers, the `fabric:biome_modifier` registry and networking payload types when their entrypoints did not run (the chain behind 290 skipped data files).
