@@ -7701,8 +7701,12 @@ public final class MixinJarPatcher {
             }
             method.localVariables = null;
             if (isGet) {
+                // List is an interface: the constant has to be an InterfaceMethodref, or the JVM rejects
+                // the call with "Method 'java.util.List java.util.List.of()' must be InterfaceMethodref
+                // constant" the first time the default is invoked (/locate structure, FrozenLib's
+                // generation-condition read).
                 method.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "java/util/List", "of",
-                        "()Ljava/util/List;", false));
+                        "()Ljava/util/List;", true));
                 method.instructions.add(new InsnNode(Opcodes.ARETURN));
                 method.maxStack = 1;
                 method.maxLocals = 1;
