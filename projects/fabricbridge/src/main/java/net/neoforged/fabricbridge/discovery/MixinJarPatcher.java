@@ -1594,7 +1594,7 @@ public final class MixinJarPatcher {
             }
             if (cursor instanceof MethodInsnNode call) {
                 return started && call.getOpcode() == Opcodes.INVOKESPECIAL && call.owner.equals(owner)
-                        && call.name.equals("<init>") ? call.desc : null;
+                        && call.name.equals("<init>") ? "<init>" + call.desc : null;
             }
             // Any other instruction (a jump, a field write, a call on something else) means the
             // constructor does real work and is not the dead shell this pass looks for.
