@@ -1,0 +1,29 @@
+--- a/com/mojang/blaze3d/platform/SDLEventHandler.java
++++ b/com/mojang/blaze3d/platform/SDLEventHandler.java
+@@ -99,7 +_,8 @@
+         SDL_KeyboardEvent keyEvent = event.key();
+         int action = event.type() == 769 ? 0 : (keyEvent.repeat() ? -1 : 1);
+         KeyEvent key = new KeyEvent(keyEvent.scancode(), keyEvent.key(), keyEvent.mod());
+-        this.minecraft.execute(() -> this.minecraft.keyboardHandler.keyPress(getWindowHandle(event), action, key));
++        long handle = getWindowHandle(event);
++        this.minecraft.execute(() -> this.minecraft.keyboardHandler.keyPress(handle, action, key));
+     }
+ 
+     private void handleTextInputEvent(SDL_Event event) {
+@@ -120,7 +_,15 @@
+     private void handleMouseMotionEvent(SDL_Event event) {
+         SDL_MouseMotionEvent motion = event.motion();
+         long handle = getWindowHandle(event);
+-        this.minecraft.execute(() -> this.minecraft.mouseHandler.onMove(handle, motion.x(), motion.y(), motion.xrel(), motion.yrel()));
++        float x = motion.x();
++        float y = motion.y();
++        float xrel = motion.xrel();
++        float yrel = motion.yrel();
++        // NeoFobric: SDL_Event is a reusable (and eventually freed) native buffer. Reading the
++        // mouse position lazily inside the runnable can hit memory that the native SDL layer has
++        // already reused or released (observed as a native crash on shutdown with queued mouse
++        // motion events). Snapshot the values while the event is still valid.
++        this.minecraft.execute(() -> this.minecraft.mouseHandler.onMove(handle, x, y, xrel, yrel));
+     }
+ 
+     private void handleMouseButtonEvent(SDL_Event event) {
