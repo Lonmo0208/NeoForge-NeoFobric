@@ -1623,8 +1623,14 @@ public final class MixinJarPatcher {
                 continue;
             }
             if (cursor instanceof MethodInsnNode call) {
+                // The selector has to keep the method name: a bare "(...)V" is a legal Mixin selector (it
+                // matches any name with that descriptor), but the missing-target pass compares "name+desc"
+                // against the target's methods and would read it as a handler whose target vanished.
+                // Fabric's ModelBakeryMixin.onReturnInit was dropped exactly that way, and with it the
+                // model-loading dispatcher attachment - every CTM definition loaded while no model was ever
+                // wrapped, so connected textures silently stopped working.
                 return started && call.getOpcode() == Opcodes.INVOKESPECIAL && call.owner.equals(owner)
-                        && call.name.equals("<init>") ? call.desc : null;
+                        && call.name.equals("<init>") ? "<init>" + call.desc : null;
             }
             // Any other instruction (a jump, a field write, a call on something else) means the
             // constructor does real work and is not the dead shell this pass looks for.
